@@ -297,3 +297,6 @@ Plugin/.backup/
 # ==== 开发SDK ====
 Plugin/VCPQQBotServer/bot-node-sdk-main
 开发日志/
+# ==== Memory River 本机运行配置 ====
+# v2.json 为空骨架可提交；v1 本机配置含真实日记映射，不提交
+extensions/memory-river/config/memory-rivers.json

@@ -34,6 +34,12 @@ const KnowledgeBaseFileWatcher = require('./modules/knowledgeBase/fileWatcher');
 const IngestionPipeline = require('./modules/knowledgeBase/ingestionPipeline');
 const SearchService = require('./modules/knowledgeBase/searchService');
 const TagConsistencyService = require('./modules/knowledgeBase/tagConsistencyService');
+const {
+    KnowledgeLifecycleExtensionHost
+} = require('./modules/extensions/KnowledgeLifecycleExtensionHost');
+const {
+    loadKnowledgeLifecycleExtensions
+} = require('./modules/extensions/loadKnowledgeLifecycleExtensions');
 
 // 尝试加载 Rust Vexus 引擎
 let VexusIndex = null;
@@ -216,6 +222,24 @@ class KnowledgeBaseManager {
         this.tagConsistencyService = new TagConsistencyService(this, {
             VexusIndex
         });
+        const lifecycleExtensionModules = String(
+            this.config.knowledgeLifecycleExtensionModules
+            || process.env.KNOWLEDGE_LIFECYCLE_EXTENSION_MODULES
+            || ''
+        ).split(',').map(value => value.trim()).filter(Boolean);
+        this.lifecycleExtensionHost = new KnowledgeLifecycleExtensionHost({
+            extensions: loadKnowledgeLifecycleExtensions({
+                modulePaths: lifecycleExtensionModules,
+                extensionOptions: {
+                    configPath: process.env.MEMORY_RIVER_CONFIG_PATH,
+                    registryPath: process.env.MEMORY_RIVER_REGISTRY_V2_PATH,
+                    databasePath: process.env.MEMORY_RIVER_DATABASE_PATH,
+                    createDefaultConfig: !process.env.MEMORY_RIVER_CONFIG_PATH
+                },
+                logger: console
+            }),
+            logger: console
+        });
     }
 
     async initialize() {
@@ -343,6 +367,18 @@ class KnowledgeBaseManager {
 
         if (this.tagMemoEngine && typeof this.tagMemoEngine.schedulePostStartupDerivedRefresh === 'function') {
             this.tagMemoEngine.schedulePostStartupDerivedRefresh(this.config.derivedStartupCooldownMs);
+        }
+        await this.lifecycleExtensionHost.initialize({ knowledgeBase: this });
+    }
+
+    async _publishKnowledgeLifecycleEvent(event) {
+        try {
+            return await this.lifecycleExtensionHost?.publish(event);
+        } catch (error) {
+            console.warn(
+                `[KnowledgeBase] Lifecycle extension publish failed: ${error.message || error}`
+            );
+            return null;
         }
     }
 
@@ -2181,6 +2217,7 @@ class KnowledgeBaseManager {
             this.eventLoopWatchdogTimer = null;
         }
 
+        await this.lifecycleExtensionHost.shutdown();
         this.db?.close();
         console.log('[KnowledgeBase] Shutdown complete.');
     }

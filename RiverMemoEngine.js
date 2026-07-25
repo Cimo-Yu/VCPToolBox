@@ -464,6 +464,21 @@ class RiverMemoEngine {
         });
     }
 
+    _isRetiredArtifactError(error) {
+        const message = String(error?.message || '');
+        return error?.code === 'RIVERMEMO_ARTIFACT_UNAVAILABLE'
+            || /RiverMemo artifact .* unavailable: Query returned no rows/i.test(message);
+    }
+
+    _refreshArtifactAfterRetirement(artifact) {
+        if (typeof this.runtime?.invalidateArtifact === 'function') {
+            this.runtime.invalidateArtifact(
+                `native-artifact-unavailable:${artifact?.artifactSig || 'unknown'}`
+            );
+        }
+        return this.runtime.getArtifactSnapshot({ forceRefresh: true });
+    }
+
     async rerank(query, candidates, agentContext = {}, options = {}) {
         const rerankStartedAt = Date.now();
         const stageTimings = {};
@@ -534,14 +549,34 @@ class RiverMemoEngine {
         // Topology V3 的候选投影、路径几何、相对拓扑、DSTC、Direct Anchor、
         // 批级条件创新和最终排序全部由 Rust/Rayon 在一个 N-API 调用内完成。
         // JS 仅准备查询连续场并消费稳定结果，禁止再进入旧的逐候选计算链。
-        return await this._rerankNative(
-            query,
-            inputCandidates,
-            agentContext,
-            options,
-            artifact,
-            prepared
-        );
+        try {
+            return await this._rerankNative(
+                query,
+                inputCandidates,
+                agentContext,
+                options,
+                artifact,
+                prepared
+            );
+        } catch (error) {
+            if (!this._isRetiredArtifactError(error)) throw error;
+            const refreshedArtifact = this._refreshArtifactAfterRetirement(artifact);
+            if (!refreshedArtifact || refreshedArtifact.artifactSig === artifact.artifactSig) {
+                throw error;
+            }
+            console.warn(
+                `[RiverMemo] Retrying once after retired artifact ${artifact.artifactSig}; ` +
+                `using ${refreshedArtifact.artifactSig}.`
+            );
+            return await this._rerankNative(
+                query,
+                inputCandidates,
+                agentContext,
+                options,
+                refreshedArtifact,
+                prepared
+            );
+        }
 
         /* istanbul ignore next -- retired JS Topology V3 implementation */
         const fieldWorkspace = this.runtime.createFieldWorkspace(

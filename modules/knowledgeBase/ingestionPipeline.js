@@ -157,6 +157,7 @@ async _flushBatch() {
                     if (!docsByDiary.has(diaryName)) docsByDiary.set(diaryName, []);
                     docsByDiary.get(diaryName).push({
                         relPath, diaryName, checksum, mtime: stats.mtimeMs, size: stats.size,
+                        content,
                         chunks: chunkText(content),
                         tags: this._extractTags(content)
                     });
@@ -445,6 +446,21 @@ async _flushBatch() {
             // file_tags 组关系仍是共现矩阵真相，但不再作为“新增 1% tag”的计数依据。
             if (this.tagMemoEngine) this.tagMemoEngine.scheduleMatrixRebuildForNewTags(newTagIds);
 
+            await Promise.all(
+                Array.from(docsByDiary.values()).flat().map(doc =>
+                    this._publishKnowledgeLifecycleEvent({
+                        type: 'knowledge.written',
+                        source: {
+                            filePath: doc.relPath,
+                            diaryName: doc.diaryName,
+                            checksum: doc.checksum,
+                            revision: String(doc.mtime)
+                        },
+                        content: { text: doc.content }
+                    })
+                )
+            );
+
         } catch (e) {
             console.error('[KnowledgeBase] ❌ Batch processing failed catastrophically.');
             console.error('Error Details:', e);
@@ -581,6 +597,17 @@ async _handleDeleteBatch(filePaths) {
                     this._scheduleIndexSave(diaryName);
                 }
             }
+
+            await Promise.all(rows.map(row =>
+                this._publishKnowledgeLifecycleEvent({
+                    type: 'knowledge.deleted',
+                    source: {
+                        filePath: row.path,
+                        diaryName: row.diary_name,
+                        checksum: row.checksum
+                    }
+                })
+            ));
         } catch (e) {
             console.error(`[KnowledgeBase] Delete error:`, e);
             if (this._isSqliteCorruptionError(e)) throw e;

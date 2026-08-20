@@ -158,7 +158,7 @@ function intelligentSecurityCheck(command, forbiddenKeywords, authRequiredKeywor
 
 // --- 回调函数 ---
 function sendCallback(requestId, status, result) {
-    const callbackBaseUrl = process.env.CALLBACK_BASE_URL || 'http://localhost:6005/plugin-callback';
+    const callbackBaseUrl = process.env.CALLBACK_BASE_URL || 'http://localhost:6015/plugin-callback';
     const pluginNameForCallback = process.env.PLUGIN_NAME_FOR_CALLBACK || 'PowerShellExecutor';
 
     if (!callbackBaseUrl) {

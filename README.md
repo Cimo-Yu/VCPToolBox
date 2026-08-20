@@ -205,7 +205,7 @@ cp config.env.example config.env
 node server.js
 ```
 
-管理面板自动监听 **主端口 + 1**（如主服务 6005，面板 6006），访问 `http://<服务器地址>:<端口+1>/AdminPanel`。
+管理面板自动监听 **主端口 + 1**（如主服务 6015，面板 6006），访问 `http://<服务器地址>:<端口+1>/AdminPanel`。
 
 也支持 Docker 一键部署：
 

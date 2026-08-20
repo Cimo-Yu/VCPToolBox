@@ -251,7 +251,7 @@ pub fn apply_config_form(&mut self)
 | api_key | buffer[2] | `.clone()` |
 | admin_password | buffer[3] | `.clone()` |
 | tool_auth_code | buffer[4] | `.clone()` |
-| port | buffer[5] | **`.trim().parse::<u16>()`** 失败fallback 6005 |
+| port | buffer[5] | **`.trim().parse::<u16>()`** 失败fallback 6015 |
 
 **改进点**：所有文本字段都增加了 `.trim()` 处理，防止用户误输入前后空格导致路径错误或端口解析失败。
 

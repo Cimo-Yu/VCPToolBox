@@ -98,6 +98,25 @@ class RAGDiaryPlugin {
 
         // 🔎 BM25 查询优化器：实体词提升、AI 主题漂移门控、查询 token 限频
         this.bm25QueryOptimizer = new BM25QueryOptimizer({ logger: console });
+
+        // 🌊 河道占位符（{{MemoryRiver::<riverId>}}）适配点。
+        // 这是唯一的上游接口面：解析、授权与拼装全部在
+        // extensions/memory-river/RiverPlaceholderResolver 内实现，本文件只做委托，
+        // 以便同步上游时冲突面保持在两处薄接口。
+        // Memory River 是可选生命周期扩展，未装载时静默降级为 null，不影响本插件任何既有能力。
+        this.riverPlaceholderResolver = null;
+        try {
+            const { RiverPlaceholderResolver } = require(
+                path.join(__dirname, '..', '..', 'extensions', 'memory-river', 'RiverPlaceholderResolver')
+            );
+            this.riverPlaceholderResolver = new RiverPlaceholderResolver({
+                projectBasePath: path.join(__dirname, '..', '..'),
+                directDiaryTextProcessor: this.directDiaryTextProcessor,
+                logger: console
+            });
+        } catch (error) {
+            console.warn(`[RAGDiaryPlugin] Memory River 占位符扩展未装载，{{MemoryRiver::...}} 将不被展开: ${error.message}`);
+        }
     }
 
     async loadConfig() {
@@ -1131,6 +1150,30 @@ class RAGDiaryPlugin {
         return isBetaSystemUserText(normalizedText) || isSystemNotificationText(normalizedText);
     }
 
+    /**
+     * 🌊 河道占位符适配：遍历消息把 {{MemoryRiver::<riverId>}} 交给扩展模块展开。
+     *
+     * 本方法故意只做「遍历 + 取文本 + 回写」，解析、registry 查询与正文拼装全在
+     * extensions/memory-river/RiverPlaceholderResolver 内，以便同步上游时冲突面
+     * 收敛在这一处薄适配上。
+     * 展开失败不影响后续管线：扩展内部已把错误转成可见提示文本。
+     */
+    async _expandRiverPlaceholders(messages, sanitizedUserInput) {
+        for (const message of messages) {
+            if (!message || !message.content) continue;
+            const originalText = this._extractTextFromContent(message.content);
+            if (!originalText || !this.riverPlaceholderResolver.hasPlaceholder(originalText)) continue;
+            try {
+                const expanded = await this.riverPlaceholderResolver.processContent(originalText, { sanitizedUserInput });
+                if (expanded !== originalText) {
+                    message.content = this._replaceTextInContent(message.content, () => expanded);
+                }
+            } catch (error) {
+                console.warn(`[RAGDiaryPlugin] MemoryRiver 占位符展开失败，保留原文: ${error.message}`);
+            }
+        }
+    }
+
     // processMessages 是 messagePreprocessor 的标准接口
     async processMessages(messages, pluginConfig) {
         try {
@@ -1142,6 +1185,14 @@ class RAGDiaryPlugin {
             const directLatestUserMessage = findLastRealUserMessage(messages, {
                 sanitize: this.sanitizeForEmbedding.bind(this)
             });
+
+            // 🌊 河道占位符必须在纯文本快速路径之前展开：
+            // {{MemoryRiver::...}} 的展开结果是「【日记本名】正文」，本身不再含日记本占位符，
+            // 若放在快速路径之后，同一轮里就没有环节会再去读取正文了。
+            // 委托到扩展模块，本文件不含解析逻辑（见构造函数中的 riverPlaceholderResolver 说明）。
+            if (this.riverPlaceholderResolver) {
+                await this._expandRiverPlaceholders(messages, directLatestUserMessage.sanitizedContent || '');
+            }
             const directTextResult = await this.directDiaryTextProcessor.tryProcessMessages(messages, {
                 extractTextFromContent: this._extractTextFromContent.bind(this),
                 replaceTextInContent: this._replaceTextInContent.bind(this),

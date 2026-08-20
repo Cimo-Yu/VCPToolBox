@@ -246,6 +246,20 @@ fn build_fact_matrix(
     config: &Value,
 ) -> HashMap<i64, HashMap<i64, f64>> {
     let ordered = config.get("orderedCooccurrence").unwrap_or(&Value::Null);
+    // D9（2026-08-12 标注，不改默认值）：本函数与 build_provenance() 读的是**同一批**
+    // orderedCooccurrence 键，但两边的 fallback 默认值不一致：
+    //   键                      build_fact_matrix（此处）      build_provenance（:449-450）
+    //   reverseGain             0.42                          0.35
+    //   min/maxReverseGain      clamp(0.25, 0.70)             无 clamp（仅 .max(0.0)）
+    //   distanceDecay           0.0                           0.08
+    //   reverseInversionGuard   0.95                          （不读）
+    // 目前 rag_params.json 把这些键**全部显式给齐**（0.35 / 0.25 / 0.6 / 0.08 / 0.9），
+    // 两边取到同一组值，所以无症状。一旦有人"清理配置"把这些键删掉，就会变成
+    // 边权按 0.42/0.0 建、provenance 归因按 0.35/0.08 解释——**静默分叉，不报错**。
+    // 下次重编译时的统一目标 = 当前 shipped 配置值（reverseGain 0.35、clamp(0.25, 0.6)、
+    // distanceDecay 0.08、guard 0.9），并给 provenance 侧补上同一个 clamp。
+    // 另一个同类陷阱：boolean()(:121-134) 只认 Bool 与**整数** Number，
+    // 在 rag_params 里把 semanticGainEnabled 写成 `1.0` 而不是 `1`/`true` 会静默变 false。
     let forward_gain = number(ordered, &["forwardGain"], 1.0).max(0.0);
     let reverse_gain = number(ordered, &["reverseGain"], 0.42).clamp(
         number(ordered, &["minReverseGain"], 0.25),
@@ -445,6 +459,9 @@ fn build_provenance(
     config: &Value,
 ) -> BTreeMap<(i64, i64), Vec<ProvenanceContribution>> {
     let ordered = config.get("orderedCooccurrence").unwrap_or(&Value::Null);
+    // D9（2026-08-12 标注）：这三行的默认值与 build_fact_matrix() 不一致
+    // （那边 reverseGain 0.42 / clamp(0.25,0.70) / distanceDecay 0.0），
+    // 详见 build_fact_matrix 处的对照表。键齐时无差异；删键即静默分叉。
     let forward_gain = number(ordered, &["forwardGain"], 1.0).max(0.0);
     let reverse_gain = number(ordered, &["reverseGain"], 0.35).max(0.0);
     let distance_decay = number(ordered, &["distanceDecay"], 0.08).max(0.0);

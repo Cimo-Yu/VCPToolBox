@@ -2,7 +2,7 @@
   "manifestVersion": "1.0.0",
   "name": "BilibiliFetch",
   "displayName": "Bilibili 内容获取插件",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Bilibili 视频内容获取插件。支持视频信息抓取（字幕/弹幕/评论/高能进度条/快照截图/HD高清抽帧）、关键词搜索（视频/UP主）、UP主投稿列表获取。支持长链接、b23.tv短链接和多P分P视频。",
   "author": "Bocchi777",
   "pluginType": "synchronous",
@@ -15,7 +15,10 @@
     "timeout": 60000
   },
   "configSchema": {
-    "BILIBILI_COOKIE": "string"
+    "BILIBILI_COOKIE": "string",
+    "BILIBILI_BROWSER_FALLBACK_ENABLED": "boolean",
+    "BILIBILI_BROWSER_FALLBACK_TIMEOUT_SECONDS": "number",
+    "BILIBILI_SUBTITLE_SAVE_DIR": "string"
   },
   "capabilities": {
     "invocationCommands": [
@@ -33,6 +36,11 @@
         "commandIdentifier": "GetUpVideos",
         "description": "获取指定 UP 主（通过 mid）的所有投稿视频列表（按发布时间倒序）。常用于在搜索到用户后，进一步获取其视频列表。B站短链接格式为 https://b23.tv/BV号，长链接格式为 https://www.bilibili.com/video/BV号。\n\n参数:\n- action (字符串, 必需): 固定为 'get_up_videos'。\n- mid (字符串, 必需): 目标 UP 主的用户 ID (MID)。\n- pn (数字, 可选, 默认1): 页码。\n- ps (数字, 可选, 默认30): 每页返回数量，最大50。\n\n调用格式:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」BilibiliFetch「末」,\naction:「始」get_up_videos「末」,\nmid:「始」用户MID「末」,\npn:「始」1「末」,\nps:「始」30「末」\n<<<[END_TOOL_REQUEST]>>>",
         "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」BilibiliFetch「末」,\naction:「始」get_up_videos「末」,\nmid:「始」927587「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "BilibiliSaveSubtitle",
+        "description": "提取 Bilibili 视频的原始字幕并以脚本形式保存到知识库字幕目录（默认 D:\\vcp\\VCPToolBox\\knowledge\\字幕，可用环境变量 BILIBILI_SUBTITLE_SAVE_DIR 覆盖）。每个视频保存两份文件：原始 CC 字幕 JSON（body 结构）和带时间戳的纯文本字幕，便于阅读与知识库检索。API 未返回 CC 字幕时自动尝试 managed Chrome 页面补充，仅保存页面文本。\n\n参数:\n- action (字符串, 必需): 固定为 'save_subtitle'。\n- url (字符串, 必需): Bilibili 视频的 URL、BV 号或 b23.tv 短链接，多P视频支持 ?p=N。\n- lang (字符串, 可选): 字幕语言代码，例如 'ai-zh'（AI中文）、'ai-en'（AI英文）、'zh-CN'。未指定时按优先级自动选择。\n- overwrite (布尔值, 可选, 默认true): 同名字幕文件已存在时是否覆盖；设为 false 时跳过已存在的文件。\n\n调用格式:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」BilibiliFetch「末」,\naction:「始」save_subtitle「末」,\nurl:「始」视频URL「末」,\nlang:「始」ai-zh「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」BilibiliFetch「末」,\naction:「始」save_subtitle「末」,\nurl:「始」https://www.bilibili.com/video/BV1CC4y1a7ee「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
   }

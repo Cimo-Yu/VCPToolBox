@@ -7,7 +7,7 @@ require('dotenv').config({ path: path.join(__dirname, 'config.env') });
 
 // 用于向主服务器发送回调的函数
 function sendCallback(requestId, status, result) {
-    const callbackBaseUrl = process.env.CALLBACK_BASE_URL || 'http://localhost:6005/plugin-callback'; // 默认为localhost
+    const callbackBaseUrl = process.env.CALLBACK_BASE_URL || 'http://localhost:6015/plugin-callback'; // 默认为localhost
     const pluginNameForCallback = process.env.PLUGIN_NAME_FOR_CALLBACK || 'PowerShellExecutor';
 
     if (!callbackBaseUrl) {

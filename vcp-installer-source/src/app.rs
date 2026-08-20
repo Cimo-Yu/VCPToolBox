@@ -169,7 +169,7 @@ impl Default for InstallConfig {
             api_key: String::new(),
             admin_password: String::new(),
             tool_auth_code: String::new(),
-            server_port: 6005,
+            server_port: 6015,
         }
     }
 }

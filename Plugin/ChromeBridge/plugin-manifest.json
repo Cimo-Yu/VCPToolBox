@@ -1,15 +1,15 @@
 {
     "name": "ChromeBridge",
     "displayName": "Chrome 浏览器桥接器",
-    "version": "2.2.0",
-    "description": "混合插件：既能让AI实时观察Chrome页面内容（Service模式），又能执行浏览器控制命令并等待页面刷新（Direct模式）。已升级类型分组 ID 协议（如 vcp-searchbox-1、vcp-button-1）与专用解析识别器，避免全局交互序号受广告/动态元素影响。",
+    "version": "2.3.0",
+    "description": "混合插件：既能让AI实时观察Chrome页面内容（Service模式），又能执行浏览器控制命令并等待页面刷新（Direct模式），并集成平台桥接扩展（VCPBridge-Extension）实现抖音等平台的结构化数据提取、视频下载与浏览器投喂队列（extract_data / download_video / get_feed / get_status）。已升级类型分组 ID 协议（如 vcp-searchbox-1、vcp-button-1）与专用解析识别器，避免全局交互序号受广告/动态元素影响。",
     "pluginType": "hybridservice",
     "entryPoint": {
         "script": "ChromeBridge.js"
     },
     "communication": {
         "protocol": "direct",
-        "timeout": 60000
+        "timeout": 360000
     },
     "capabilities": {
         "systemPromptPlaceholders": [
@@ -194,6 +194,26 @@
                 "command": "execute_saved_script",
                 "description": "执行存放在服务器 Plugin/ChromeBridge/ChromeScripts 目录下的持久化 JavaScript 脚本文件。\n- `command`: 固定为 `execute_saved_script`。\n- `scriptName`: 脚本文件名 (例如, 'scroll_page.js')。\n\n**调用示例:**\n<<<[TOOL_REQUEST]>>>\ntool_name: 「始」ChromeBridge「末」,\ncommand: 「始」execute_saved_script「末」,\nscriptName: 「始」scroll_page.js「末」\n<<<[END_TOOL_REQUEST]>>>",
                 "example": "**调用示例:**\n<<<[TOOL_REQUEST]>>>\ntool_name: 「始」ChromeBridge「末」,\ncommand: 「始」execute_saved_script「末」,\nscriptName: 「始」scroll_page.js「末」\n<<<[END_TOOL_REQUEST]>>>"
+            },
+            {
+                "command": "extract_data",
+                "description": "从浏览器当前页面或指定 URL 提取结构化数据，面向抖音等平台深度适配（视频/字幕/图文/作者主页/喜欢/收藏/搜索/作品列表/热搜/推荐流/直播弹幕/受众画像/评论区）。需要已连接 VCPBridge 扩展（Plugin/ChromeBridge/VCPBridge-Extension）。\n- `command`: 固定为 `extract_data`。\n- `extract_type`: (可选) 提取类型，默认 `douyin_full`。可用值：`douyin_full`（当前页面完整数据，自动识别视频/图文/搜索/热搜/直播/作者主页）、`douyin_video`（视频详情：文案/标签/互动统计/作者/BGM/无水印链接）、`douyin_captions`（视频字幕：优先返回自带字幕；无自带字幕时返回无水印地址，配置 DOUYIN_ASR_ENABLED=true 后自动 ffmpeg+ASR 转写为带时间戳字幕）、`douyin_author`（作者主页：昵称/粉丝数/recent_posts[content_id+content_type]）、`douyin_posts`（作者全部作品列表，对应 GetUpVideos，滚动加载更多）、`douyin_likes`（当前账号喜欢列表，url 需带 ?showTab=like）、`douyin_collects`（当前账号收藏列表，url 需带 ?showTab=collect）、`douyin_search`（关键词搜索，对应 BilibiliSearch；需 keyword，可选 search_type=video/user/general）、`douyin_feed`（推荐流爆款视频结构化收集：文案+精确互动统计+无水印地址）、`douyin_hot`（热搜榜结构化：排名/话题/热度值）、`douyin_live_danmaku`（直播弹幕，实验性，url 为直播页）、`douyin_audience_portrait`（受众画像：年龄/性别/地域百分比，需在扩展浏览器登录创作者服务平台 creator.douyin.com 或巨量算数并打开数据页）、`douyin_note`（图文笔记）、`douyin_comments`（评论区）、`generic`（通用DOM提取）。\n- `url`: (可选) 目标 URL；不填则提取当前活动标签页。\n- `keyword`: (可选，douyin_search 必填) 搜索关键词。\n- `search_type`: (可选，douyin_search) video / user / general，默认 general。\n- `comment_count`: (可选) 评论提取数量，默认 50。\n- `include_replies`: (可选) 是否包含回复，默认 true。\n- `sort_by`: (可选) 评论排序方式，默认 likes。\n- `max_rounds`: (可选，douyin_posts/douyin_feed) 滚动轮数，默认 12（feed 为 8）。\n- `max_items`: (可选，douyin_feed) 最多收集条数，默认 30。\n- `danmaku_num`: (可选，douyin_live_danmaku) 返回弹幕条数，默认 200。\n- `portrait_count`: (可选，douyin_audience_portrait) 画像缓存条数，默认 10。\n\n**调用示例:**\n<<<[TOOL_REQUEST]>>>\ntool_name: 「始」ChromeBridge「末」,\ncommand: 「始」extract_data「末」,\nextract_type: 「始」douyin_captions「末」,\nurl: 「始」https://www.douyin.com/video/7345678901234「末」\n<<<[END_TOOL_REQUEST]>>>",
+                "example": "**调用示例:**\n<<<[TOOL_REQUEST]>>>\ntool_name: 「始」ChromeBridge「末」,\ncommand: 「始」extract_data「末」,\nextract_type: 「始」douyin_full「末」\n<<<[END_TOOL_REQUEST]>>>"
+            },
+            {
+                "command": "download_video",
+                "description": "请求浏览器端执行视频下载任务（优先提取无水印播放地址并触发下载），当前主要面向抖音视频页。需要已连接 VCPBridge 扩展。\n- `command`: 固定为 `download_video`。\n- `url`: (可选) 目标视频 URL；不填则下载当前活动标签页视频。\n- `filename`: (可选) 自定义文件名。\n\n**调用示例:**\n<<<[TOOL_REQUEST]>>>\ntool_name: 「始」ChromeBridge「末」,\ncommand: 「始」download_video「末」,\nurl: 「始」https://www.douyin.com/video/7345678901234「末」\n<<<[END_TOOL_REQUEST]>>>",
+                "example": "**调用示例:**\n<<<[TOOL_REQUEST]>>>\ntool_name: 「始」ChromeBridge「末」,\ncommand: 「始」download_video「末」\n<<<[END_TOOL_REQUEST]>>>"
+            },
+            {
+                "command": "get_feed",
+                "description": "读取浏览器扩展主动投喂到服务器队列的数据（用户在抖音页面点击“投喂VCP”等）。读取后清空队列。无需浏览器连接即可调用。\n- `command`: 固定为 `get_feed`。\n\n**调用示例:**\n<<<[TOOL_REQUEST]>>>\ntool_name: 「始」ChromeBridge「末」,\ncommand: 「始」get_feed「末」\n<<<[END_TOOL_REQUEST]>>>",
+                "example": "**调用示例:**\n<<<[TOOL_REQUEST]>>>\ntool_name: 「始」ChromeBridge「末」,\ncommand: 「始」get_feed「末」\n<<<[END_TOOL_REQUEST]>>>"
+            },
+            {
+                "command": "get_status",
+                "description": "查询 ChromeBridge 连接池状态：已连接 Chrome 客户端（含能力与权限）、投喂队列大小、最大标签页数。\n- `command`: 固定为 `get_status`。\n\n**调用示例:**\n<<<[TOOL_REQUEST]>>>\ntool_name: 「始」ChromeBridge「末」,\ncommand: 「始」get_status「末」\n<<<[END_TOOL_REQUEST]>>>",
+                "example": "**调用示例:**\n<<<[TOOL_REQUEST]>>>\ntool_name: 「始」ChromeBridge「末」,\ncommand: 「始」get_status「末」\n<<<[END_TOOL_REQUEST]>>>"
             }
         ]
     },
@@ -203,12 +223,27 @@
         "messageType": "chrome_command"
     },
     "configSchema": {
-        "DebugMode": "boolean"
+        "DebugMode": "boolean",
+        "DOUYIN_ASR_ENABLED": "boolean",
+        "DOUYIN_ASR_BASE_URL": "string",
+        "DOUYIN_ASR_API_KEY": "string",
+        "DOUYIN_ASR_MODEL": "string",
+        "DOUYIN_ASR_TIMEOUT_MS": "integer"
     },
     "configSchemaDescriptions": {
-        "DebugMode": "是否启用调试模式，打印详细日志"
+        "DebugMode": "是否启用调试模式，打印详细日志",
+        "DOUYIN_ASR_ENABLED": "是否启用抖音无字幕视频的 ASR 自动转写（douyin_captions）",
+        "DOUYIN_ASR_BASE_URL": "ASR 接口基础地址（OpenAI 兼容，如 https://api.siliconflow.cn/v1）",
+        "DOUYIN_ASR_API_KEY": "ASR 服务商 API Key",
+        "DOUYIN_ASR_MODEL": "ASR 模型名（如 FunAudioLLM/SenseVoiceSmall、whisper-1）",
+        "DOUYIN_ASR_TIMEOUT_MS": "ASR 转写超时时间（毫秒）"
     },
     "defaults": {
-        "DebugMode": false
+        "DebugMode": false,
+        "DOUYIN_ASR_ENABLED": false,
+        "DOUYIN_ASR_BASE_URL": "https://api.openai.com/v1",
+        "DOUYIN_ASR_API_KEY": "",
+        "DOUYIN_ASR_MODEL": "whisper-1",
+        "DOUYIN_ASR_TIMEOUT_MS": 300000
     }
 }

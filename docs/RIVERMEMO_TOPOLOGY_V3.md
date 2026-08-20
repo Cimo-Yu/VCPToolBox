@@ -4,12 +4,16 @@
 > 算法标识：`rivermemo.topology-v3.1`
 > 结果协议：`rivermemo-topology-v3-result-v1`
 > 原生计算内核：`rivermemo.topology-v3.1-rust`
-> 文档更新时间：2026-07-23
+> 文档更新时间：2026-08-12
 > 本文只记录拓扑 V3；其他历史、实验或对照构型不属于本文范围。
 >
 > **当前实现状态**：Topology V3 的候选投影、候选超集、路径几何、相对拓扑、
 > DSTC 观测、Direct Anchor、批级条件创新与最终排序已下沉至 Rust。
 > JS 只负责 V9 查询观测、双场准备、一次 N-API 提交和稳定结果组装。
+>
+> **2026-08-12 本次同步**：补写第 7.1 节的闭合均值有序累加、第 10.6 节的角色改判语义、
+> 第 13 节第 18–19 条不变量、第 14 节的三个角色改判 trace 字段，并修正 12 处已失效的
+> 源码行号引用（其中 7 处 Rust 引用整体偏移约 390 行，早于本次改动即已过期）。
 
 ## 拓扑 V3 总方程
 
@@ -81,9 +85,11 @@ s_A-\tau_A
 其中，关系拓扑通道只奖励候选超出同条件期望及其不确定性上界的正创新；直接锚点通道则保护无需复杂河网即可成立的 hop-0 事实接触。两条创新通道均受独立上限约束，最终结果统一投影至 \([0,1]\)。
 
 生产代码落点为 Rust 原生内核
-[`run_native()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:1756) 与异步 N-API 入口
-[`rerank_rivermemo_topology_v3()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:2121)。
-JS 入口 [`RiverMemoEngine.rerank()`](../RiverMemoEngine.js:425) 只准备连续查询场并消费原生结果。
+[`run_native()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:2151) 与异步 N-API 入口
+[`rerank_rivermemo_topology_v3()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:2581)。
+JS 入口 [`RiverMemoEngine.rerank()`](../RiverMemoEngine.js:465) 只准备连续查询场并消费原生结果
+（2026-08-12：该方法内 `return await this._rerankNative(...)` 之后的 304 行退役 JS Topology V3
+孪生实现已删除——它位于无条件 return/throw 之后，任何路径都到不了）。
 [`experimentArms.js`](../modules/tagmemoV10/experimentArms.js) 等旧 JS 实验构型保留在仓库中，
 但不再属于 RiverMemo Topology V3 的生产执行路径。
 
@@ -143,7 +149,7 @@ RiverMemo 是 VCP 长期记忆系统中建立在 TagMemo V9 已验证传播底�
 
 这一链路已经在工程上证明是当前项目已知的最优全上下文降噪方案，因此 RiverMemo 不对它进行替换。
 
-实现上，[`TagMemoV10Engine.prepareQuery()`](../TagMemoV10Engine.js:981) 默认要求 `v9_epa_pyramid_spike` 观测，并调用 [`TagMemoEngine.observeQueryForV10()`](../TagMemoEngine.js:1298)。普通 Tag KNN 回退默认关闭；完整降噪观测不可用时，系统拒绝把未降噪近邻伪装成 RiverMemo 源场。
+实现上，[`TagMemoV10Engine.prepareQuery()`](../TagMemoV10Engine.js:1085) 默认要求 `v9_epa_pyramid_spike` 观测，并调用 [`TagMemoEngine.observeQueryForV10()`](../TagMemoEngine.js:1493)。普通 Tag KNN 回退默认关闭；完整降噪观测不可用时，系统拒绝把未降噪近邻伪装成 RiverMemo 源场。
 
 ### 2.2 V9 底座与 V3 贡献的分界
 
@@ -218,7 +224,7 @@ G=(V,E,P)
 
 该严格次随机条件保证传输算子不会无界创造质量，并使后续 resolvent 场收敛。
 
-拓扑 V3 使用的传输资产直接继承 V9.1 的事实压缩、枢纽校正、预算内虫洞和固定行预算。构建时还显式拒绝最大行质量不小于 1 的不稳定资产，见 [`TagMemoV10Engine.buildArtifact()`](../TagMemoV10Engine.js:447)。
+拓扑 V3 使用的传输资产直接继承 V9.1 的事实压缩、枢纽校正、预算内虫洞和固定行预算。构建时还显式拒绝最大行质量不小于 1 的不稳定资产，见 [`TagMemoV10Engine.buildArtifact()`](../TagMemoV10Engine.js:439)。
 
 ---
 
@@ -288,7 +294,7 @@ E_i=\sum_{h=0}^{H}a_h e_i^{(h)}
 1. 节点势 \(E_i\)；
 2. 实际承载过信息的边流 \(F_{ij}=\sum_h f_{ij}^{(h)}\)。
 
-实现位于 [`TagMemoEngine._propagateSpikes()`](../TagMemoEngine.js:541)。
+实现位于 [`TagMemoEngine._propagateSpikes()`](../TagMemoEngine.js:735)。
 
 ### 4.3 请求级查询河网
 
@@ -456,7 +462,7 @@ Q_i=0
 \]
 
 候选整体路径质量再由支持覆盖与 Tag 到 chunk 的闭合度收束。生产实现位于
-Rust [`evaluate_path()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:790)；
+Rust [`evaluate_path()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:1180)；
 同名 JS 算法仅作为已退役实验实现保留，不参与 RiverMemo 生产召回。
 
 ---
@@ -479,6 +485,20 @@ A(r,t)
 Semantic(r,t)\cdot Closure(t,c)
 }
 \]
+
+节点对应集在实现中以 Tag ID 为键有序存放（`BTreeMap`，见 `evaluate_topology()` 内
+`alignments` 的声明），因为闭合均值
+
+\[
+\overline{Closure}(c)
+=
+\frac{1}{|A_c|}\sum_{(r,t)\in A_c}Closure(t,c)
+\]
+
+是把该集合直接累加成一个浮点数后读出的。浮点加法不满足结合律，所以求和顺序必须由
+Tag ID 决定、而不能由哈希容器的迭代顺序决定——后者在 Rust 中由每进程随机的 `RandomState`
+给出，会让同一查询在不同进程得到末位不同的 \(\overline{Closure}\)，并经 \(N_c\)、
+可信度一路传到角色阈值边界上。这是第 13 节可回放性不变量的一个必要条件，不是实现细节。
 
 ### 7.2 边对应
 
@@ -525,7 +545,7 @@ w_MM_c
 若没有完整边对应，则只允许受限节点退化读出，不能把不可观测的距离、方向和 Motif 当成零值混入。
 
 生产实现位于 Rust
-[`evaluate_topology()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:928)，
+[`evaluate_topology()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:1317)，
 候选之间通过 Rayon 并行执行。
 
 ---
@@ -647,7 +667,7 @@ p_k=\frac{F_k}{\sum_jF_j}
 几何平均意味着任何一个维度严重退化都会压低整体 Ω，任何单一维度都不能独自伪造完整河网。
 
 生产召回中的 Ω 由 Rust
-[`compute_omega()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:1430)
+[`compute_omega()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:1824)
 在同一次原生任务中计算。JS
 [`computeRiverObservability()`](../modules/tagmemoV10/riverObservability.js:44)
 只保留给独立只读测量接口，不参与 Topology V3 原生排序。
@@ -716,7 +736,7 @@ H(c)=A(c)R_A(c)
 \]
 
 这一通道只读取 hop-0 源锚，不允许远端涌现节点伪装成直接事实。生产实现位于
-Rust [`compute_anchors()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:1284)，
+Rust [`compute_anchors()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:1675)，
 接触发现与候选锚计算由 Rayon 并行执行。
 
 ---
@@ -821,9 +841,30 @@ B_H(c)
 - \(B_H(c)\)：不依赖河网密度的直接事实锚。
 
 生产实现位于 Rust
-[`assign_v3_scores()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:1497)。
+[`assign_v3_scores()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:1890)。
 该函数在候选级并行观测结束后执行批级条件期望、创新下置信界、锚激活阈值、
 角色改判和最终有界排序。
+
+### 10.6 角色改判只改标签
+
+上式里没有角色项，这不是省略。角色在实现中被读取两次——取角色权重与取角色增量上限——
+两处都发生在角色改判之前。改判只重写标签，不回溯任何已经定下的分量：
+
+\[
+S_{V3}(c)\ \text{与}\ role(c)\ \text{的改判相互独立}
+\]
+
+两条改判支是：
+
+1. **锚对比提升**：候选是批内最强锚接触且满足提升条件时，标签改为 `direct_answer`；
+2. **河网塌缩降级**：\(\Omega<\Omega_{struct}^{min}\) 时，`structural_explanation` 标签降为
+   `thematic_neighbor`——河网整体不可观测，就不该继续声称某候选提供了结构解释。
+
+第 2 支可实测：把 \(\Omega_{struct}^{min}\) 从 0.12 推到 0.99，13 个候选里 10 个的标签由
+`structural_explanation` 变为 `thematic_neighbor`，而 13 条 `score` 与整个名次序列**逐位不变**。
+
+因此角色是**读出层的解释标注**，不是评分因子。想用角色影响排序，必须改的是角色权重与上限
+的取值时机，而不是改判条件。
 
 ---
 
@@ -870,7 +911,7 @@ B_H(c)
 
 ## 12. 完整生产链
 
-[`RiverMemoEngine.rerank()`](../RiverMemoEngine.js:425) 的拓扑 V3 生产链为：
+[`RiverMemoEngine.rerank()`](../RiverMemoEngine.js:465) 的拓扑 V3 生产链为：
 
 ```text
 JS：整个上下文查询向量
@@ -897,13 +938,13 @@ Pairwise 或配置代际。原生 Artifact 按签名缓存；签名变化时旧�
 
 生产路径不再创建 [`worker_threads`](../modules/tagmemoV10/riverMemoWorkerPool.js)
 形式的 RiverMemo Node Worker 池。旧 Worker 文件仅作为退役代码保留，不会被
-[`KnowledgeBaseManager.rerankWithRiverMemoAsync()`](../KnowledgeBaseManager.js:935)
+[`KnowledgeBaseManager.rerankWithRiverMemoAsync()`](../KnowledgeBaseManager.js:1946)
 引用或启动。
 
 当前线程模型为：
 
 1. Node 主线程完成查询观测和双场准备；
-2. [`rerank_rivermemo_topology_v3()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:2121)
+2. [`rerank_rivermemo_topology_v3()`](../rust-vexus-lite/src/rivermemo_topology_v3.rs:2581)
    返回原生 `AsyncTask`，将整次原生计算移出 Node 事件循环；
 3. Rust 任务内部使用 Rayon 对候选路径、相对拓扑、观测和锚接触并行计算；
 4. 批级统计与最终排序在 Rust 内闭合；
@@ -946,7 +987,11 @@ Pairwise 或配置代际。原生 Artifact 按签名缓存；签名变化时旧�
 15. 所有结果必须绑定 Artifact 签名与查询 ID；
 16. 候选级 Topology V3 热点必须在 Rust 内部并行，禁止恢复 JS 逐候选计算；
 17. 生产请求只允许一次原生任务提交，不得为 RiverMemo 再启动 Node Worker 池；
-18. 拓扑 V3 是本文唯一正式构型。
+18. 同一 Artifact、同一查询、同一候选集必须逐位可复现：任何进入分数的浮点累加都不得依赖
+    哈希容器的迭代顺序（`HashMap`/`HashSet` 的迭代序在 Rust 中每进程随机），必须由稳定键
+    定序；
+19. 角色改判不得回溯修改任何已定下的分量，只允许改写标签；
+20. 拓扑 V3 是本文唯一正式构型。
 
 ---
 
@@ -962,7 +1007,7 @@ Pairwise 或配置代际。原生 Artifact 按签名缓存；签名变化时旧�
 | `topologyBonus` | \(\Omega^\gamma B_G(c)\) |
 | `anchorBonus` | \(B_H(c)\) |
 | `score` | \(S_{V3}(c)\) |
-| `role` | 候选在当前查询中的解释角色 |
+| `role` | 候选在当前查询中的解释角色（改判后的终值） |
 | `candidateSources` | 候选进入超集的召回来源 |
 | `matchedTags` | 候选原生 Tag 曲线中的 Tag |
 | `coreTagsMatched` | 与查询 Core Tag 相交的候选 Tag |
@@ -976,7 +1021,17 @@ Pairwise 或配置代际。原生 Artifact 按签名缓存；签名变化时旧�
 - 相对拓扑节点和边对应；
 - 路径段势能、方向和连续性；
 - 直接锚接触、闭合、特异性和稀有度；
-- 结构增量被 Ω 门控前后的差异。
+- 结构增量被 Ω 门控前后的差异；
+- 角色改判前后的差异，由三个字段给出：
+
+| 字段 | 含义 |
+|:--|:--|
+| `originalRole` | 改判前的角色，即实际参与了角色权重与上限取值的那个 |
+| `roleReclassified` | 是否发生改判，等价于 `originalRole != role` |
+| `roleReclassificationReason` | `strong-direct-anchor-contrast`（锚对比提升）或 `collapsed-river-structure`（河网塌缩降级），未改判时为 `null` |
+
+没有这三个字段时，仅从 `role` 无法判断第 10.6 节哪一条支被走过，也就无法把「角色是塌缩降级
+来的」和「角色本来就是邻近主题」区分开——两者的 `role` 相同而含义相反。
 
 ---
 
@@ -995,6 +1050,14 @@ Pairwise 或配置代际。原生 Artifact 按签名缓存；签名变化时旧�
 7. Ω 可以统一控制结构证据的排序权限；
 8. 直接事实锚可以作为与河网密度正交的通道；
 9. 三者可以在一个有界、可回放、只做非负修正的泛函中闭合。
+
+第 9 条里的「可回放」是**实现要维护的性质，不是数学自动给出的**。闭合均值一路曾经依赖
+哈希容器迭代序，实测同一 Artifact、同一查询在三个独立进程中两两都给出不同的
+\(\overline{Closure}\)（末位差 1–2 ULP）；改为按 Tag ID 有序累加后，同样三次两两逐位一致。
+
+同时记录该偏差的量级，以免高估这条性质的排序含义：修复前后**名次序列完全一致**，13 个候选
+的 `score` 有 11 个逐位相同、2 个差 \(5.6\times10^{-17}\)。所以有序累加买到的是可复现性与调
+试可判定性，不是召回质量。反过来说，任何声称改善了排序的改动都不能拿这一类修复当证据。
 
 ### 不应扩张的结论
 

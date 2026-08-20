@@ -325,7 +325,7 @@ module.exports = function(options) {
     router.get('/notifications/connection', (req, res) => {
         try {
             const vcpKey = process.env.VCP_Key || '';
-            const port = parseInt(process.env.PORT, 10) || 6005;
+            const port = parseInt(process.env.PORT, 10) || 6015;
             if (!vcpKey) {
                 return res.status(503).json({
                     success: false,

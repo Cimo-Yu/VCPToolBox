@@ -864,6 +864,11 @@ app.use((req, res, next) => {
         return next();
     }
 
+    // Skip bearer token check for internal ChromeBridge routes: they carry their own x-vcp-key auth
+    if (req.path.startsWith('/internal/chrome-bridge')) {
+        return next();
+    }
+
     const authHeader = req.headers.authorization;
     if (!authHeader || authHeader !== `Bearer ${serverKey}`) {
         return res.status(401).json({ error: 'Unauthorized (Bearer token required)' });

@@ -48,7 +48,7 @@ VCP_BROWSER_RUNTIME_ENABLED=true
 VCP_BROWSER_EXECUTABLE_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
 ```
 
-插件复用根项目已经安装的 Puppeteer、Sharp 和 mime-types，不需要在插件目录单独安装依赖。GIF/视频还要求系统 PATH 中存在 FFmpeg；也可以通过 `FfmpegPath` 配置绝对路径。
+插件复用根项目已经安装的 Puppeteer、Sharp 和 mime-types，不需要在插件目录单独安装依赖。GIF/视频编码使用根项目 `bin/ffmpeg` 内置的 FFmpeg 运行时（插件 `config.env` 中的 `FfmpegPath` 已指向该二进制）；如换用其他机器，也可改为系统 PATH 中的 FFmpeg 命令名或其他绝对路径。
 
 `GenerateAudio` 只依赖当前 Node.js 运行时。只生成 WAV 时，不要求启用托管浏览器，也不要求安装 FFmpeg。
 

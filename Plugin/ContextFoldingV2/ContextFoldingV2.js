@@ -61,14 +61,15 @@ class ContextFoldingV2 {
     async initialize(config, dependencies) {
         // 1. 加载插件独立 config.env
         const envPath = path.join(__dirname, 'config.env');
-        dotenv.config({ path: envPath });
+        const localEnv = dotenv.config({ path: envPath }).parsed || {};
+        const getFoldingEnv = (name) => localEnv[name] ?? process.env[name];
 
-        this.summaryModel = process.env.FOLDING_SUMMARY_MODEL || 'gemini-3.1-flash-lite-preview';
-        this.summarySystemPrompt = (process.env.FOLDING_SUMMARY_SYSTEM_PROMPT || '').replace(/\\n/g, '\n');
-        this.summaryUserPrompt = (process.env.FOLDING_SUMMARY_USER_PROMPT || '').replace(/\\n/g, '\n');
-        this.minDepth = Math.max(2, parseInt(process.env.FOLDING_MIN_DEPTH) || 3);
-        this.maxRetries = parseInt(process.env.FOLDING_MAX_RETRIES) || 3;
-        this.maxConcurrentSummaries = Math.max(1, parseInt(process.env.FOLDING_SUMMARY_MAX_CONCURRENT, 10) || 5);
+        this.summaryModel = getFoldingEnv('FOLDING_SUMMARY_MODEL') || 'gemini-3.1-flash-lite-preview';
+        this.summarySystemPrompt = (getFoldingEnv('FOLDING_SUMMARY_SYSTEM_PROMPT') || '').replace(/\\n/g, '\n');
+        this.summaryUserPrompt = (getFoldingEnv('FOLDING_SUMMARY_USER_PROMPT') || '').replace(/\\n/g, '\n');
+        this.minDepth = Math.max(2, parseInt(getFoldingEnv('FOLDING_MIN_DEPTH')) || 3);
+        this.maxRetries = parseInt(getFoldingEnv('FOLDING_MAX_RETRIES')) || 3;
+        this.maxConcurrentSummaries = Math.max(1, parseInt(getFoldingEnv('FOLDING_SUMMARY_MAX_CONCURRENT'), 10) || 5);
 
         // 🌟 保存 PROJECT_BASE_PATH 到实例，供 _loadHotParams / _startHotParamsWatcher 使用
         this._projectBasePath = (config && config.PROJECT_BASE_PATH) || process.env.PROJECT_BASE_PATH || path.join(__dirname, '../../');

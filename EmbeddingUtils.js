@@ -7,6 +7,8 @@ const embeddingMaxToken = parseInt(process.env.WhitelistEmbeddingModelMaxToken, 
 const safeMaxTokens = Math.floor(embeddingMaxToken * 0.85);
 const MAX_BATCH_ITEMS = parseInt(process.env.EMBEDDING_MAX_BATCH_ITEMS, 10) || 32; // Embedding 单批最大条数，可通过 env 控制
 const DEFAULT_CONCURRENCY = parseInt(process.env.TAG_VECTORIZE_CONCURRENCY) || 5; // 🌟 读取并发配置
+// 🕐 Embedding 单次请求超时（毫秒）。未配置时默认 60s；上游挂起时不再无限等待。
+const EMBEDDING_TIMEOUT_MS = Math.max(5000, parseInt(process.env.EMBEDDING_TIMEOUT_MS, 10) || 60000);
 
 function _splitModelList(value) {
     return String(value || '')
@@ -45,93 +47,128 @@ function _getEmbeddingModelCandidates(config = {}) {
     return candidates.length > 0 ? candidates : ['google/gemini-embedding-001'];
 }
 
+function _isTransientEmbeddingError(status, message = '') {
+    const text = String(message || '');
+    if (status === 429 || status === 502 || status === 503 || status === 504) return true;
+    // new-api 单通道抖动时常返回 503 + no available channel / model_not_found
+    return /no available channel|model_not_found|upstream|timeout|econnreset|socket hang up|temporar/i.test(text);
+}
+
 /**
  * 内部函数：发送单个批次
+ * 策略：只按配置的模型候选列表走；每个模型对 429/503 等瞬时错误做同模型重试，
+ * 避免“只开一个 embedding 组别”时偶发抖动直接整批失败。
  */
 async function _sendBatch(batchTexts, config, batchNumber) {
     const { default: fetch } = await import('node-fetch');
     const modelCandidates = _getEmbeddingModelCandidates(config);
-    const baseDelay = 1000;
+    const perModelRetries = Math.max(1, parseInt(process.env.EMBEDDING_TRANSIENT_RETRIES, 10) || 3);
+    const baseDelay = Math.max(200, parseInt(process.env.EMBEDDING_RETRY_BASE_DELAY_MS, 10) || 1000);
+    let lastError = null;
 
-    for (let attempt = 1; attempt <= modelCandidates.length; attempt++) {
-        const model = modelCandidates[attempt - 1];
-        try {
-            const requestUrl = `${config.apiUrl}/v1/embeddings`;
-            const requestBody = { model, input: batchTexts };
-            const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` };
+    for (let modelIndex = 0; modelIndex < modelCandidates.length; modelIndex++) {
+        const model = modelCandidates[modelIndex];
 
-            const response = await fetch(requestUrl, {
-                method: 'POST',
-                headers: requestHeaders,
-                body: JSON.stringify(requestBody)
-            });
+        for (let retry = 1; retry <= perModelRetries; retry++) {
+            try {
+                const requestUrl = `${config.apiUrl}/v1/embeddings`;
+                const requestBody = { model, input: batchTexts };
+                const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` };
 
-            const responseBodyText = await response.text();
+                const response = await fetch(requestUrl, {
+                    method: 'POST',
+                    headers: requestHeaders,
+                    body: JSON.stringify(requestBody),
+                    signal: AbortSignal.timeout(EMBEDDING_TIMEOUT_MS)
+                });
 
-            if (!response.ok) {
-                if (response.status === 429) {
-                    const waitTime = Math.min(5000 * attempt, 15000);
-                    console.warn(`[Embedding] Batch ${batchNumber} model "${model}" rate limited (429). Switching fallback in ${waitTime / 1000}s...`);
+                const responseBodyText = await response.text();
+
+                if (!response.ok) {
+                    const transient = _isTransientEmbeddingError(response.status, responseBodyText);
+                    const err = new Error(`API Error ${response.status}: ${responseBodyText.substring(0, 500)}`);
+                    if (transient && retry < perModelRetries) {
+                        const waitTime = Math.min(baseDelay * Math.pow(2, retry - 1), 15000);
+                        console.warn(`[Embedding] Batch ${batchNumber} model "${model}" transient ${response.status} (${retry}/${perModelRetries}). Retry same model in ${waitTime / 1000}s...`);
+                        await new Promise(r => setTimeout(r, waitTime));
+                        lastError = err;
+                        continue;
+                    }
+                    throw err;
+                }
+
+                let data;
+                try {
+                    data = JSON.parse(responseBodyText);
+                } catch (parseError) {
+                    console.error(`[Embedding] JSON Parse Error for Batch ${batchNumber}:`);
+                    console.error(`Response (first 500 chars): ${responseBodyText.substring(0, 500)}`);
+                    throw new Error(`Failed to parse API response as JSON: ${parseError.message}`);
+                }
+
+                // 增强的响应结构验证和详细错误信息
+                if (!data) {
+                    throw new Error(`API returned empty/null response`);
+                }
+
+                // 检查是否是错误响应
+                if (data.error) {
+                    const errorMsg = data.error.message || JSON.stringify(data.error);
+                    const errorCode = data.error.code || response.status;
+                    console.error(`[Embedding] API Error for Batch ${batchNumber}:`);
+                    console.error(`  Error Code: ${errorCode}`);
+                    console.error(`  Error Message: ${errorMsg}`);
+                    console.error(`  Hint: Check if embedding model "${model}" is available on your API server`);
+                    const err = new Error(`API Error ${errorCode}: ${errorMsg}`);
+                    if (_isTransientEmbeddingError(errorCode, errorMsg) && retry < perModelRetries) {
+                        const waitTime = Math.min(baseDelay * Math.pow(2, retry - 1), 15000);
+                        console.warn(`[Embedding] Batch ${batchNumber} model "${model}" transient body error (${retry}/${perModelRetries}). Retry same model in ${waitTime / 1000}s...`);
+                        await new Promise(r => setTimeout(r, waitTime));
+                        lastError = err;
+                        continue;
+                    }
+                    throw err;
+                }
+
+                if (!data.data) {
+                    console.error(`[Embedding] Missing 'data' field in response for Batch ${batchNumber}`);
+                    console.error(`Response keys: ${Object.keys(data).join(', ')}`);
+                    console.error(`Response preview: ${JSON.stringify(data).substring(0, 500)}`);
+                    throw new Error(`Invalid API response structure: missing 'data' field`);
+                }
+
+                if (!Array.isArray(data.data)) {
+                    console.error(`[Embedding] 'data' field is not an array for Batch ${batchNumber}`);
+                    console.error(`data type: ${typeof data.data}`);
+                    console.error(`data value: ${JSON.stringify(data.data).substring(0, 200)}`);
+                    throw new Error(`Invalid API response structure: 'data' is not an array`);
+                }
+
+                if (data.data.length === 0) {
+                    console.warn(`[Embedding] Warning: Batch ${batchNumber} returned empty embeddings array`);
+                }
+
+                // 简单的 Log，证明并发正在跑
+                // console.log(`[Embedding] ✅ Batch ${batchNumber} completed (${batchTexts.length} items) via ${model}.`);
+
+                return data.data.sort((a, b) => a.index - b.index).map(item => item.embedding);
+
+            } catch (e) {
+                lastError = e;
+                const transient = _isTransientEmbeddingError(0, e.message);
+                console.warn(`[Embedding] Batch ${batchNumber}, Model "${model}" failed (model ${modelIndex + 1}/${modelCandidates.length}, try ${retry}/${perModelRetries}): ${e.message}`);
+                if (transient && retry < perModelRetries) {
+                    const waitTime = Math.min(baseDelay * Math.pow(2, retry - 1), 15000);
                     await new Promise(r => setTimeout(r, waitTime));
                     continue;
                 }
-                throw new Error(`API Error ${response.status}: ${responseBodyText.substring(0, 500)}`);
+                // 同模型重试用尽，换下一个候选；没有候选则抛出
+                break;
             }
-
-            let data;
-            try {
-                data = JSON.parse(responseBodyText);
-            } catch (parseError) {
-                console.error(`[Embedding] JSON Parse Error for Batch ${batchNumber}:`);
-                console.error(`Response (first 500 chars): ${responseBodyText.substring(0, 500)}`);
-                throw new Error(`Failed to parse API response as JSON: ${parseError.message}`);
-            }
-
-            // 增强的响应结构验证和详细错误信息
-            if (!data) {
-                throw new Error(`API returned empty/null response`);
-            }
-
-            // 检查是否是错误响应
-            if (data.error) {
-                const errorMsg = data.error.message || JSON.stringify(data.error);
-                const errorCode = data.error.code || response.status;
-                console.error(`[Embedding] API Error for Batch ${batchNumber}:`);
-                console.error(`  Error Code: ${errorCode}`);
-                console.error(`  Error Message: ${errorMsg}`);
-                console.error(`  Hint: Check if embedding model "${model}" is available on your API server`);
-                throw new Error(`API Error ${errorCode}: ${errorMsg}`);
-            }
-
-            if (!data.data) {
-                console.error(`[Embedding] Missing 'data' field in response for Batch ${batchNumber}`);
-                console.error(`Response keys: ${Object.keys(data).join(', ')}`);
-                console.error(`Response preview: ${JSON.stringify(data).substring(0, 500)}`);
-                throw new Error(`Invalid API response structure: missing 'data' field`);
-            }
-
-            if (!Array.isArray(data.data)) {
-                console.error(`[Embedding] 'data' field is not an array for Batch ${batchNumber}`);
-                console.error(`data type: ${typeof data.data}`);
-                console.error(`data value: ${JSON.stringify(data.data).substring(0, 200)}`);
-                throw new Error(`Invalid API response structure: 'data' is not an array`);
-            }
-
-            if (data.data.length === 0) {
-                console.warn(`[Embedding] Warning: Batch ${batchNumber} returned empty embeddings array`);
-            }
-
-            // 简单的 Log，证明并发正在跑
-            // console.log(`[Embedding] ✅ Batch ${batchNumber} completed (${batchTexts.length} items) via ${model}.`);
-
-            return data.data.sort((a, b) => a.index - b.index).map(item => item.embedding);
-
-        } catch (e) {
-            console.warn(`[Embedding] Batch ${batchNumber}, Model "${model}" failed (${attempt}/${modelCandidates.length}): ${e.message}`);
-            if (attempt === modelCandidates.length) throw e;
-            await new Promise(r => setTimeout(r, baseDelay * attempt));
         }
     }
+
+    throw lastError || new Error('Embedding request failed with no model candidates');
 }
 
 /**

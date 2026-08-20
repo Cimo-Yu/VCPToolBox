@@ -15,6 +15,7 @@ river:「始」mode「末」//(可选) 调用工具时传递上下文让工具�
 <<<[TOOL_REQUEST]>>>到<<<[END_TOOL_REQUEST]>>>来表示一次完整调用。使用「始」「末」包裹参数来兼容富文本识别。
 主动判断当前需求，灵活使用各类工具调用，服务器支持一次调用多个工具和连续调用。
 
+[===vcp_fold:0.35::desc:定时任务查询 TimedTaskQuery 执行进度 历史结果 取消任务 timely_contact 定时调用===]
 查询一个 timely_contact 调用工具的执行进度或者执行历史结果。
 <<<[TOOL_REQUEST]>>>
 maid:「始」Nova「末」,

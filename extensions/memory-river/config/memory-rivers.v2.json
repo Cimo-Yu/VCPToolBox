@@ -1,7 +1,86 @@
 {
   "version": 2,
-  "principals": [],
-  "diaries": [],
-  "rivers": [],
-  "grants": []
+  "principals": [
+    {
+      "principalId": "vcpchat:weiming",
+      "principalType": "agent",
+      "displayName": "微明",
+      "enabled": true,
+      "metadata": {
+        "maidNames": [
+          "微明",
+          "Weiming"
+        ],
+        "vcpchatAgentId": "_Agent_1784231991207_1784231991204"
+      }
+    },
+    {
+      "principalId": "vcpchat:_Agent_1773652001774_1773652001775",
+      "principalType": "agent",
+      "displayName": "Ariadne",
+      "enabled": true,
+      "metadata": {}
+    }
+  ],
+  "diaries": [
+    {
+      "diaryId": "diary:ee8a9504595a",
+      "diaryName": "美学",
+      "ownerPrincipalId": "vcpchat:weiming",
+      "source": {
+        "type": "folder",
+        "folder": "美学",
+        "canonicalKey": "folder:美学"
+      },
+      "enabled": true,
+      "metadata": {}
+    },
+    {
+      "diaryId": "diary:f83d31e40639",
+      "diaryName": "阿里阿德涅的知识",
+      "ownerPrincipalId": "vcpchat:_Agent_1773652001774_1773652001775",
+      "source": {
+        "type": "folder",
+        "folder": "阿里阿德涅的知识",
+        "canonicalKey": "folder:阿里阿德涅的知识"
+      },
+      "enabled": true,
+      "metadata": {}
+    }
+  ],
+  "rivers": [
+    {
+      "riverId": "aesthetics-river",
+      "name": "美学河",
+      "memoryScope": "river:aesthetics-river",
+      "diaryIds": [
+        "diary:ee8a9504595a"
+      ],
+      "enabled": true,
+      "metadata": {}
+    },
+    {
+      "riverId": "111",
+      "name": "日常河",
+      "memoryScope": "river:111",
+      "diaryIds": [
+        "diary:f83d31e40639"
+      ],
+      "enabled": true,
+      "metadata": {}
+    }
+  ],
+  "grants": [
+    {
+      "grantId": "grant:vcpchat:weiming:aesthetics-river",
+      "principalId": "vcpchat:weiming",
+      "riverId": "aesthetics-river",
+      "permissions": [
+        "read_own",
+        "observe"
+      ],
+      "enabled": true,
+      "metadata": {}
+    }
+  ]
 }

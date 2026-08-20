@@ -843,6 +843,14 @@ async function handleDistributedServerMessage(serverId, message) {
                 console.error(`[WebSocketServer] Failed to sync distributed music playlist from ${serverId}:`, error);
             }
             break;
+        case 'vcp_info_broadcast':
+            // 分布式服务端（如 VCPChat 的 DeepMemo）请求向 VCPInfo 通道广播检索详情，
+            // 供 VCP RAG 信息流监听器（RAG_Observer）展示。
+            if (message.data && typeof message.data === 'object' && !Array.isArray(message.data)) {
+                writeLog(`[WebSocketServer] Relaying VCPInfo broadcast from distributed server ${serverId} to VCPInfo clients.`);
+                broadcastVCPInfo(message.data);
+            }
+            break;
         case 'tool_result':
             const pending = pendingToolRequests.get(message.data.requestId);
             if (pending) {

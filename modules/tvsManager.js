@@ -74,7 +74,8 @@ class TvsManager {
         }
 
         try {
-            const filePath = path.join(TVS_DIR, filename);
+            // 兼容绝对路径：config.env 中既有相对文件名（Dailynote.txt），也有绝对路径（D:\vcp\...）
+            const filePath = path.isAbsolute(filename) ? filename : path.join(TVS_DIR, filename);
             const content = await fs.readFile(filePath, 'utf8');
             this.contentCache.set(filename, content);
             return content;

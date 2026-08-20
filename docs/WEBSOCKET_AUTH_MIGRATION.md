@@ -69,7 +69,7 @@ Authorization: Bearer <VCP_Key>
 示例 URL：
 
 ```text
-ws://127.0.0.1:6005/VCPlog?deviceName=VCPChat-Desktop
+ws://127.0.0.1:6015/VCPlog?deviceName=VCPChat-Desktop
 ```
 
 示例握手 Header：
@@ -206,13 +206,13 @@ ALLOW_LEGACY_WS_URL_KEY=false
 旧：
 
 ```text
-ws://host:6005/VCPlog/VCP_Key=<key>
+ws://host:6015/VCPlog/VCP_Key=<key>
 ```
 
 新：
 
 ```text
-ws://host:6005/VCPlog?deviceName=<deviceName>
+ws://host:6015/VCPlog?deviceName=<deviceName>
 ```
 
 Header：
@@ -230,7 +230,7 @@ x-vcp-key: <key>
 浏览器短期 token 子协议：
 
 ```js
-new WebSocket("ws://host:6005/VCPlog?deviceName=AdminPanel-Vue-Notifications", [
+new WebSocket("ws://host:6015/VCPlog?deviceName=AdminPanel-Vue-Notifications", [
   "vcp.auth",
   `vcp.token.${wsToken}`
 ]);
@@ -241,13 +241,13 @@ new WebSocket("ws://host:6005/VCPlog?deviceName=AdminPanel-Vue-Notifications", [
 旧：
 
 ```text
-ws://host:6005/vcpinfo/VCP_Key=<key>
+ws://host:6015/vcpinfo/VCP_Key=<key>
 ```
 
 新：
 
 ```text
-ws://host:6005/vcpinfo
+ws://host:6015/vcpinfo
 ```
 
 ### 7.3 分布式节点
@@ -255,13 +255,13 @@ ws://host:6005/vcpinfo
 旧：
 
 ```text
-ws://host:6005/vcp-distributed-server/VCP_Key=<key>
+ws://host:6015/vcp-distributed-server/VCP_Key=<key>
 ```
 
 新：
 
 ```text
-ws://host:6005/vcp-distributed-server
+ws://host:6015/vcp-distributed-server
 ```
 
 Header：
@@ -289,13 +289,13 @@ Authorization: Bearer <key>
 旧：
 
 ```text
-ws://host:6005/vcp-chrome-observer/VCP_Key=<key>
+ws://host:6015/vcp-chrome-observer/VCP_Key=<key>
 ```
 
 新：
 
 ```text
-ws://host:6005/vcp-chrome-observer
+ws://host:6015/vcp-chrome-observer
 ```
 
 浏览器扩展后台脚本若使用 Chrome Extension WebSocket，也受浏览器 Header 限制，建议使用短期 token 子协议。
@@ -360,7 +360,7 @@ ws://host:6005/vcp-chrome-observer
 ```js
 const WebSocket = require("ws");
 
-const ws = new WebSocket("ws://127.0.0.1:6005/vcp-distributed-server", {
+const ws = new WebSocket("ws://127.0.0.1:6015/vcp-distributed-server", {
   headers: {
     Authorization: `Bearer ${process.env.VCP_Key}`
   }
@@ -381,7 +381,7 @@ ws.on("open", () => {
 
 ```js
 const ws = new WebSocket(
-  "ws://127.0.0.1:6005/VCPlog?deviceName=AdminPanel-Vue-Notifications",
+  "ws://127.0.0.1:6015/VCPlog?deviceName=AdminPanel-Vue-Notifications",
   ["vcp.auth", `vcp.token.${wsToken}`]
 );
 

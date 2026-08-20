@@ -732,6 +732,10 @@ class PluginManager extends EventEmitter {
                             if (typeof ragPluginModule.getAIMemoBridge === 'function') {
                                 dependencies.aiMemoBridge = ragPluginModule.getAIMemoBridge();
                             }
+                            // 注入 VCPInfo 广播能力：LightMemo 检索成功后推送检索详情到 info 窗口
+                            if (typeof ragPluginModule.pushVcpInfo === 'function') {
+                                dependencies.pushVcpInfo = ragPluginModule.pushVcpInfo;
+                            }
                             if (this.debugMode) console.log(`[PluginManager] Injected VectorDBManager, embeddings, ContextBridge and AIMemoBridge into LightMemo.`);
                         } else {
                             console.error(`[PluginManager] Critical dependency failure: RAGDiaryPlugin or its components not available for LightMemo injection.`);

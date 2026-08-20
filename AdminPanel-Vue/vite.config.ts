@@ -6,11 +6,11 @@ import { visualizer } from "rollup-plugin-visualizer";
 
 function readVcpServerPort(): string {
   const configPath = resolve(__dirname, "..", "config.env");
-  if (!existsSync(configPath)) return "6005";
+  if (!existsSync(configPath)) return "6015";
 
   const content = readFileSync(configPath, "utf-8");
   const match = content.match(/^\s*PORT\s*=\s*([^\r\n#]+)/m);
-  return match?.[1]?.trim() || "6005";
+  return match?.[1]?.trim() || "6015";
 }
 
 export default defineConfig(({ mode }) => {

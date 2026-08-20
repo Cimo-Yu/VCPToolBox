@@ -122,7 +122,7 @@ function selectEnvSource() {
 // ============================================================
 
 function normalizeBridgeConfig(raw = {}, fallbackEnv = {}) {
-    const mainServerPort = raw.mainServerPort || fallbackEnv.PORT || process.env.PORT || 6005;
+    const mainServerPort = raw.mainServerPort || fallbackEnv.PORT || process.env.PORT || 6015;
     const defaultUpstream = `http://127.0.0.1:${mainServerPort}`;
     const rawUpstreamUrl = raw.upstreamUrl ?? raw.BRIDGE_UPSTREAM_URL ?? fallbackEnv.BRIDGE_UPSTREAM_URL ?? '';
 

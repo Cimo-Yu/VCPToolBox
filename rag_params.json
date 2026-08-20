@@ -1,6 +1,6 @@
 {
   "ContextFoldingV2": {
-    "thresholdBase": 0.5,
+    "thresholdBase": 0.4,
     "thresholdRange": [
       0.4,
       0.6
@@ -34,7 +34,7 @@
       0.7,
       0.3
     ],
-    "shotgunDecayFactor": 0.75,
+    "shotgunDecayFactor": 0.8,
     "shotgunHistorySegmentLimit": 3,
     "refreshWeights": [
       0.5,
@@ -83,7 +83,7 @@
       "hubSmoothingRatio": 0.1
     },
     "riverMemo": {
-      "enabled": false,
+      "enabled": true,
       "sourceObservation": {
         "mode": "v9_epa_pyramid_spike",
         "baseTagBoost": 0.6,
@@ -146,7 +146,6 @@
         "semanticNodeThreshold": 0.48,
         "relativeDistanceTemperature": 0.35,
         "reverseDirectionCredit": 0.25,
-        "selfEvidenceFloor": 0.15,
         "nodeOnlyReliabilityCap": 0.2,
         "minimumRiverEdgeFlow": 0.015,
         "maximumRiverEdges": 96,
@@ -183,9 +182,6 @@
         "topologyV2MinimumEffectivePeers": 2.5,
         "topologyV2InnovationConfidenceZ": 1,
         "topologyV2QueryConfidenceFloor": 0.2,
-        "topologyV2DirectEvidenceThreshold": 0.55,
-        "topologyV2DirectFrontierMargin": 0.03,
-        "topologyV2FrontierProtectionMargin": 0.005,
         "topologyV3OmegaGamma": 1,
         "topologyV3StructRoleMinOmega": 0.12,
         "topologyV3AnchorBonusCap": 0.1,
@@ -207,9 +203,7 @@
           "thematic_neighbor": 0.15
         },
         "semanticSimilarityMode": "positive",
-        "closureMode": "query_weighted",
-        "queryClosureWeight": 0.65,
-        "tagClosureWeight": 0.35
+        "closureMode": "query_weighted"
       },
       "safety": {
         "permissionViolationTolerance": 0,

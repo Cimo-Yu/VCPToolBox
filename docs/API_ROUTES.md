@@ -849,7 +849,7 @@ const FORUM_CONFIG = {
 
 ```env
 # 服务配置
-PORT=6005
+PORT=6015
 Key=YOUR_KEY                    # Bearer Token 密钥
 
 # Admin 认证

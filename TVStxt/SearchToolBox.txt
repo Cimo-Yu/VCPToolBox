@@ -1,3 +1,5 @@
+[===vcp_fold:0.35::desc:VCP 联网搜索总览与核心检索工具===]
+
 # VCP 联网与搜索工具箱能力收纳
 这里收纳了 VCP 强大的联网检索、网页爬取及深度研究工具。
 
@@ -15,8 +17,9 @@ ink:「始」mark_history「末」 //可选，是否将检索结果写入history
 tool_name:「始」UrlFetch「末」,
 url:「始」(必需) 网页/文件 URL (本地路径请以 file:// 开头)「末」, 
 mode:「始」(可选) 'text' (默认) 或 'snapshot' (多模态网页快照) 或 'jina' (AI级网页转md，推荐该模式) 或 'image' (读取网络图片)「末」
+[===vcp_fold:0.5===]
 
-[===vcp_fold:0.35::desc:B站视频工具===]
+[===vcp_fold:0.5::desc:B站视频工具===]
 
 ## 3. B站视频/内容爬虫 (BilibiliFetch)
 获取 B 站视频文本（TTS 转化）、弹幕、评论及高清快照。
@@ -32,7 +35,8 @@ need_subs:「始」true「末」, //是否获取字幕
 ### 检索 B 站视频/UP主
 action:「始」search「末」,
 keyword:「始」搜索词「末」,
-search_type:「始」'video' 或 'bili_user'「末」
+search_type:「始」'video' 或 'bili_user'「末」,
+page:「始」1「末」, //可选，搜索结果页码
 
 ### 调查 UP 主投稿列表
 action:「始」get_up_videos「末」,
@@ -41,6 +45,24 @@ pn:「始」1「末」
 
 [===vcp_fold:0.5===]
 
+[===vcp_fold:0.5::desc:抖音视频工具===]
+
+## 3.5 抖音视频搜索 (ChromeBridge)
+在真实抖音会话中搜索并返回 API 级精确数据。需要已连接浏览器扩展（managed Chrome 自动接入，或用户 Chrome 手动安装 VCPBridge 扩展）。
+tool_name:「始」ChromeBridge「末」,
+command:「始」extract_data「末」,
+extract_type:「始」douyin_search「末」,
+keyword:「始」AI编程「末」,
+search_type:「始」video「末」, // 'video' / 'user' / 'general'（默认 general）
+url:「始」https://www.douyin.com/search/AI编程?type=video「末」 //可选，不填时自动打开对应搜索页
+
+返回 videos[]（标题/作者/精确互动统计/url/content_id）与 users[]（昵称/签名/粉丝数/sec_uid）。
+结果带 content_id + content_type，可继续用 douyin_video / douyin_full 拉详情做增量采集；
+互动统计是当前精确值，配合定时采样可做增速与爆款分析。
+注意：抖音有风控，遇到验证码稍后重试或更换关键词即可。
+[===vcp_fold:0.5===]
+
+[===vcp_fold:0.35::desc:全能联网搜索 TavilySearch===]
 ## 4. 全能联网搜索 (TavilySearch)
 AI 专属搜索引擎。支持搜图和原始网页内容转化。
 tool_name:「始」TavilySearch「末」,
@@ -48,11 +70,16 @@ query:「始」(必需) 搜索关键词「末」,
 topic:「始」general / news / finance「末」,
 search_depth:「始」advanced「末」, //语义搜索模式
 include_raw_content:「始」'markdown'「末」 //获取原始内容
+[===vcp_fold:0.5===]
 
+[===vcp_fold:0.0::desc:搜索工具箱基础===]
+搜索/信息类任务可用工具：VSearch（语义检索）、UrlFetch（网页抓取）、TavilySearch（联网搜索）、AnySearch（多路/垂直检索）、BilibiliFetch（B站）、ChromeBridge（抖音）。具体调用格式见对应分组；需要时说明目标，相关分组会自动展开。
+[===vcp_fold:0.5===]
+
+[===vcp_fold:0.35::desc:AnySearch 基础搜索与编排===]
 ## 5. 专业级实时与垂直领域检索，AnySearch，单次最多五路真并发
 想查实时信息、专业资料或网页正文时用这个工具。普通搜索只给 query；垂直搜索再加 sub_domain 和必要的 params。
 
-[===vcp_fold:0.0::desc:AnySearch 基础搜索与编排===]
 核心参数:
 - query: 默认搜索词；sub_domain: 「域.子域」；params: 优先写 k=v,k2=v2；max_results: 1-10。
 - queries: 同一路线批量搜索 1-5 个词，用 | 分隔。

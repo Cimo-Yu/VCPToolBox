@@ -15,8 +15,8 @@
 第六步，启动应用：npm start。也可使用run_silent.vbs实现无控制台窗口的静默启动。
 
 连接VCP后端配置：启动VCPChat后，进入全局设置，配置以下关键参数：
-服务器地址：http://你的服务器IP:6005/v1/chat/completions（HTTPS则对应https://）。
-通知地址：ws://你的服务器IP:6005（HTTPS则对应wss://）。
+服务器地址：http://你的服务器IP:6015/v1/chat/completions（HTTPS则对应https://）。
+通知地址：ws://你的服务器IP:6015（HTTPS则对应wss://）。
 用户名：必须在全局设置里设置用户名，否则众多依赖功能会报错。
 
 重要提示：启动后第一件事是在全局设置里设置用户名，这是官方文档特别强调的必做项。
@@ -30,7 +30,7 @@
 可能的解决办法：
 1. 从GitHub Releases页面下载壁纸包，解压到VCPChat项目目录。
 2. 确认Python环境已安装，运行pip install -r requirements.txt，并下载音频解码包。
-3. 检查VCPToolBox是否正常运行（访问http://服务器IP:6005/AdminPanel），确认服务器地址格式正确（末尾需要/v1/chat/completions）。
+3. 检查VCPToolBox是否正常运行（访问http://服务器IP:6015/AdminPanel），确认服务器地址格式正确（末尾需要/v1/chat/completions）。
 4. 打开VCPChat全局设置，在用户名字段填入任意名称保存。
 
 关联节点：VCP系统总览（后端架构）、AdminPanel管理配置面板（后端管理）、VCPChat_Agent管理与群聊模式（Agent配置）。

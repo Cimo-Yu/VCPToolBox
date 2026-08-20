@@ -13,10 +13,30 @@
   },
   "VCPSearchToolBox": {
     "file": "SearchToolBox.txt",
-    "description": "该收纳箱收纳了各种外部搜索，联网信息查询，爬虫与信息采集，哔哩哔哩视频，youtube视频相关的工具，用于动态向 Agent 提供说明。"
+    "description": "该收纳箱收纳了各种外部搜索，联网信息查询，爬虫与信息采集，哔哩哔哩视频，抖音视频搜索，youtube视频相关的工具，用于动态向 Agent 提供说明。"
   },
   "VCPContactToolBox": {
     "file": "ContactToolBox.txt",
     "description": "该收纳箱收纳了各种通讯、社交、消息推送，话题管理，日程管理，日常小工具相关的工具，用于动态向 Agent 提供说明。"
+  },
+  "VarDailyNoteGuide": {
+    "file": "Dailynote.txt",
+    "description": "日记指南：创建、更新、Tag 设计与查询整理（动态折叠展开）"
+  },
+  "VarMediaRenderer": {
+    "file": "MediaRenderer.txt",
+    "description": "媒体渲染指南：HTML/SVG 图片、GIF/视频与程序音乐生成（动态折叠展开）"
+  },
+  "VarToolList": {
+    "file": "supertool.txt",
+    "description": "VCP 工具调用格式总指南（动态折叠展开）"
+  },
+  "VarFieldSymbols": {
+    "file": "FieldSymbols.txt",
+    "description": "场符闭集表：六维 89 符与准入公理（动态折叠展开）"
+  },
+  "VarIngestionProtocol": {
+    "file": "IngestionProtocol.txt",
+    "description": "入库准则：三层 Tag 结构与数量规范（动态折叠展开）"
   }
 }

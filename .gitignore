@@ -172,6 +172,9 @@ dailynote/*
 !dailynote/VCP桌面知识/**
 !dailynote/VCP开发/
 !dailynote/VCP开发/**
+# 拆书蒸馏写入地 (cangjie-skill 阶段 6; 2026-08-14 勘正: 缺白名单导致 rg/grep 整目录静默跳过)
+!dailynote/纸子的知识/
+!dailynote/纸子的知识/**
 ip_blacklist.json
 /VectorStore
 /VectorStoreTDB/

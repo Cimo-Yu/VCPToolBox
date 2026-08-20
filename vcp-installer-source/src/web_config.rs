@@ -239,7 +239,7 @@ fn generate_all_config(
         .unwrap_or_else(|e| format!("Nova 注册失败: {}", e));
 
     // ---- 4. 生成摘要 ----
-    let port = fields.get("PORT").map(|s| s.as_str()).unwrap_or("6005");
+    let port = fields.get("PORT").map(|s| s.as_str()).unwrap_or("6015");
     let key = fields.get("Key").map(|s| s.as_str()).unwrap_or("");
     let vcp_key = fields.get("VCP_Key").map(|s| s.as_str()).unwrap_or("");
     let admin_user = fields.get("AdminUsername").map(|s| s.as_str()).unwrap_or("admin");
@@ -376,7 +376,7 @@ fn update_vchat_settings(
     // 获取端口（默认6005）
     let port = fields.get("PORT")
         .map(|s| s.as_str())
-        .unwrap_or("6005");
+        .unwrap_or("6015");
 
     // 设置 VCP 连接信息
     obj.insert(

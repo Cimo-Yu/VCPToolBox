@@ -56,7 +56,7 @@ function startProfilesWatcher() {
 
 function applyBridgeRuntimeConfig(bridgeConfig, hostConfig = {}, isInitial = false) {
     // 默认上游自动指向本地 VCP 主服务器，无需用户手动配置
-    const mainServerPort = hostConfig.PORT || process.env.PORT || 6005;
+    const mainServerPort = hostConfig.PORT || process.env.PORT || 6015;
     const mainServerKey = hostConfig.Key || process.env.Key || '';
     const defaultUpstream = `http://127.0.0.1:${mainServerPort}`;
 

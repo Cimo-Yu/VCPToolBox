@@ -18,6 +18,25 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { URL } from 'url';
+// ====== 自动读取同目录下的 config.env ======
+try {
+    const configPath = path.join(path.dirname(import.meta.url.replace(/^file:\/\/\//, '')), 'config.env');
+    if (fs.existsSync(configPath)) {
+        const envContent = fs.readFileSync(configPath, 'utf-8');
+        envContent.split('\n').forEach(line => {
+            const trimmed = line.trim();
+            if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+                const [key, ...vals] = trimmed.split('=');
+                const val = vals.join('=').trim();
+                if (key && !process.env[key.trim()]) {
+                    process.env[key.trim()] = val;
+                }
+            }
+        });
+    }
+} catch (e) {
+    // 忽略读取错误
+}
 
 // ============================================================
 // 环境变量读取

@@ -9,6 +9,7 @@
 - **多P分P支持**：URL 中的 `?p=N` 参数自动识别，通过 pagelist API 获取对应分P的 CID，字幕/弹幕/快照均为指定P的内容。
 - **视频元数据**：获取视频的标题和作者信息。
 - **字幕提取**：多源降级策略（CC字幕 > WBI Player API > AI Summary API），支持指定语言代码，未指定时按优先级自动选择：ai-zh > zh-CN > zh-Hans > 第一个可用语言。
+- **原字幕导出**：`save_subtitle` 指令可将视频原始字幕以 JSON + 纯文本两份文件保存到知识库 `knowledge/字幕` 目录，方便归档与知识库检索。
 - **热门弹幕与评论**：并发获取指定数量的热门弹幕和热门评论（评论按点赞排序）。
 - **高能进度条**：自动获取视频中弹幕最集中的时间点及热度值，帮助 AI 快速定位精彩内容。
 - **智能快照 (Videoshot)**：支持指定时间点截图，提供两种模式：
@@ -23,9 +24,48 @@
 
 1. 将本目录下的所有文件复制到你的 VCP 项目的 `Plugin` 目录下。
 2. 确保安装了依赖项：`pip install requests Pillow`。
-3. 在 `config.env` 中配置你的 `BILIBILI_COOKIE`。
+3. 在 `config.env` 中配置 B 站 Cookie（两种方式任选，推荐方式一）：
+
+   - **方式一（推荐）：动态 Cookie**。在托管浏览器中登录 B 站后，插件每次运行会通过
+     `/internal/chrome-bridge/bilibili-cookie` 从托管 Chrome 实时拉取登录 Cookie，无需手动维护：
+     ```env
+     BILIBILI_DYNAMIC_COOKIE=true
+     ```
+   - **方式二：静态 Cookie**。手动配置 `BILIBILI_COOKIE`（获取方式见下方），动态获取失败或未开启时作为兜底。
+
+### managed Chrome 回退（推荐）
+
+插件默认采用 **B站 API 优先、managed Chrome 回退**：正常公开视频继续使用结构化 API；当请求字幕但 API 没有返回字幕、或 API 结果为空时，插件会请求 ChromeBridge 使用独立托管浏览器补充渲染后的页面内容。
+
+根 `config.env` 需要启用：
+
+```env
+VCP_BROWSER_RUNTIME_ENABLED=true
+BILIBILI_BROWSER_FALLBACK_ENABLED=true
+BILIBILI_BROWSER_FALLBACK_TIMEOUT_SECONDS=45
+```
+
+首次使用流程：
+
+1. 启动 VCP 后调用 ChromeBridge 的 `open_chrome`（或直接让插件自动拉起托管浏览器）。
+2. 在弹出的 managed Chrome 中打开 B站并手动扫码登录。
+3. 登录态会保存在 `Plugin/ChromeBridge/managed-profile`，后续重启继续复用。
+4. 插件运行时优先从托管浏览器动态拉取 Cookie（`BILIBILI_DYNAMIC_COOKIE=true`）；若托管浏览器未登录，会自动回退到 `BILIBILI_COOKIE` 静态 Cookie。
+
+（可选）如果希望托管浏览器自动"借用"静态 Cookie 完成登录态引导，可开启：
+
+```env
+BILIBILI_COOKIE_BOOTSTRAP=true
+```
+
+开启后，托管浏览器检测到没有 SESSDATA 时，会把 `BILIBILI_COOKIE` 中的会话 Cookie 种入浏览器一次，之后由浏览器持续维护会话。
+
+> 说明：B 站部分视频的字幕是登录可见的（播放器接口返回 `need_login_subtitle=true`，AI 总结接口需要登录）。没有有效登录态时，这些视频的字幕会拿不到，只能走 managed Chrome 页面补充，建议让托管浏览器保持登录。
+>
+> 建议保持 `VCP_BROWSER_ALLOW_USER_HIGH_PRIVILEGE=false`，避免将 Cookie/CDP 权限授予日常使用的 Chrome。
 
 - **`PROJECT_BASE_PATH`**: 插件运行的基础路径，自动定位 `image` 目录。如在 VCP 中调用，视频快照保存在后端根目录下的 `image\bilibili\视频名称` 文件夹；手动运行则保存在本插件的 `image\bilibili\视频名称` 文件夹下。
+- **`BILIBILI_SUBTITLE_SAVE_DIR`**: `save_subtitle` 指令的字幕导出目录，默认 `D:\vcp\VCPToolBox\knowledge\字幕`，可改到其他知识库目录。
 
 ### ffmpeg 依赖（HD 高清截图功能）
 
@@ -85,5 +125,25 @@ action:「始」get_up_videos「末」,
 mid:「始」目标用户的 ID (mid)「末」,
 pn:「始」页码，默认为 1「末」,
 ps:「始」(可选): 每页项数，最大 50，默认为 30「末」
+<<<[END_TOOL_REQUEST]>>>
+```
+
+### 1.4 BilibiliSaveSubtitle
+**说明**: 提取 Bilibili 视频的原始字幕（CC 字幕原始 JSON + 带时间戳纯文本），保存到知识库字幕目录（默认 `D:\vcp\VCPToolBox\knowledge\字幕`）。每个视频保存两份文件：
+- `<标题>_<BV号>.json`：原始 CC 字幕 JSON（body 结构，含 from/to/content）
+- `<标题>_<BV号>.txt`：带时间戳的纯文本字幕
+
+支持多P视频（URL 带 `?p=N` 时提取对应分P字幕），文件名会自动附加 `_P{N}` 和语言代码后缀，避免同名覆盖。也可通过环境变量 `BILIBILI_SUBTITLE_SAVE_DIR` 修改导出目录。
+
+当 API 未返回 CC 字幕时，与主命令一致自动尝试 managed Chrome 页面补充：此时仅保存页面补充文本（txt，文件头会标注来源），不伪造 CC JSON。
+
+**调用格式**:
+```text
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」BilibiliFetch「末」,
+action:「始」save_subtitle「末」,
+url:「始」(必需) Bilibili 视频的 URL 或 BV 号，支持 b23.tv 短链接与 ?p=N 多P。「末」,
+lang:「始」(可选) 字幕语言代码, 例如 'ai-zh' 或 'zh-CN'。未指定时按优先级自动选择。「末」,
+overwrite:「始」(可选) 同名字幕文件已存在时是否覆盖，默认为 true；设为 false 时跳过已存在文件。「末」
 <<<[END_TOOL_REQUEST]>>>
 ```

@@ -187,8 +187,8 @@ RUN mkdir -p /usr/src/app/VCPTimedContacts \
 # USER appuser
 
 
-# 暴露端口（主服务 + 管理面板，默认 6005 + 6006）
-EXPOSE 6005 6006
+# 暴露端口（主服务 + 管理面板，默认 6015 + 6006）
+EXPOSE 6015 6006
 
 # 定义容器启动命令
 # 使用 PM2 ecosystem 配置同时启动主服务和管理面板

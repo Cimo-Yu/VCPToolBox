@@ -78,6 +78,7 @@ class LightMemoPlugin {
         this.tdbKnowledgeManager = null; // 冷知识库（TriviumDB）检索管理器
         this.aiMemoBridge = null; // RAGDiaryPlugin 共享的 AI 记忆总结桥
         this.getSingleEmbedding = null;
+        this.pushVcpInfo = null; // 注入的 VCPInfo 广播函数（用于记忆检索详情展示）
         this.projectBasePath = '';
         this.dailyNoteRootPath = '';
         this.rerankConfig = {};
@@ -118,10 +119,127 @@ class LightMemoPlugin {
         if (dependencies.getSingleEmbedding) {
             this.getSingleEmbedding = dependencies.getSingleEmbedding;
         }
+        if (dependencies.pushVcpInfo) {
+            this.pushVcpInfo = dependencies.pushVcpInfo;
+            console.log('[LightMemo] pushVcpInfo injected. Retrieval details will broadcast to VCPInfo.');
+        }
 
         this.loadConfig(); // Load config after dependencies are set
         this.loadSemanticGroups();
         console.log('[LightMemo] Plugin initialized successfully as a hybrid service.');
+    }
+
+    _broadcastVcpInfo(payload) {
+        if (!this.pushVcpInfo || typeof this.pushVcpInfo !== 'function' || !payload) return;
+        try {
+            this.pushVcpInfo(payload);
+        } catch (e) {
+            console.error('[LightMemo] VCPInfo broadcast failed:', e.message || e);
+        }
+    }
+
+    /**
+     * 惰性取得 Memory River registry v2。
+     *
+     * 用 require 而非构造期注入：Memory River 是可选的生命周期扩展
+     * （由 KNOWLEDGE_LIFECYCLE_EXTENSION_MODULES 决定是否装载），
+     * LightMemo 不能因为它没启用而检索不了。解析不到就返回 null，
+     * 调用方按“未启用”处理。
+     */
+    _getRiverRegistry() {
+        if (this._riverRegistry !== undefined) return this._riverRegistry;
+        try {
+            const { MemoryRiverRegistryV2 } = require(
+                path.join(this.projectBasePath, 'extensions', 'memory-river', 'MemoryRiverRegistryV2')
+            );
+            const configPath = process.env.MEMORY_RIVER_REGISTRY_V2_PATH
+                ? path.resolve(this.projectBasePath, process.env.MEMORY_RIVER_REGISTRY_V2_PATH)
+                : path.join(this.projectBasePath, 'extensions', 'memory-river', 'config', 'memory-rivers.v2.json');
+            // createDefaultConfig=false：检索侧只读，绝不在这里落盘造 registry。
+            this._riverRegistry = new MemoryRiverRegistryV2({ configPath, createDefaultConfig: false });
+        } catch (error) {
+            console.warn(`[LightMemo] Memory River registry 不可用，river_id 参数将被忽略: ${error.message}`);
+            this._riverRegistry = null;
+        }
+        return this._riverRegistry;
+    }
+
+    /**
+     * 把调用方的 maid 映射成 registry 里的 principalId。
+     *
+     * registry 的 principalId 受 ASCII 白名单约束（会进 URL path 与主键），
+     * 而 maid 是中文 Agent 名（如「微明」）。两者天然不同形，直接拿 maid 精确匹配
+     * 会永远授权失败。因此按 principalId → displayName → metadata.maidNames 依次匹配，
+     * 全都不中就原样返回，让 registry 抛 GRANT_INSUFFICIENT —— 不在这里放宽。
+     */
+    _resolvePrincipalId(registry, maid) {
+        let principals;
+        try {
+            principals = registry.listPrincipals();
+        } catch (error) {
+            console.warn(`[LightMemo] principal 列表读取失败，按原名匹配: ${error.message}`);
+            return maid;
+        }
+        const exact = principals.find(item => item.principalId === maid);
+        if (exact) return exact.principalId;
+        const byDisplayName = principals.find(item => String(item.displayName || '').trim() === maid);
+        if (byDisplayName) return byDisplayName.principalId;
+        const byAlias = principals.find(item => {
+            const aliases = item.metadata?.maidNames;
+            return Array.isArray(aliases) && aliases.some(alias => String(alias || '').trim() === maid);
+        });
+        return byAlias ? byAlias.principalId : maid;
+    }
+
+    /**
+     * 把 river_id 解析成该 River 授权范围内的日记本名列表。
+     *
+     * 授权判定完全交给 registry 的 resolveAuthorizedDiarySet：
+     * 它要求 principal 对该 River 持有 read_own 或 observe，越权会抛 GRANT_INSUFFICIENT。
+     * 两种权限对应两种域宽度——read_own 只回该 principal owner 的日记本（自我河），
+     * observe 回该 River 全部日记本（公共日常河等多 agent 共享河）。
+     * 这里不做任何降级——检索域悄悄放大成全库比报错危险得多。
+     *
+     * @returns {string[]} 该 River 内该 principal 可读的日记本名
+     */
+    _resolveRiverDiaryNames(riverId, principalId) {
+        const normalizedRiverId = String(riverId || '').trim();
+        if (!normalizedRiverId) return [];
+
+        const registry = this._getRiverRegistry();
+        if (!registry) {
+            const error = new Error(
+                `river_id="${normalizedRiverId}" 无法解析：Memory River registry 不可用`
+            );
+            error.code = 'MEMORY_RIVER_REGISTRY_UNAVAILABLE';
+            throw error;
+        }
+
+        const normalizedPrincipal = String(principalId || '').trim();
+        if (!normalizedPrincipal) {
+            const error = new Error(
+                `river_id="${normalizedRiverId}" 需要 maid 作为 principalId 才能校验 read_own 授权`
+            );
+            error.code = 'MEMORY_RIVER_PRINCIPAL_REQUIRED';
+            throw error;
+        }
+
+        const resolvedPrincipalId = this._resolvePrincipalId(registry, normalizedPrincipal);
+
+        const resolved = registry.resolveAuthorizedDiarySet({
+            principalId: resolvedPrincipalId,
+            riverId: normalizedRiverId
+        });
+        const diaryNames = Array.isArray(resolved?.diaryNames) ? resolved.diaryNames : [];
+        if (diaryNames.length === 0) {
+            const error = new Error(
+                `river_id="${normalizedRiverId}" 对 principal "${normalizedPrincipal}" 解析出空日记域；`
+                + '该 River 尚未登记属于该 principal 的日记本'
+            );
+            error.code = 'MEMORY_RIVER_EMPTY_SCOPE';
+            throw error;
+        }
+        return diaryNames;
     }
 
     loadConfig() {
@@ -156,6 +274,15 @@ class LightMemoPlugin {
             return this._normalizeToolResult(result);
         } catch (error) {
             console.error('[LightMemo] Error processing tool call:', error);
+            this._broadcastVcpInfo({
+                type: 'AI_MEMO_RETRIEVAL',
+                dbName: '检索失败',
+                query: (args && args.query) ? String(args.query) : '',
+                mode: 'error',
+                diaryCount: 0,
+                resultCount: 0,
+                extractedMemories: '[检索失败] ' + (error.message || String(error))
+            });
             // Return an error structure that Plugin.js can understand
             return { plugin_error: error.message || 'An unknown error occurred in LightMemo.' };
         }
@@ -224,6 +351,8 @@ class LightMemoPlugin {
             core_tags = [],
             core_boost_factor = 1.33,
             knowledge_base = null,
+            river_id: rawRiverId = null,
+            riverId: rawRiverIdAlias = null,
             aimemo: rawAIMemo = false,
             aimemo_preset: rawAIMemoPreset = null,
             BM25: rawBM25Upper,
@@ -298,7 +427,25 @@ class LightMemoPlugin {
 
         const parsedMaidScope = this._parseMaidScopedFolder(maid);
         const scopedMaid = parsedMaidScope.maid;
-        const combinedFolder = this._mergeFolderScopes(folder, parsedMaidScope.folder);
+        let combinedFolder = this._mergeFolderScopes(folder, parsedMaidScope.folder);
+
+        // 🌊 River 作用域：river_id 把检索域收敛到该 River 已登记且本 principal 有权读的日记本。
+        // 解析出的名字来自 registry，是精确的日记本名，因此走 riverDiaryNames 精确匹配，
+        // 不并入 combinedFolder —— 后者是 LIKE 模糊匹配，会把同前缀的旁邻日记本一起放进来，
+        // 等于静默越权。
+        const normalizedRiverId = String(rawRiverIdAlias ?? rawRiverId ?? '').trim();
+        let riverDiaryNames = null;
+        let riverScopeLabel = null;
+        if (normalizedRiverId) {
+            riverDiaryNames = this._resolveRiverDiaryNames(normalizedRiverId, scopedMaid);
+            riverScopeLabel = `river:${normalizedRiverId}`;
+            // River 已经给出了确定的日记本集合，folder 的模糊范围在此无意义。
+            combinedFolder = null;
+            console.log(
+                `[LightMemo] 🌊 River scope 生效: ${riverScopeLabel} -> ${riverDiaryNames.length} 个日记本 `
+                + `(${riverDiaryNames.join(', ')})`
+            );
+        }
 
         let isMusicSearch = false;
         let actualQuery = query || "";
@@ -343,15 +490,19 @@ class LightMemoPlugin {
             actualQuery = scopedMaid || combinedFolder || "记录"; // 如果只有时间约束，给予默认查询词避免向量化报错
         }
 
-        if (!isMusicSearch && (!query || (!scopedMaid && !combinedFolder))) {
-            throw new Error("参数 'query' 是必需的，且必须提供 'maid' 或 'folder'。");
+        if (!isMusicSearch && (!query || (!scopedMaid && !combinedFolder && !riverDiaryNames))) {
+            throw new Error("参数 'query' 是必需的，且必须提供 'maid'、'folder' 或 'river_id'。");
         }
 
         const normalizedSearchAll = this._parseBoolean(search_all_knowledge_bases, false);
 
+        const effectiveRiverDiaryNames = isMusicSearch ? null : riverDiaryNames;
         const effectiveFolder = isMusicSearch ? 'MusicDiary' : combinedFolder;
         const effectiveMaid = isMusicSearch ? null : scopedMaid;
-        const effectiveSearchAll = isMusicSearch ? false : normalizedSearchAll;
+        // River 域是显式白名单，search_all 会把它整个抹掉，必须让 River 优先。
+        const effectiveSearchAll = (isMusicSearch || effectiveRiverDiaryNames)
+            ? false
+            : normalizedSearchAll;
 
         // 从所有日记本中收集候选chunks
         const candidates = await this._gatherCandidateChunks({
@@ -359,7 +510,8 @@ class LightMemoPlugin {
             folder: effectiveFolder,
             searchAll: effectiveSearchAll,
             ignoreExcludedFolders: isMusicSearch,
-            timeRange: timeRange
+            timeRange: timeRange,
+            riverDiaryNames: effectiveRiverDiaryNames
         });
 
         if (candidates.length === 0) {
@@ -451,7 +603,8 @@ class LightMemoPlugin {
                 tagBoost: tag_boost,
                 coreTags: normalizedCoreTags,
                 coreBoostFactor: normalizedCoreBoostFactor,
-                aiMemoOptions
+                aiMemoOptions,
+                riverScopeLabel
             });
         }
 
@@ -644,6 +797,17 @@ class LightMemoPlugin {
             if (aiMemoResult) return aiMemoResult;
         }
 
+        this._broadcastVcpInfo({
+            type: 'AI_MEMO_RETRIEVAL',
+            dbName: effectiveFolder || effectiveMaid || '全部日记',
+            query: actualQuery || query,
+            mode: engineMode || 'rivermemo',
+            k: normalizedK,
+            diaryCount: 1,
+            resultCount: Array.isArray(finalResults) ? finalResults.length : 0,
+            extractedMemories: this.formatResults(finalResults, query)
+        });
+
         return this.formatResults(finalResults, query);
     }
 
@@ -736,6 +900,7 @@ class LightMemoPlugin {
         coreTags,
         coreBoostFactor,
         aiMemoOptions,
+        riverScopeLabel = null,
         returnResults = false
     }) {
         if (
@@ -786,7 +951,8 @@ class LightMemoPlugin {
             diaryNames,
             allowedFileIds,
             deniedFileIds: [],
-            visibilityMode: 'explicit_sql_scope',
+            visibilityMode: riverScopeLabel ? 'river_scope' : 'explicit_sql_scope',
+            riverScopeLabel: riverScopeLabel || undefined,
             permissions: {
                 allowPublic: false,
                 allowOwn: true,
@@ -817,6 +983,9 @@ class LightMemoPlugin {
                 },
                 // Rust 内核以 allowedFileIds 执行可见性门控；不再创建 Node Worker。
                 identityDiaryName: maid || null,
+                // scopeLabel 使 TagMemoEngine 走 scoped bundle 路径（按 allowedFileIds 建子图），
+                // 而不是复用全局图。缺省为 null 时行为与既有生产路径完全一致。
+                scopeLabel: riverScopeLabel || null,
                 includeTrace: false
             }
         );
@@ -917,6 +1086,17 @@ class LightMemoPlugin {
             });
             if (aiMemoResult) return aiMemoResult;
         }
+
+        this._broadcastVcpInfo({
+            type: 'AI_MEMO_RETRIEVAL',
+            dbName: folder || maid || '全部日记',
+            query: query,
+            mode: 'rivermemo',
+            k: k,
+            diaryCount: 1,
+            resultCount: Array.isArray(finalResults) ? finalResults.length : 0,
+            extractedMemories: this.formatResults(finalResults, query)
+        });
 
         return returnResults ? finalResults : this.formatResults(finalResults, query);
     }
@@ -1395,6 +1575,23 @@ class LightMemoPlugin {
         } else {
             docs = docs.slice(0, normalizedK);
         }
+
+        this._broadcastVcpInfo({
+            type: 'RAG_RETRIEVAL_DETAILS',
+            dbName: (libraries && libraries.length > 0) ? libraries.join(' + ') : '全部知识库',
+            query: query,
+            k: normalizedK,
+            sourceType: 'TDBKnowledge',
+            libraries: libraries || [],
+            results: docs.map(d => ({
+                text: d.text || '',
+                score: (typeof d.rerank_score === 'number' ? d.rerank_score
+                    : (typeof d.hybridScore === 'number' ? d.hybridScore
+                        : (typeof d.vectorScore === 'number' ? d.vectorScore : undefined))),
+                source: 'tdb',
+                matchedTags: [d.dbName, d.sourceFile].filter(Boolean)
+            }))
+        });
 
         return this._formatColdKnowledgeResults(docs, query, libraries);
     }
@@ -1966,7 +2163,7 @@ class LightMemoPlugin {
      * 从所有相关日记本中收集chunks（带署名过滤）
      * 适配 KnowledgeBaseManager (SQLite)
      */
-    async _gatherCandidateChunks({ maid, folder, searchAll, ignoreExcludedFolders = false, timeRange = null }) {
+    async _gatherCandidateChunks({ maid, folder, searchAll, ignoreExcludedFolders = false, timeRange = null, riverDiaryNames = null }) {
         const db = this.vectorDBManager.db;
         if (!db) {
             console.error('[LightMemo] Database not initialized in KnowledgeBaseManager.');
@@ -1999,7 +2196,12 @@ class LightMemoPlugin {
             sql += ` AND f.diary_name NOT LIKE '已整理%' AND f.diary_name NOT LIKE '%簇'`;
 
             // 2. 目标范围过滤
-            if (!searchAll) {
+            // River 域优先且互斥：registry 给的是精确日记本名，用 IN 精确匹配，
+            // 避免 LIKE 把同前缀的旁邻日记本纳入越权范围。
+            if (Array.isArray(riverDiaryNames) && riverDiaryNames.length > 0) {
+                sql += ` AND f.diary_name IN (${riverDiaryNames.map(() => '?').join(',')})`;
+                params.push(...riverDiaryNames);
+            } else if (!searchAll) {
                 if (targetFolders.length > 0) {
                     sql += ` AND (${targetFolders.map(() => "f.diary_name LIKE ?").join(" OR ")})`;
                     targetFolders.forEach(f => params.push(`%${f}%`));
@@ -2034,7 +2236,11 @@ class LightMemoPlugin {
                 }
 
                 // 3. 署名过滤 (如果不是搜索全部且没有指定文件夹)
-                if (!searchAll && targetFolders.length === 0 && maid) {
+                // River 域不再叠加署名过滤：resolveAuthorizedDiarySet 已按授权解出日记域。
+                // read_own 域下再按首行署名筛一遍只会把域缩到接近空；observe 域下更要跳过——
+                // 公共日常河里本就有多个 agent 的署名，按当前 maid 筛会把共享域抵消回私有域。
+                const riverScoped = Array.isArray(riverDiaryNames) && riverDiaryNames.length > 0;
+                if (!riverScoped && !searchAll && targetFolders.length === 0 && maid) {
                     if (!this._checkSignature(text, maid)) continue;
                 }
 

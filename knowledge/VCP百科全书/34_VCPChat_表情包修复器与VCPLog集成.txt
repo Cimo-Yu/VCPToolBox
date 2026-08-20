@@ -15,7 +15,7 @@ AI表情包URL修复器详解：
 
 VCPLog集成详解：
 
-工作原理：VCPChat通过WebSocket连接到VCPLog服务（地址通常为ws://服务器IP:6005），实时接收来自VCP服务器的日志信息和异步任务回调。当后台异步任务（如视频生成、长文抓取）完成时，VCPLog会推送通知，VCPChat将结果实时展现在对话流中。
+工作原理：VCPChat通过WebSocket连接到VCPLog服务（地址通常为ws://服务器IP:6015），实时接收来自VCP服务器的日志信息和异步任务回调。当后台异步任务（如视频生成、长文抓取）完成时，VCPLog会推送通知，VCPChat将结果实时展现在对话流中。
 
 通知方式：支持WebSocket实时通知、上下文嵌入式气泡（将结果无缝整合到对话流）、系统级多设备推送通知（即使用户不在应用内也能收到提醒）。支持重要信息的邮件和Windows系统级通知广播。
 
@@ -27,7 +27,7 @@ VCPLog集成详解：
 
 可能的解决办法：
 1. 检查AppData/generated_lists/目录是否存在，确认config.env文件格式正确（file_key=密码，无多余空格）。重启VCPChat后再测试。
-2. 检查全局设置中的通知地址是否为ws://服务器IP:6005（注意是ws://不是http://），确认VCPToolBox中VCPLog插件的plugin-manifest.json存在且未被block。
+2. 检查全局设置中的通知地址是否为ws://服务器IP:6015（注意是ws://不是http://），确认VCPToolBox中VCPLog插件的plugin-manifest.json存在且未被block。
 3. 表情包误修复是极少数情况，如果频繁发生可以检查generated_lists中是否有重名或高度相似的表情包文件。
 4. 在Windows设置中检查VCPChat的通知权限，确保允许显示通知。
 

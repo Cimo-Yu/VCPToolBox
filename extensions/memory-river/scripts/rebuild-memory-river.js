@@ -4,14 +4,20 @@ const Database = require('better-sqlite3');
 const path = require('node:path');
 const { MemoryRiverExtension } = require('..');
 
-async function rebuildMemoryRiver({ knowledgeBasePath, configPath, registryPath, riverDatabasePath }) {
+/**
+ * @param {object} options
+ * @param {object} [options.extension] 已初始化的扩展实例。传入时复用其连接并且不予关闭，
+ *   避免与宿主单例同时写同一个 WAL 库而触发 SQLITE_BUSY。
+ */
+async function rebuildMemoryRiver({ knowledgeBasePath, configPath, registryPath, riverDatabasePath, extension: sharedExtension = null }) {
     const knowledgeBase = new Database(knowledgeBasePath, { readonly: true });
-    const extension = new MemoryRiverExtension({ configPath, registryPath, databasePath: riverDatabasePath });
+    const extension = sharedExtension
+        || new MemoryRiverExtension({ configPath, registryPath, databasePath: riverDatabasePath });
     let scanned = 0;
     let queued = 0;
 
     try {
-        await extension.initialize();
+        if (!sharedExtension) await extension.initialize();
         const files = knowledgeBase.prepare(`
             SELECT path, diary_name AS diaryName, checksum, updated_at AS revision
             FROM files
@@ -44,7 +50,8 @@ async function rebuildMemoryRiver({ knowledgeBasePath, configPath, registryPath,
         return { scanned, queued, projected };
     } finally {
         knowledgeBase.close();
-        await extension.shutdown();
+        // 复用宿主实例时绝不关闭：关闭会让后续生命周期事件全部投影失败。
+        if (!sharedExtension) await extension.shutdown();
     }
 }
 

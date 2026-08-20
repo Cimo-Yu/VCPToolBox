@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -25,6 +26,29 @@ function folder(value) {
     return normalized;
 }
 function metadata(value) { return value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {}; }
+/**
+ * 从 canonicalKey 派生稳定的 ASCII diaryId。
+ *
+ * 真实日记本文件夹几乎都是中文（`Ariadne知识日记本`、`决策官日记本`），
+ * 而 diaryId 会进入 URL path 与 registry 主键，必须保持 URL 安全。
+ * 因此 id 只承载内部身份，中文一律留在 diaryName / source.folder 里显示。
+ * 摘要取 canonicalKey（已小写）以保证同一物理文件夹恒得同一 id。
+ */
+function derivedDiaryId(canonicalKey) {
+    return `diary:${crypto.createHash('sha256').update(canonicalKey).digest('hex').slice(0, 12)}`;
+}
+/**
+ * 从 River 名派生稳定的 ASCII riverId，理由与 derivedDiaryId 相同：
+ * 河名几乎都是中文（`美学河`、`日常河`），而 riverId 会进入 URL path
+ * （`/rivers/:riverId/observe`）与 registry 主键。
+ *
+ * 摘要取小写名，因此同名恒得同一 id —— 重复登记同名河是 upsert 而非新建，
+ * 与「同一物理文件夹只能有一个 Diary」同构。改名会得到新 id，等同新建河道；
+ * 需要保留旧 id 时显式传 riverId。
+ */
+function derivedRiverId(displayName) {
+    return `river:${crypto.createHash('sha256').update(`name:${displayName.toLowerCase()}`).digest('hex').slice(0, 12)}`;
+}
 function principal(raw = {}) {
     const principalType = String(raw.principalType || 'agent').trim().toLowerCase();
     if (!['agent', 'human', 'service'].includes(principalType)) throw fail('unsupported principalType');
@@ -33,11 +57,18 @@ function principal(raw = {}) {
 }
 function diary(raw = {}) {
     const sourceFolder = folder(raw.source?.folder || raw.folder || raw.diaryName);
-    return { diaryId: id(raw.diaryId || raw.id || `diary:${sourceFolder}`, 'diaryId'), diaryName: optional(raw.diaryName) || sourceFolder, ownerPrincipalId: id(raw.ownerPrincipalId, 'ownerPrincipalId'), source: { type: 'folder', folder: sourceFolder, canonicalKey: `folder:${sourceFolder.toLowerCase()}` }, enabled: raw.enabled !== false, metadata: metadata(raw.metadata) };
+    const canonicalKey = `folder:${sourceFolder.toLowerCase()}`;
+    // 显式 diaryId 仍受尊重（既有配置与测试依赖它）；缺省时派生 ASCII 摘要而非拼接文件夹名。
+    const diaryId = id(raw.diaryId || raw.id || derivedDiaryId(canonicalKey), 'diaryId');
+    return { diaryId, diaryName: optional(raw.diaryName) || sourceFolder, ownerPrincipalId: id(raw.ownerPrincipalId, 'ownerPrincipalId'), source: { type: 'folder', folder: sourceFolder, canonicalKey }, enabled: raw.enabled !== false, metadata: metadata(raw.metadata) };
 }
 function river(raw = {}) {
-    const riverId = id(raw.riverId || raw.id, 'riverId');
-    return { riverId, name: optional(raw.name) || riverId, memoryScope: optional(raw.memoryScope) || `river:${riverId}`, diaryIds: [...new Set((Array.isArray(raw.diaryIds) ? raw.diaryIds : []).map(value => id(value, 'diaryId')))], enabled: raw.enabled !== false, metadata: metadata(raw.metadata) };
+    // 名称是唯一必填项：riverId 与 memoryScope 都是内部身份，缺省时派生。
+    const name = optional(raw.name) || optional(raw.riverId) || optional(raw.id);
+    if (!name) throw fail('river name is required');
+    // 显式 riverId 仍受尊重（既有配置如 aesthetics-river 与测试依赖它）。
+    const riverId = id(raw.riverId || raw.id || derivedRiverId(name), 'riverId');
+    return { riverId, name, memoryScope: optional(raw.memoryScope) || `river:${riverId}`, diaryIds: [...new Set((Array.isArray(raw.diaryIds) ? raw.diaryIds : []).map(value => id(value, 'diaryId')))], enabled: raw.enabled !== false, metadata: metadata(raw.metadata) };
 }
 function grant(raw = {}) {
     const principalId = id(raw.principalId, 'principalId');
@@ -83,7 +114,33 @@ class MemoryRiverRegistryV2 {
     upsertRiver(raw) { return this._upsert('rivers', 'riverId', river(raw)); }
     upsertGrant(raw) { return this._upsert('grants', 'grantId', grant(raw)); }
     findRiversForDiary(name) { const target = String(name || '').trim().toLowerCase(); const source = this.listDiaries().find(item => item.diaryName.toLowerCase() === target || item.source.folder.toLowerCase() === target); if (!source) return []; return this.listRivers().filter(item => item.diaryIds.includes(source.diaryId)).map(item => ({ riverId: item.riverId, memoryScope: item.memoryScope })); }
-    resolveAuthorizedDiarySet({ principalId, riverId } = {}) { const config = this.load(); const targetRiver = config.rivers.find(item => item.riverId === riverId && item.enabled !== false); if (!targetRiver) throw fail('Unknown or disabled river', 'GRANT_INSUFFICIENT', 403); const authorized = config.grants.some(item => item.enabled !== false && item.principalId === principalId && item.riverId === riverId && item.permissions.includes('read_own')); if (!authorized) throw fail('Principal lacks read_own permission', 'GRANT_INSUFFICIENT', 403); return { principalId, riverId, diaryNames: config.diaries.filter(item => item.enabled !== false && item.ownerPrincipalId === principalId && targetRiver.diaryIds.includes(item.diaryId)).map(item => item.diaryName) }; }
+    /**
+     * 解析主体在某条 River 内的可读 diary 集合。
+     *
+     * 两种权限对应两种河道形态，不能共用一套过滤：
+     *
+     * - `read_own`：自我河。主体只读自己 owner 的 diary。这是原始语义，
+     *   `aesthetics-river`（单 owner、90 文件）依赖它，不得改变。
+     * - `observe`：共享河。返回该河全部 enabled diary，不论 owner。
+     *   公共日常河靠它成立——每个 agent 写自己 owner 的「<名字>的公共日常」
+     *   文件夹（绕开「一个物理文件夹只能有一个 owner」的约束），
+     *   全部投影到同一条河；若仍按 owner 过滤，各 agent 只会读到自己那份，
+     *   河道退化成互不可见的私有域并列，且静默返回空集不报错。
+     *
+     * 两权限同时持有时取并集，即 observe 的全域。二者皆无仍 fail closed 403。
+     * 返回结构保持 { principalId, riverId, diaryNames }，因此 LightMemo 的
+     * riverId 候选域链路无需改动。
+     */
+    resolveAuthorizedDiarySet({ principalId, riverId } = {}) {
+        const config = this.load();
+        const targetRiver = config.rivers.find(item => item.riverId === riverId && item.enabled !== false);
+        if (!targetRiver) throw fail('Unknown or disabled river', 'GRANT_INSUFFICIENT', 403);
+        const granted = new Set(config.grants.filter(item => item.enabled !== false && item.principalId === principalId && item.riverId === riverId).flatMap(item => item.permissions));
+        const canObserve = granted.has('observe');
+        if (!canObserve && !granted.has('read_own')) throw fail('Principal lacks read_own or observe permission', 'GRANT_INSUFFICIENT', 403);
+        const inRiver = item => item.enabled !== false && targetRiver.diaryIds.includes(item.diaryId);
+        return { principalId, riverId, scope: canObserve ? 'observe' : 'read_own', diaryNames: config.diaries.filter(item => inRiver(item) && (canObserve || item.ownerPrincipalId === principalId)).map(item => item.diaryName) };
+    }
     static migrateFromV1(v1 = {}) { const unresolvedDiaries = [...new Set((v1.rivers || []).flatMap(item => Array.isArray(item.diaries) ? item.diaries : []).map(item => String(item || '').trim()).filter(Boolean))]; return { config: { version: 2, principals: [], diaries: [], rivers: (v1.rivers || []).map(item => ({ riverId: id(item.id, 'riverId'), name: optional(item.name) || item.id, memoryScope: optional(item.memoryScope) || `river:${item.id}`, diaryIds: [], enabled: item.enabled !== false, metadata: { migratedFrom: 'v1' } })), grants: [] }, unresolvedDiaries }; }
 }
 module.exports = { MemoryRiverRegistryV2, DEFAULT_CONFIG, PERMISSIONS };

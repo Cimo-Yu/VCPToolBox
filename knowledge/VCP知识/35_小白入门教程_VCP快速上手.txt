@@ -35,7 +35,7 @@ VCPToolBox的插件也采用同样的example机制。如果你想使用某个插
 
 第五步：验证后端是否正常运行
 
-打开浏览器访问：http://localhost:6005/AdminPanel（如果是远程服务器则替换localhost为服务器IP）。
+打开浏览器访问：http://localhost:6015/AdminPanel（如果是远程服务器则替换localhost为服务器IP）。
 输入你在config.env中设置的ADMIN_PASSWORD登录。
 如果能看到管理面板界面，说明后端配置成功。
 
@@ -50,8 +50,8 @@ VCPToolBox的插件也采用同样的example机制。如果你想使用某个插
 
 VCPChat启动后，点击右上角的设置图标，进入全局设置。
 第一件事：填写用户名（任意名称，必填，否则很多功能会报错）。
-服务器地址填写：http://你的服务器IP:6005/v1/chat/completions（本机则用localhost）。
-通知地址填写：ws://你的服务器IP:6005。
+服务器地址填写：http://你的服务器IP:6015/v1/chat/completions（本机则用localhost）。
+通知地址填写：ws://你的服务器IP:6015。
 保存设置。
 
 第八步：在VCPChat中创建Agent并映射到VCP后端

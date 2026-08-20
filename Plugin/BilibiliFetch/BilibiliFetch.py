@@ -64,6 +64,111 @@ NAV_API_URL = "https://api.bilibili.com/x/web-interface/nav"
 PBP_API_URL = "https://bvc.bilivideo.com/pbp/data"
 VIEW_API_URL = "https://api.bilibili.com/x/web-interface/view"
 SUMMARY_API_URL = "https://api.bilibili.com/x/web-interface/view/conclusion/get"
+MANAGED_CHROME_FALLBACK_PATH = "/internal/chrome-bridge/bilibili-page"
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None or value == '':
+        return default
+    return str(value).strip().lower() in ('true', '1', 'yes', 'y', 'on')
+
+
+def should_try_browser_fallback(api_text: str, need_subs: bool, enabled: bool | None = None) -> bool:
+    """Return whether an incomplete API result should be supplemented by managed Chrome."""
+    if enabled is None:
+        enabled = env_bool('BILIBILI_BROWSER_FALLBACK_ENABLED', True)
+    if not enabled:
+        return False
+
+    text = str(api_text or '').strip()
+    if not text:
+        return True
+    return need_subs and ('（未获取到字幕内容）' in text or '【字幕内容】' not in text)
+
+
+def get_managed_chrome_bridge_url() -> str:
+    configured = os.environ.get('BILIBILI_BROWSER_FALLBACK_URL', '').strip()
+    if configured:
+        return configured
+    port = os.environ.get('PORT', '6015').strip() or '6015'
+    return f"http://127.0.0.1:{port}{MANAGED_CHROME_FALLBACK_PATH}"
+
+
+def fetch_with_managed_chrome(url: str) -> str:
+    """Ask ChromeBridge for the rendered Bilibili page without exporting browser cookies."""
+    vcp_key = os.environ.get('VCP_Key') or os.environ.get('VCP_KEY') or ''
+    if not vcp_key:
+        raise RuntimeError('VCP_Key 未配置，无法认证 managed Chrome fallback')
+
+    timeout = max(10, min(int(os.environ.get('BILIBILI_BROWSER_FALLBACK_TIMEOUT_SECONDS', '45')), 90))
+    response = requests.post(
+        get_managed_chrome_bridge_url(),
+        json={'url': url},
+        headers={'x-vcp-key': vcp_key},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not payload.get('success'):
+        raise RuntimeError(payload.get('error') or 'managed Chrome fallback 返回失败')
+    markdown = str(payload.get('markdown') or '').strip()
+    if not markdown:
+        raise RuntimeError('managed Chrome fallback 未返回页面内容')
+    return markdown
+
+
+def merge_api_and_browser_result(api_text: str, browser_text: str) -> str:
+    api_part = str(api_text or '').strip()
+    browser_part = str(browser_text or '').strip()
+    if not browser_part:
+        return api_part
+    supplement = f"【managed Chrome 页面补充】\n{browser_part}"
+    return f"{api_part}\n\n{supplement}" if api_part else supplement
+
+
+# --- Dynamic Cookie ---
+_DYNAMIC_COOKIE_CACHE = {'fetched': False, 'value': ''}
+
+
+def get_bilibili_cookie() -> str:
+    """获取 B 站 Cookie：优先从托管 Chrome 动态拉取（BILIBILI_DYNAMIC_COOKIE=true 时），
+    失败或无登录态时回退到 BILIBILI_COOKIE 环境变量。结果在单次进程内缓存。"""
+    static_cookie = os.environ.get('BILIBILI_COOKIE', '') or ''
+
+    if _DYNAMIC_COOKIE_CACHE['fetched']:
+        return _DYNAMIC_COOKIE_CACHE['value'] or static_cookie
+
+    dynamic_enabled = env_bool('BILIBILI_DYNAMIC_COOKIE', False)
+    if dynamic_enabled:
+        vcp_key = os.environ.get('VCP_Key') or os.environ.get('VCP_KEY') or ''
+        if vcp_key:
+            port = os.environ.get('PORT', '6015').strip() or '6015'
+            bridge_url = f"http://127.0.0.1:{port}/internal/chrome-bridge/bilibili-cookie"
+            try:
+                resp = requests.post(bridge_url, json={}, headers={'x-vcp-key': vcp_key}, timeout=30)
+                resp.raise_for_status()
+                payload = resp.json()
+                if payload.get('success') and payload.get('cookie'):
+                    cookie = str(payload['cookie'])
+                    if 'SESSDATA=' in cookie:
+                        logging.info("Using dynamic Bilibili cookie from managed Chrome (SESSDATA present).")
+                    else:
+                        logging.warning("Dynamic cookie fetched but SESSDATA not found; managed Chrome 可能未登录 B 站，回退静态 Cookie。")
+                        cookie = static_cookie
+                    _DYNAMIC_COOKIE_CACHE['fetched'] = True
+                    _DYNAMIC_COOKIE_CACHE['value'] = cookie
+                    return cookie
+                logging.warning(f"Dynamic cookie endpoint returned failure: {payload.get('error')}")
+            except Exception as e:
+                logging.warning(f"Dynamic cookie fetch failed, falling back to static cookie: {e}")
+        else:
+            logging.warning("BILIBILI_DYNAMIC_COOKIE enabled but VCP_Key 未配置，无法动态获取 Cookie，回退静态 Cookie。")
+
+    _DYNAMIC_COOKIE_CACHE['fetched'] = True
+    _DYNAMIC_COOKIE_CACHE['value'] = static_cookie
+    return static_cookie
+
 
 # --- WBI Signing Logic ---
 
@@ -317,7 +422,13 @@ def get_subtitle_json_string(bvid: str, user_cookie: str | None, lang_code: str 
                             'content': item.get('content', '')
                         })
                     return json.dumps({"body": standard_body}, ensure_ascii=False)
-        logging.warning("Step 5: AI Summary API did not return subtitles.")
+            logging.warning("Step 5: AI Summary API returned empty subtitle data.")
+        else:
+            logging.warning(
+                f"Step 5: AI Summary API returned error {sum_data.get('code')}: "
+                f"{sum_data.get('message')}"
+                + ("（疑似触发B站风控/需要登录）" if sum_data.get('code') in (-412, -101, -403) else "")
+            )
     except Exception as e:
         logging.warning(f"Step 5: Error fetching via AI Summary API: {e}")
 
@@ -606,7 +717,7 @@ def process_bilibili_enhanced(video_input: str, lang_code: str | None = None, da
         return f"无法从输入提取 BV 号: {video_input}"
     logging.info(f"Extracted BVID: {bvid}, Page: {page}")
 
-    user_cookie = os.environ.get('BILIBILI_COOKIE')
+    user_cookie = get_bilibili_cookie()
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': f'https://www.bilibili.com/video/{bvid}/',
@@ -822,7 +933,19 @@ def process_bilibili_enhanced(video_input: str, lang_code: str | None = None, da
         text_parts.append(snapshot_text)
         
     full_text = "\n".join(text_parts).strip()
-    
+
+    if should_try_browser_fallback(full_text, need_subs):
+        logging.info("Bilibili API result is incomplete; trying managed Chrome fallback.")
+        try:
+            browser_text = fetch_with_managed_chrome(resolved_url)
+            full_text = merge_api_and_browser_result(full_text, browser_text)
+        except Exception as fallback_error:
+            # API 已获得的数据必须保留；日志仅记录异常类型和消息，不包含 Cookie/请求头。
+            safe_error = str(fallback_error).replace(os.environ.get('VCP_Key', ''), '[redacted]') if os.environ.get('VCP_Key') else str(fallback_error)
+            logging.warning(f"Managed Chrome fallback unavailable: {safe_error}")
+            diagnostic = f"【managed Chrome fallback】未能获取页面补充：{safe_error}"
+            full_text = f"{full_text}\n\n{diagnostic}" if full_text else diagnostic
+
     # Append HTML <img> tags for images to ensure they are rendered in the AI's response
     # This follows the pattern in the provided Node.js example
     if images_to_add:
@@ -839,7 +962,7 @@ def search_bilibili(keyword: str, search_type: str = "video", page: int = 1) -> 
     search_type: 'video' 或 'bili_user'
     """
     logging.info(f"Searching Bilibili for '{keyword}' with type '{search_type}', page {page}")
-    user_cookie = os.environ.get('BILIBILI_COOKIE')
+    user_cookie = get_bilibili_cookie()
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': 'https://www.bilibili.com/',
@@ -908,7 +1031,7 @@ def search_bilibili(keyword: str, search_type: str = "video", page: int = 1) -> 
 def get_up_videos(mid: str, pn: int = 1, ps: int = 30) -> dict:
     """获取指定 UP 主的所有投稿视频 BV 号"""
     logging.info(f"Fetching videos for UP mid: {mid}, page {pn}")
-    user_cookie = os.environ.get('BILIBILI_COOKIE')
+    user_cookie = get_bilibili_cookie()
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': f'https://space.bilibili.com/{mid}/video',
@@ -955,19 +1078,185 @@ def get_up_videos(mid: str, pn: int = 1, ps: int = 30) -> dict:
         logging.error(f"Error fetching UP videos: {e}")
         return f"获取视频列表出错: {e}"
 
+# --- Subtitle Save (原字幕导出) ---
+
+DEFAULT_SUBTITLE_SAVE_DIR = r"D:\vcp\VCPToolBox\knowledge\字幕"
+
+
+def get_subtitle_save_dir() -> str:
+    """
+    返回字幕导出目录：
+    1. 环境变量 BILIBILI_SUBTITLE_SAVE_DIR 显式指定
+    2. 默认 D:\\vcp\\VCPToolBox\\knowledge\\字幕（用户指定的知识库字幕目录）
+    3. 其他平台/迁移环境下回退到 PROJECT_BASE_PATH/knowledge/字幕
+    """
+    configured = os.environ.get('BILIBILI_SUBTITLE_SAVE_DIR', '').strip()
+    if configured:
+        return os.path.abspath(configured)
+    if os.name == 'nt' and os.path.isabs(DEFAULT_SUBTITLE_SAVE_DIR):
+        return os.path.abspath(DEFAULT_SUBTITLE_SAVE_DIR)
+    project_base = os.environ.get('PROJECT_BASE_PATH', os.getcwd())
+    return os.path.abspath(os.path.join(project_base, 'knowledge', '字幕'))
+
+
+def save_bilibili_subtitle(video_input: str, lang_code: str | None = None, overwrite: bool = True) -> str:
+    """
+    提取 Bilibili 视频的原始字幕并保存到 knowledge/字幕 目录。
+
+    每个视频保存两份文件：
+      - <标题>_<BV号>.json : 原始 CC 字幕 JSON（body 结构，含 from/to/content）
+      - <标题>_<BV号>.txt  : 带时间戳的纯文本字幕（便于阅读/知识库检索）
+
+    当 API 未返回 CC 字幕时，与 BilibiliFetch 主命令一致，自动尝试
+    managed Chrome 页面补充：此时仅保存页面补充文本（txt），不伪造 JSON。
+
+    返回保存结果摘要文本。
+    """
+    resolved_url = resolve_short_url(video_input)
+    bvid, page = extract_bvid_and_page(resolved_url)
+    if not bvid:
+        return f"无法从输入提取 BV 号: {video_input}"
+    logging.info(f"save_subtitle: BVID={bvid}, Page={page}")
+
+    user_cookie = get_bilibili_cookie()
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': f'{BILIBILI_VIDEO_BASE_URL}{bvid}/',
+    }
+    if user_cookie:
+        headers['Cookie'] = user_cookie
+
+    # 多P视频需要覆盖 CID，确保提取的是指定分P的字幕
+    target_cid = None
+    if page > 1:
+        target_cid = get_cid_for_page(bvid, page, headers)
+        logging.info(f"save_subtitle: target CID for page {page}: {target_cid}")
+
+    subtitle_json_string = get_subtitle_json_string(bvid, user_cookie, lang_code, target_cid=target_cid)
+    try:
+        subtitle_data = json.loads(subtitle_json_string)
+    except json.JSONDecodeError as e:
+        logging.error(f"save_subtitle: subtitle JSON parse failed for {bvid}: {e}")
+        return f"字幕 JSON 解析失败: {e}"
+
+    body = subtitle_data.get('body', []) if isinstance(subtitle_data, dict) else []
+
+    # 获取视频标题用于命名文件（失败时回退到 BV 号）
+    video_title = None
+    try:
+        view_resp = requests.get(VIEW_API_URL, params={'bvid': bvid}, headers=headers, timeout=10)
+        view_data = view_resp.json()
+        if view_data.get('code') == 0:
+            video_title = view_data.get('data', {}).get('title')
+    except Exception as e:
+        logging.warning(f"save_subtitle: 获取视频标题失败: {e}")
+
+    if video_title:
+        base_parts = [sanitize_filename(video_title, max_length=60), bvid]
+    else:
+        base_parts = [bvid]
+    if page > 1:
+        base_parts.append(f"P{page}")
+    if lang_code:
+        base_parts.append(lang_code)
+    base_name = sanitize_filename('_'.join(base_parts), max_length=100)
+
+    save_dir = get_subtitle_save_dir()
+    try:
+        os.makedirs(save_dir, exist_ok=True)
+    except Exception as e:
+        logging.error(f"save_subtitle: 创建目录失败 {save_dir}: {e}")
+        return f"创建字幕保存目录失败: {save_dir} ({e})"
+
+    json_path = os.path.join(save_dir, f"{base_name}.json")
+    txt_path = os.path.join(save_dir, f"{base_name}.txt")
+
+    # --- API 无字幕时，走 managed Chrome 页面补充（与 BilibiliFetch 主命令一致） ---
+    if not body and env_bool('BILIBILI_BROWSER_FALLBACK_ENABLED', True):
+        logging.info("save_subtitle: API 未返回字幕，尝试 managed Chrome 页面补充...")
+        try:
+            browser_text = fetch_with_managed_chrome(resolved_url)
+        except Exception as fallback_error:
+            safe_error = str(fallback_error)
+            vcp_key = os.environ.get('VCP_Key') or os.environ.get('VCP_KEY') or ''
+            if vcp_key:
+                safe_error = safe_error.replace(vcp_key, '[redacted]')
+            logging.warning(f"save_subtitle: managed Chrome fallback 不可用: {safe_error}")
+            browser_text = ""
+        if browser_text:
+            existing = [p for p in (json_path, txt_path) if os.path.exists(p)]
+            if existing and not overwrite:
+                return f"overwrite=false，以下文件已存在，跳过保存:\n" + "\n".join(existing)
+            try:
+                with open(txt_path, 'w', encoding='utf-8') as f:
+                    f.write("# 来自 managed Chrome 页面补充（API 未返回 CC 字幕，内容为页面正文）\n")
+                    f.write(f"# 视频: {video_title or bvid} | BV号: {bvid}"
+                            + (f" | 第 {page} P" if page > 1 else "") + "\n\n")
+                    f.write(browser_text.strip() + "\n")
+            except Exception as e:
+                logging.error(f"save_subtitle: 写入页面补充文件失败: {e}")
+                return f"保存 managed Chrome 页面补充失败: {e}"
+            return (
+                f"【字幕已保存（页面补充模式）】视频 {video_title or bvid}（BV号: {bvid}"
+                + (f"，第 {page} P" if page > 1 else "")
+                + "）的 API 未返回 CC 字幕，已通过 managed Chrome 保存页面补充文本。\n"
+                f"- 保存目录: {save_dir}\n"
+                f"- 页面补充文本: {txt_path}\n"
+                f"- 说明: 此文件为页面正文，非 CC 字幕 JSON；如需纯字幕请确认视频有可用 CC 字幕且登录态有效。"
+            )
+
+    if not body:
+        return f"未获取到字幕内容，未保存任何文件。视频: {bvid}（可能该视频没有 CC 字幕或需要登录）"
+
+    existing = [p for p in (json_path, txt_path) if os.path.exists(p)]
+    if existing and not overwrite:
+        skipped = "\n".join(existing)
+        return f"overwrite=false，以下文件已存在，跳过保存:\n{skipped}"
+
+    try:
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(subtitle_data, f, ensure_ascii=False, indent=2)
+
+        text_lines = [
+            f"[{item.get('from', 0):.2f}] {item.get('content', '')}"
+            for item in body if isinstance(item, dict)
+        ]
+        with open(txt_path, 'w', encoding='utf-8') as f:
+            f.write("\n".join(text_lines).strip() + "\n")
+    except Exception as e:
+        logging.error(f"save_subtitle: 写入字幕文件失败: {e}")
+        return f"保存字幕文件失败: {e}"
+
+    try:
+        duration = float(body[-1].get('to', 0)) - float(body[0].get('from', 0))
+    except (IndexError, TypeError, ValueError):
+        duration = 0.0
+
+    preview = "\n".join(text_lines[:3])
+    return (
+        f"【字幕已保存】视频 {video_title or bvid}（BV号: {bvid}"
+        + (f"，第 {page} P" if page > 1 else "")
+        + f"）的原始字幕已导出到知识库目录。\n"
+        f"- 保存目录: {save_dir}\n"
+        f"- 原始字幕 JSON: {json_path}\n"
+        f"- 纯文本字幕: {txt_path}\n"
+        f"- 字幕条数: {len(body)} 条 | 时长约 {duration:.1f}s\n"
+        f"\n内容预览:\n{preview}"
+    )
+
 # --- Main execution for VCP Synchronous Plugin ---
 
 def process_bilibili_url(video_input: str, lang_code: str | None = None) -> str:
     """
     Processes a Bilibili URL or BV ID to fetch and return subtitle text.
-    Reads cookie from BILIBILI_COOKIE environment variable.
+    Reads cookie via get_bilibili_cookie() (dynamic from managed Chrome, fallback to BILIBILI_COOKIE env).
     Accepts a language code for subtitle selection.
     Returns plain text subtitle content or an empty string on failure.
     """
-    user_cookie = os.environ.get('BILIBILI_COOKIE')
+    user_cookie = get_bilibili_cookie()
 
     if user_cookie:
-        logging.info("Using cookie from BILIBILI_COOKIE environment variable.")
+        logging.info("Using Bilibili cookie (dynamic or static).")
     if lang_code:
         logging.info(f"Subtitle language preference passed as argument: {lang_code}")
 
@@ -1035,6 +1324,16 @@ def handle_single_request(data: dict):
         pn = int(data.get('pn', 1))
         ps = int(data.get('ps', 30))
         return get_up_videos(str(mid), pn, ps)
+
+    elif action == 'save_subtitle':
+        url = data.get('url')
+        if not url:
+            raise ValueError("Missing required argument: url for save_subtitle")
+        lang = data.get('lang')
+        overwrite = data.get('overwrite', True)
+        if isinstance(overwrite, str):
+            overwrite = overwrite.strip().lower() in ('true', '1', 'yes', 'y', 'on')
+        return save_bilibili_subtitle(url, lang_code=lang, overwrite=bool(overwrite))
 
     else: # Default: fetch_video
         url = data.get('url')

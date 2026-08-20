@@ -243,12 +243,23 @@ class KnowledgeBaseManager {
         this.lifecycleExtensionHost = new KnowledgeLifecycleExtensionHost({
             extensions: loadKnowledgeLifecycleExtensions({
                 modulePaths: lifecycleExtensionModules,
-                extensionOptions: {
-                    configPath: process.env.MEMORY_RIVER_CONFIG_PATH,
-                    registryPath: process.env.MEMORY_RIVER_REGISTRY_V2_PATH,
-                    databasePath: process.env.MEMORY_RIVER_DATABASE_PATH,
-                    createDefaultConfig: !process.env.MEMORY_RIVER_CONFIG_PATH
-                },
+                // Registry v2 是配置事实源，也是管理路由与 VCPChat 注册台唯一写入的格式。
+                // 因此默认解析到 v2 路径并显式传入，使扩展走 v2-only 分支。
+                // 若仍传 configPath，扩展会进 v1-only 分支，前端登记的 River 将完全不参与投影
+                // （只留一条 warn，接口全部 200，症状是投影恒为 0 行）。
+                // 只有显式设置 MEMORY_RIVER_CONFIG_PATH 时才保留旧 v1 兼容路径。
+                extensionOptions: process.env.MEMORY_RIVER_CONFIG_PATH
+                    ? {
+                        configPath: process.env.MEMORY_RIVER_CONFIG_PATH,
+                        databasePath: process.env.MEMORY_RIVER_DATABASE_PATH,
+                        createDefaultConfig: false
+                    }
+                    : {
+                        registryPath: process.env.MEMORY_RIVER_REGISTRY_V2_PATH
+                            || path.join(__dirname, 'extensions', 'memory-river', 'config', 'memory-rivers.v2.json'),
+                        databasePath: process.env.MEMORY_RIVER_DATABASE_PATH,
+                        createDefaultConfig: true
+                    },
                 logger: console
             }),
             logger: console
@@ -1626,35 +1637,52 @@ class KnowledgeBaseManager {
             || await this.prepareUnifiedMemoObservation(query, options);
         const { artifact, observation, sourceObservationResult } = prepared;
 
+        const runTopology = (handle) => this.riverMemoEngine.rerank(
+            {
+                text: String(query?.text || ''),
+                vector: prepared.queryVector
+            },
+            Array.isArray(candidates) ? candidates : [],
+            agentContext,
+            {
+                ...options,
+                artifact,
+                dbPath: this.dbPath,
+                nativePreparedQuery: prepared.nativePreparedQuery,
+                observationHandle: handle,
+                sourceObservationResult,
+                sourceField: prepared.sourceField,
+                sourceObservationConfig: {
+                    ...(artifact.effectiveConfig
+                        ?.sourceObservation || {}),
+                    ...(options.sourceObservationConfig || {})
+                },
+                includeTrace: options.includeTrace === true
+            }
+        );
         if (mode === 'topology_v3') {
             if (!this.riverMemoEngine) {
                 const error = new Error('RiverMemo engine is unavailable');
                 error.code = 'RIVERMEMO_UNAVAILABLE';
                 throw error;
             }
-            return await this.riverMemoEngine.rerank(
-                {
-                    text: String(query?.text || ''),
-                    vector: prepared.queryVector
-                },
-                Array.isArray(candidates) ? candidates : [],
-                agentContext,
-                {
-                    ...options,
-                    artifact,
-                    dbPath: this.dbPath,
-                    nativePreparedQuery: prepared.nativePreparedQuery,
-                    observationHandle: prepared.observationHandle,
-                    sourceObservationResult,
-                    sourceField: prepared.sourceField,
-                    sourceObservationConfig: {
-                        ...(artifact.effectiveConfig
-                            ?.sourceObservation || {}),
-                        ...(options.sourceObservationConfig || {})
-                    },
-                    includeTrace: options.includeTrace === true
+            try {
+                return await runTopology(prepared.observationHandle);
+            } catch (error) {
+                const message = error?.message || String(error);
+                if (
+                    prepared.observationHandle
+                    && (
+                        message.includes('is unavailable')
+                        || message.includes('expired')
+                        || message.includes('generation mismatch')
+                    )
+                ) {
+                    console.warn(`[KnowledgeBase] Memo query observation handle unusable (${message}); retrying with inline observation.`);
+                    return await runTopology(null);
                 }
-            );
+                throw error;
+            }
         }
 
         const geoConfig = {
@@ -1676,12 +1704,12 @@ class KnowledgeBaseManager {
                 ?? 3
             ))
         );
-        const nativePayload = await this.tagIndex.rerankMemoDtsc(
+        const runDtsc = (handle) => this.tagIndex.rerankMemoDtsc(
             this.dbPath,
             artifact.artifactSig,
             JSON.stringify({
                 dimension: this.config.dimension,
-                observationHandle: prepared.observationHandle,
+                observationHandle: handle,
                 queryGeometryState: {
                     epa: sourceObservationResult.epa || {},
                     pyramid: sourceObservationResult.pyramid || {}
@@ -1709,7 +1737,7 @@ class KnowledgeBaseManager {
                     Number.isFinite(candidate.id)
                     && candidate.id > 0
                 ),
-                ...(prepared.observationHandle
+                ...(handle
                     ? {}
                     : {
                         observation,
@@ -1753,6 +1781,25 @@ class KnowledgeBaseManager {
                 }
             })
         );
+        let nativePayload;
+        try {
+            nativePayload = await runDtsc(prepared.observationHandle);
+        } catch (error) {
+            const message = error?.message || String(error);
+            if (
+                prepared.observationHandle
+                && (
+                    message.includes('is unavailable')
+                    || message.includes('expired')
+                    || message.includes('generation mismatch')
+                )
+            ) {
+                console.warn(`[KnowledgeBase] Memo query observation handle unusable (${message}); retrying with inline observation.`);
+                nativePayload = await runDtsc(null);
+            } else {
+                throw error;
+            }
+        }
         const nativeResult = JSON.parse(nativePayload);
         const originalById = new Map(
             (Array.isArray(candidates) ? candidates : [])

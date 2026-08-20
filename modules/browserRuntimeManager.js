@@ -22,6 +22,7 @@ let currentExecutablePath = null;
 let currentProfileDir = null;
 let currentDebuggingPort = null;
 let currentExtensionDir = null;
+let currentExtensionDirs = null;
 let lastLaunchArgs = [];
 let startedAt = null;
 let lastTouchedAt = null;
@@ -64,12 +65,50 @@ function resolveExtensionDir() {
     return configured;
 }
 
+function splitEnvList(value) {
+    if (!value) return [];
+    return String(value)
+        .split(/[,;]/)
+        .map(s => String(s || '').trim())
+        .filter(Boolean);
+}
+
+// 托管浏览器需要同时加载两类扩展：
+// 1) VCPBridge-Extension（平台数据桥接：extract_data/download_video/feed）
+// 2) VCPChrome（通用浏览器控制：open_url/click/type/list_tabs/cdp 等）
+// 默认自动附带同目录打包的 VCPChrome；也可用 VCP_BROWSER_EXTRA_EXTENSION_DIRS 覆盖。
+function resolveExtensionDirs() {
+    const primary = resolveExtensionDir();
+    const dirs = [primary];
+    let extras = splitEnvList(process.env.VCP_BROWSER_EXTRA_EXTENSION_DIRS);
+
+    if (extras.length === 0) {
+        const bundled = DEFAULT_EXTENSION_DIR;
+        if (bundled !== primary && fs.existsSync(path.join(bundled, 'manifest.json'))) {
+            extras = [bundled];
+        }
+    }
+
+    for (const raw of extras) {
+        const dir = resolveProjectPath(raw, null);
+        if (!dir || dir === primary) continue;
+        if (!fs.existsSync(path.join(dir, 'manifest.json'))) {
+            console.warn(`[BrowserRuntimeManager] extra extension dir unavailable: ${dir}`);
+            continue;
+        }
+        dirs.push(dir);
+    }
+
+    return dirs;
+}
+
 function getRuntimeConfig() {
     return {
         enabled: readBooleanEnv('VCP_BROWSER_RUNTIME_ENABLED', false),
         idleTimeoutMs: readIntegerEnv('VCP_BROWSER_IDLE_TIMEOUT_MS', 300000, 10000),
         profileDir: resolveProjectPath(process.env.VCP_BROWSER_PROFILE_DIR, DEFAULT_PROFILE_DIR),
         extensionDir: resolveExtensionDir(),
+        extensionDirs: resolveExtensionDirs(),
         stagedExtensionRoot: resolveProjectPath(process.env.VCP_BROWSER_STAGED_EXTENSION_DIR, DEFAULT_STAGED_EXTENSION_ROOT),
         loadExtension: readBooleanEnv('VCP_BROWSER_LOAD_VCPCHROME', true),
         headless: readBooleanEnv('VCP_BROWSER_HEADLESS', false),
@@ -82,7 +121,7 @@ function getRuntimeConfig() {
         windowsHide: readBooleanEnv('VCP_BROWSER_WINDOWS_HIDE', false),
         restrictExtensions: readBooleanEnv('VCP_BROWSER_RESTRICT_EXTENSIONS', false),
         maxTabs: readIntegerEnv('VCP_BROWSER_MAX_TABS', 8, 1, 200),
-        serverUrl: String(process.env.VCP_BROWSER_SERVER_URL || `ws://localhost:${process.env.PORT || 6005}`).trim(),
+        serverUrl: String(process.env.VCP_BROWSER_SERVER_URL || `ws://localhost:${process.env.PORT || 6015}`).trim(),
         vcpKey: String(process.env.VCP_Key || process.env.VCP_KEY || '').trim()
     };
 }
@@ -228,48 +267,67 @@ async function writeManagedStorageFallback(config, payload) {
     }, null, 2), 'utf8');
 }
 
-async function stageManagedExtension(config) {
-    if (!config.loadExtension) return config.extensionDir;
+async function stageManagedExtensions(config) {
+    if (!config.loadExtension) return [config.extensionDir].filter(Boolean);
 
-    const sourceManifestPath = path.join(config.extensionDir, 'manifest.json');
-    try {
-        await fsp.access(sourceManifestPath);
-    } catch (error) {
-        throw new Error(`VCPChrome 源扩展目录不可用: ${config.extensionDir}`);
-    }
-
+    const sources = config.extensionDirs && config.extensionDirs.length
+        ? config.extensionDirs
+        : [config.extensionDir];
     // 不要把 --load-extension 的 unpacked 扩展目录放进 --user-data-dir。
     // Chrome/Edge 在部分版本中会拒绝或静默忽略 user-data-dir 内部的 unpacked extension。
     const stagedRoot = config.stagedExtensionRoot;
-    const stagedExtensionDir = path.join(stagedRoot, 'VCPChrome');
-    await fsp.rm(stagedExtensionDir, { recursive: true, force: true });
     await fsp.mkdir(stagedRoot, { recursive: true });
-    await fsp.cp(config.extensionDir, stagedExtensionDir, {
-        recursive: true,
-        force: true,
-        filter: (src) => {
-            const base = path.basename(src);
-            return !['.git', 'node_modules'].includes(base);
+
+    const stagedDirs = [];
+    for (let i = 0; i < sources.length; i++) {
+        const sourceDir = sources[i];
+        const sourceManifestPath = path.join(sourceDir, 'manifest.json');
+        try {
+            await fsp.access(sourceManifestPath);
+        } catch (error) {
+            throw new Error(`VCPChrome 源扩展目录不可用: ${sourceDir}`);
         }
-    });
 
-    return stagedExtensionDir;
-}
-
-async function writeManagedExtensionConfig(config) {
-    if (!config.loadExtension) return null;
-
-    const manifestPath = path.join(config.extensionDir, 'manifest.json');
-    try {
-        await fsp.access(manifestPath);
-    } catch (error) {
-        throw new Error(`VCPChrome 扩展目录不可用: ${config.extensionDir}`);
+        // 主扩展沿用旧的 VCPBridge 目录名，避免 unpacked 扩展 ID 变化导致 managed 连接身份漂移；
+        // 附加扩展按自身目录名 staging（如 VCPChrome）。
+        const stagedExtensionDir = path.join(stagedRoot, i === 0 ? 'VCPBridge' : path.basename(sourceDir));
+        await fsp.rm(stagedExtensionDir, { recursive: true, force: true });
+        await fsp.cp(sourceDir, stagedExtensionDir, {
+            recursive: true,
+            force: true,
+            filter: (src) => {
+                const base = path.basename(src);
+                return !['.git', 'node_modules'].includes(base);
+            }
+        });
+        stagedDirs.push(stagedExtensionDir);
     }
 
-    const runtimeConfigPath = path.join(config.extensionDir, MANAGED_CONFIG_FILE);
-    const payload = makeManagedRuntimePayload(config);
+    return stagedDirs;
+}
 
-    await fsp.writeFile(runtimeConfigPath, JSON.stringify(payload, null, 2), 'utf8');
+async function writeManagedExtensionConfigs(config) {
+    if (!config.loadExtension) return null;
+
+    const dirs = config.extensionDirs && config.extensionDirs.length
+        ? config.extensionDirs
+        : [config.extensionDir];
+    const payload = makeManagedRuntimePayload(config);
+    let runtimeConfigPath = null;
+
+    for (const dir of dirs) {
+        const manifestPath = path.join(dir, 'manifest.json');
+        try {
+            await fsp.access(manifestPath);
+        } catch (error) {
+            throw new Error(`VCPChrome 扩展目录不可用: ${dir}`);
+        }
+
+        const dirRuntimeConfigPath = path.join(dir, MANAGED_CONFIG_FILE);
+        await fsp.writeFile(dirRuntimeConfigPath, JSON.stringify(payload, null, 2), 'utf8');
+        runtimeConfigPath = dirRuntimeConfigPath;
+    }
+
     await writeManagedStorageFallback(config, payload).catch(error => {
         console.warn('[BrowserRuntimeManager] managed storage fallback write failed:', error.message);
     });
@@ -385,10 +443,14 @@ function buildChromeArgs(config) {
         // 托管运行时必须让命令行加载的未打包扩展成为唯一扩展来源。
         // 仅使用 --load-extension 在部分 Chrome/Edge 环境中会被策略/安全提示静默禁用；
         // 与 --disable-extensions-except 同时使用是自动化场景加载 unpacked MV3 扩展的更稳定组合。
+        const dirs = config.extensionDirs && config.extensionDirs.length
+            ? config.extensionDirs
+            : [config.extensionDir];
+        const extensionList = dirs.join(',');
         if (config.restrictExtensions) {
-            args.push(`--disable-extensions-except=${config.extensionDir}`);
+            args.push(`--disable-extensions-except=${extensionList}`);
         }
-        args.push(`--load-extension=${config.extensionDir}`);
+        args.push(`--load-extension=${extensionList}`);
     }
 
     args.push('about:blank');
@@ -447,19 +509,23 @@ async function ensureManagedBrowser(options = {}) {
         }
 
         await prepareManagedProfile(config);
-        const stagedExtensionDir = await stageManagedExtension(config);
-        const launchConfig = { ...config, extensionDir: stagedExtensionDir };
-        const runtimeConfigPath = await writeManagedExtensionConfig(launchConfig);
+        const stagedExtensionDirs = await stageManagedExtensions(config);
+        const launchConfig = {
+            ...config,
+            extensionDir: stagedExtensionDirs[0] || config.extensionDir,
+            extensionDirs: stagedExtensionDirs
+        };
+        const runtimeConfigPath = await writeManagedExtensionConfigs(launchConfig);
         if (launchConfig.loadExtension) {
-            const stagedManifestPath = path.join(launchConfig.extensionDir, 'manifest.json');
-            const stagedRuntimeConfigPath = path.join(launchConfig.extensionDir, MANAGED_CONFIG_FILE);
-            await fsp.access(stagedManifestPath);
-            await fsp.access(stagedRuntimeConfigPath);
+            for (const dir of stagedExtensionDirs) {
+                await fsp.access(path.join(dir, 'manifest.json'));
+                await fsp.access(path.join(dir, MANAGED_CONFIG_FILE));
+            }
         }
 
         const args = buildChromeArgs(launchConfig);
         lastLaunchArgs = [...args];
-        console.log(`[BrowserRuntimeManager] launching managed Chrome: executable=${executablePath}, profile=${launchConfig.profileDir}, extension=${launchConfig.loadExtension ? launchConfig.extensionDir : 'disabled'}, runtimeConfig=${runtimeConfigPath || 'N/A'}`);
+        console.log(`[BrowserRuntimeManager] launching managed Chrome: executable=${executablePath}, profile=${launchConfig.profileDir}, extensions=${launchConfig.loadExtension ? launchConfig.extensionDirs.join(';') : 'disabled'}, runtimeConfig=${runtimeConfigPath || 'N/A'}`);
         chromeProcess = spawn(executablePath, args, {
             cwd: PROJECT_ROOT,
             detached: false,
@@ -471,6 +537,7 @@ async function ensureManagedBrowser(options = {}) {
         currentProfileDir = launchConfig.profileDir;
         currentDebuggingPort = launchConfig.remoteDebuggingPort;
         currentExtensionDir = launchConfig.loadExtension ? launchConfig.extensionDir : null;
+        currentExtensionDirs = launchConfig.loadExtension ? [...launchConfig.extensionDirs] : null;
         startedAt = Date.now();
         lastTouchedAt = Date.now();
 
@@ -673,6 +740,7 @@ function getManagedBrowserStatus(extra = {}) {
         executablePath: currentExecutablePath,
         profileDir: currentProfileDir || config.profileDir,
         extensionDir: currentExtensionDir || config.extensionDir,
+        extensionDirs: currentExtensionDirs || config.extensionDirs,
         sourceExtensionDir: config.extensionDir,
         stagedExtensionRoot: config.stagedExtensionRoot,
         remoteDebuggingPort: currentDebuggingPort,

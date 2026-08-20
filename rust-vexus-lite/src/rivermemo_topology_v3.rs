@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
@@ -1324,7 +1324,11 @@ fn evaluate_topology(
         query_nodes: input.query_state.river_nodes.len(),
         ..TopologyOutput::default()
     };
-    let mut alignments = HashMap::new();
+    // BTreeMap 而非 HashMap：mean_closure 把 alignments.values() 直接累加成 f64，
+    // 而 HashMap 的迭代顺序由每进程随机的 RandomState 决定，f64 加法不满足结合律。
+    // 结果是同一查询在不同进程拿到末位不同的 mean_closure，再经 node_graph_score /
+    // reliability 漂到角色边界上。按 node.id 有序累加使这条链可复现。
+    let mut alignments = BTreeMap::new();
     let mut total_node_weight = 0.0;
     let mut matched_node_weight = 0.0;
     let mut node_quality_mass = 0.0;
@@ -1506,6 +1510,15 @@ fn evaluate_topology(
         output.direction_score = clamp01(direction_mass / matched_edge_weight);
         output.edge_topology_score = clamp01(topology_mass / matched_edge_weight);
     }
+    // D1（2026-08-12 标注，不改算术）：motif_score 是 edge_topology_score 的**纯别名**，
+    // 不是独立证据维。因此下面的权重表里 0.28 + 0.14 = 0.42 全部压在同一个量上，
+    // 边拓扑实际承担 edge_graph_score 的 42%（其余：节点对齐 0.18 + 相对距离 0.22 + 方向 0.18）。
+    // 读 trace 时不要把 motifScore 当成第二份证据，也不要以为四项权重是四个独立通道。
+    // 为什么不直接折叠成 `0.42 * edge_topology_score`：
+    //   1) f64 下 0.28 + 0.14 == 0.42000000000000004 ≠ 0.42，折叠不是逐位等价（相对差 ~1e-16）；
+    //   2) 折叠需重编译 .node 并重启生产；当前收益只是可读性，不值得动已调试完的二进制。
+    // 若将来要折叠：连同 TopologyOutput.motif_score 字段与其序列化（motifScore）一起处理，
+    // 并注意那是**输出契约变更**（AdminPanel / 探针脚本可能在读这个键）。
     output.motif_score = output.edge_topology_score;
     output.edge_graph_score = clamp01(
         0.18 * output.node_alignment_score
@@ -1754,6 +1767,8 @@ struct ScoredWork {
     graph_score: f64,
     direct_evidence: f64,
     role: String,
+    original_role: String,
+    role_reclassification_reason: Option<&'static str>,
     anchor: AnchorOutput,
     v2_bonus: f64,
     gated_bonus: f64,
@@ -2055,11 +2070,20 @@ fn assign_v3_scores(
             1.0
         };
         item.anchor_bonus = config.anchor_bonus_cap * activation;
+        // 角色改写发生在 role_weight (:1929) 与 role_cap (:2006) 取值之后，只改标签、
+        // 不进任何分数。保留改写前的角色与理由，与 JS 孪生体
+        // (modules/tagmemoV10/experimentArms.js:1199-1212) 对齐——否则 Rust 侧无从判断
+        // struct_role_min_omega 这一支是否被走过。
+        item.original_role = item.role.clone();
         if promote && strongest.map(|entry| entry.0) == Some(index) {
+            if item.role != "direct_answer" {
+                item.role_reclassification_reason = Some("strong-direct-anchor-contrast");
+            }
             item.role = "direct_answer".to_string();
         } else if omega.omega < config.struct_role_min_omega
             && item.role == "structural_explanation"
         {
+            item.role_reclassification_reason = Some("collapsed-river-structure");
             item.role = "thematic_neighbor".to_string();
         }
         item.gated_bonus = item.v2_bonus * graph_gate;
@@ -2365,6 +2389,8 @@ fn run_native(
                 pure_score,
                 graph_score,
                 role: String::new(),
+                original_role: String::new(),
+                role_reclassification_reason: None,
                 anchor: AnchorOutput::default(),
                 v2_bonus: 0.0,
                 gated_bonus: 0.0,
@@ -2457,6 +2483,9 @@ fn run_native(
                     "semanticContacts": item.anchor.semantic_contacts,
                     "meanClosure": item.anchor.mean_closure,
                     "role": item.role,
+                    "originalRole": item.original_role,
+                    "roleReclassified": item.original_role != item.role,
+                    "roleReclassificationReason": item.role_reclassification_reason,
                     "pureScore": item.pure_score,
                     "finalScore": item.final_score,
                     "nativeBackend": "rust-rayon"

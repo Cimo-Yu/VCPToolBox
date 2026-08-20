@@ -567,16 +567,60 @@ class TagMemoEngine {
         return { inboundMassMap, maxInbound, hubSpecificityBaseMap };
     }
 
-    _stageAndPublishV91Bundle(factMatrix) {
-        const pairwiseView = this.tagPairSimilarities instanceof Map
-            ? this.tagPairSimilarities
-            : new Map();
-        const anchorGainMap = this.tagIntrinsicResiduals instanceof Map
-            ? this.tagIntrinsicResiduals
-            : new Map();
-        const rawResidualRatioMap = this.tagRawResidualRatios instanceof Map
-            ? this.tagRawResidualRatios
-            : new Map();
+    /**
+     * 组装 V9.1 bundle 的全部资产，但不发布。
+     * 全局路径与 River scope 路径共用此方法，保证两者的传输核语义完全一致。
+     *
+     * @param {Map} factMatrix 共现事实矩阵
+     * @param {object} [options] `options.scopeLabel` 存在时并入 artifactSig，
+     *        使不同 River 的签名互不相同，避免下游按 sig 缓存时相互命中。
+     */
+    _assembleV91Bundle(factMatrix, options = {}) {
+        const scopeLabel = options.scopeLabel || null;
+
+        // scope 路径绝不读实例字段：JS 图资产被 Rust MemoRuntime 接管后
+        // （热路径 _publishArtifactBundle 主动 release，冷启动恢复 manifest 时从未填充），
+        // this.tagIntrinsicResiduals / tagPairSimilarities 恒为 null，
+        // 直接复用会得到残差全缺的图并让 Ω 系统性偏低。
+        // 两张派生表本身始终是权威事实源，因此改为按需读只读快照，与接管状态解耦。
+        let pairwiseView;
+        let anchorGainMap;
+        let rawResidualRatioMap;
+        let residualArtifact;
+
+        if (scopeLabel) {
+            // 调用方（buildDirectedCooccurrenceMatrix 的 scope 分支）已经为边权读过一次快照，
+            // 传进来即可复用，避免同一次构建对两张派生表各查两遍。
+            const snapshot = options.residualSnapshot || this.readIntrinsicResidualsSnapshot();
+            pairwiseView = options.pairwiseView instanceof Map
+                ? options.pairwiseView
+                : this.readPairwiseSimilaritiesSnapshot();
+            anchorGainMap = snapshot.anchorGainMap;
+            rawResidualRatioMap = snapshot.rawResidualRatioMap;
+            residualArtifact = snapshot.residualArtifact;
+
+            // 读表后依然为空说明派生链尚未跑过，而非接管所致。
+            // 此时组装出的图残差全缺，仍属静默错误，必须显式失败。
+            if (anchorGainMap.size === 0) {
+                const error = new Error(
+                    `Cannot assemble scoped bundle for ${scopeLabel}: tag_intrinsic_residuals is empty, `
+                    + 'derived residual pipeline has not produced anchor gains yet'
+                );
+                error.code = 'TAGMEMO_SCOPED_BUNDLE_UNAVAILABLE';
+                throw error;
+            }
+        } else {
+            pairwiseView = this.tagPairSimilarities instanceof Map
+                ? this.tagPairSimilarities
+                : new Map();
+            anchorGainMap = this.tagIntrinsicResiduals instanceof Map
+                ? this.tagIntrinsicResiduals
+                : new Map();
+            rawResidualRatioMap = this.tagRawResidualRatios instanceof Map
+                ? this.tagRawResidualRatios
+                : new Map();
+            residualArtifact = this.intrinsicResidualArtifact;
+        }
         const kbConfig = JSON.parse(JSON.stringify(
             this.ragParams?.KnowledgeBaseManager || {}
         ));
@@ -598,13 +642,15 @@ class TagMemoEngine {
                 algorithmVersion: 'v9.1',
                 modelSig: this.modelSig,
                 graphGeneration,
-                residualArtifact: this.intrinsicResidualArtifact?.artifactSig || 'legacy',
-                effectiveConfig
+                residualArtifact: residualArtifact?.artifactSig || 'legacy',
+                effectiveConfig,
+                // 构建域指纹：同一份配置在不同 River 子图上必须得到不同签名。
+                scope: scopeLabel || 'global'
             }))
             .digest('hex')
             .slice(0, 24);
 
-        return this._publishArtifactBundle({
+        return {
             version: 'v9',
             artifactSig,
             graphGeneration,
@@ -620,14 +666,20 @@ class TagMemoEngine {
             hubSpecificityBaseMap: inboundArtifacts.hubSpecificityBaseMap,
             pairwiseView,
             potentialFieldConfig: JSON.parse(JSON.stringify(potentialFieldConfig)),
-            residualArtifact: this.intrinsicResidualArtifact
-                ? Object.freeze({ ...this.intrinsicResidualArtifact })
+            residualArtifact: residualArtifact
+                ? Object.freeze({ ...residualArtifact })
                 : null,
             wormholeEdges: build.wormholeEdges,
             outboundMass: build.outboundMass,
             kernelDiagnostics: build.kernelDiagnostics,
-            algorithmVersion: 'v9.1'
-        });
+            algorithmVersion: 'v9.1',
+            scopeLabel
+        };
+    }
+
+    _stageAndPublishV91Bundle(factMatrix) {
+        // 全局路径：组装后发布为活动 artifact。
+        return this._publishArtifactBundle(this._assembleV91Bundle(factMatrix));
     }
 
     async initialize() {
@@ -2855,9 +2907,47 @@ class TagMemoEngine {
     //   6) Gemini 分布建议先扫描再调 peak (留作运行时 ops 任务)
     //   7) tags.vector 重写时 DELETE 涉及该 tag 的 sim 行 (在 KnowledgeBaseManager 中处理)
     // ============================================================
-    buildDirectedCooccurrenceMatrix() {
+    /**
+     * 构建有向共现矩阵。
+     *
+     * @param {object} [scope] 可选的 River 级构建域。
+     *        `scope.allowedFileIds` 非空时，只有这些 file_id 参与共现聚合，
+     *        产出的 bundle 只描述该子图，不发布为全局活动 artifact。
+     *        省略时行为与历史调用完全一致（全库构建 + 发布）。
+     * @returns {object} scope 模式返回未发布的独立 bundle；否则返回已发布的 registry。
+     */
+    buildDirectedCooccurrenceMatrix(scope = null) {
         const matrixBuildStartedAt = Date.now();
-        console.log('[TagMemoEngine] 🧠 V8.2 Building ORDERED-BIDIRECTIONAL tag co-occurrence matrix (γ)...');
+        const scopedFileIds = Array.isArray(scope?.allowedFileIds)
+            ? new Set(scope.allowedFileIds.map(Number).filter(Number.isFinite))
+            : null;
+        // 空集必须视为“显式空域”而不是“无过滤”，否则 River 会静默退化成全库图。
+        const isScoped = scopedFileIds !== null;
+        const scopeLabel = isScoped ? (scope.label || 'river') : null;
+        if (isScoped) {
+            console.log(
+                `[TagMemoEngine] 🌊 Building SCOPED co-occurrence matrix for ${scopeLabel}: ` +
+                `${scopedFileIds.size} file(s); result will NOT be published globally.`
+            );
+        } else {
+            console.log('[TagMemoEngine] 🧠 V8.2 Building ORDERED-BIDIRECTIONAL tag co-occurrence matrix (γ)...');
+        }
+
+        // 边权依赖的两个图资产在这里一次性定型。
+        // Rust MemoRuntime 接管后实例字段被清空（pairwise → 空 Map，residual → null），
+        // 因此 scope 路径统一改读派生表快照；全局路径继续用实例字段，
+        // 保持既有换代语义（发布时才整体替换）。
+        const scopedPairwiseView = isScoped ? this.readPairwiseSimilaritiesSnapshot() : null;
+        const scopedResidualSnapshot = isScoped ? this.readIntrinsicResidualsSnapshot() : null;
+        const anchorGainLookup = isScoped
+            ? scopedResidualSnapshot.anchorGainMap
+            : this.tagIntrinsicResiduals;
+        if (isScoped) {
+            console.log(
+                `[TagMemoEngine] 🌊 Scoped graph assets loaded from derived tables for ${scopeLabel}: ` +
+                `pairwise=${scopedPairwiseView.size}, anchorGains=${anchorGainLookup.size}.`
+            );
+        }
         try {
             // 势能参数
             const PHI_MAX = 0.9;
@@ -2917,7 +3007,7 @@ class TagMemoEngine {
             // 包装 getSim，未命中走配置化 fallback
             const getSimSafe = (a, b) => {
                 if (!SEM_GAIN_ENABLED) return SEM_LOW_FALLBACK;
-                const v = this.getSim(a, b);
+                const v = this.getSim(a, b, scopedPairwiseView);
                 return Number.isFinite(v) && v > 0 ? v : SEM_LOW_FALLBACK;
             };
 
@@ -3004,8 +3094,8 @@ class TagMemoEngine {
 
                         // β: 概念锚增强 — 高内生残差的源头 (t1) 更适合作为逆流回溯目标
                         // (B → A 时 A=t1，t1 的残差越大 → t1 越像独立锚点 → 逆流越通畅)
-                        if (REVERSE_ANCHOR_BOOST && this.tagIntrinsicResiduals) {
-                            const anchorMass = this.tagIntrinsicResiduals.get(t1.id) ?? 1.0;
+                        if (REVERSE_ANCHOR_BOOST && anchorGainLookup) {
+                            const anchorMass = anchorGainLookup.get(t1.id) ?? 1.0;
                             const boost = Math.min(REVERSE_ANCHOR_MAX, anchorMass);
                             if (boost > 1.0) anchorBoostedEdges++;
                             dynamicReverseGain *= boost;
@@ -3034,6 +3124,8 @@ class TagMemoEngine {
             };
 
             for (const row of stmt.iterate()) {
+                // River 域过滤：在 JS 侧筛除域外文件，避免为不同 River 反复改写 SQL。
+                if (isScoped && !scopedFileIds.has(row.file_id)) continue;
                 if (row.file_id !== currentFileId) {
                     if (fileTags.length > 0) processFileGroup(fileTags, currentFileId);
                     currentFileId = row.file_id;
@@ -3099,6 +3191,8 @@ class TagMemoEngine {
             };
 
             for (const row of legacyStmt.iterate()) {
+                // 与 ordered 路径一致的 River 域过滤。
+                if (isScoped && !scopedFileIds.has(row.file_id)) continue;
                 if (row.file_id !== legacyFileId) {
                     if (legacyTags.length > 0) processLegacyFileGroup(legacyTags);
                     legacyFileId = row.file_id;
@@ -3107,6 +3201,21 @@ class TagMemoEngine {
                 legacyTags.push(row.tag_id);
             }
             if (legacyTags.length > 0) processLegacyFileGroup(legacyTags);
+
+            // scope 模式只组装 bundle，绝不触碰 _artifactBundlesByVersion 的活动指针，
+            // 否则构建 River 图会顺带替换全局检索使用的 artifact。
+            if (isScoped) {
+                const scopedBundle = this._assembleV91Bundle(matrix, {
+                    scopeLabel,
+                    pairwiseView: scopedPairwiseView,
+                    residualSnapshot: scopedResidualSnapshot
+                });
+                console.log(
+                    `[TagMemoEngine] ✅ Scoped matrix built for ${scopeLabel}: ` +
+                    `sources=${matrix.size}, forward=${forwardEdges}, backward=${backwardEdges} (unpublished).`
+                );
+                return scopedBundle;
+            }
 
             // V9.1 staging 资产完整构建结束后才一次性发布；旧请求继续持有旧 bundle。
             const publishedRegistry = this._stageAndPublishV91Bundle(matrix);
@@ -3132,18 +3241,27 @@ class TagMemoEngine {
 
     // 🌟 V8.2-γ: 加载持久化的 Tag 对语义相似度到内存 Map
     // 矩阵构建是热路径，不能每对 pair 查 SQLite。
+    /**
+     * 从 tag_pair_similarity 只读快照读出 pairwise Map，不写任何实例字段。
+     * 供 River scope 路径使用：Rust MemoRuntime 接管后 this.tagPairSimilarities 恒为空，
+     * 但表本身始终是权威事实源，读表因此与接管状态完全解耦。
+     */
+    readPairwiseSimilaritiesSnapshot() {
+        const rows = this.db.prepare(
+            'SELECT tag_a, tag_b, similarity FROM tag_pair_similarity WHERE model_sig = ?'
+        ).all(this.modelSig);
+        const pairwise = new Map();
+        for (const row of rows) {
+            pairwise.set(`${row.tag_a}:${row.tag_b}`, row.similarity);
+        }
+        return pairwise;
+    }
+
     loadPairwiseSimilarities(options = {}) {
         const { failOnCorruption = false } = options;
 
         const doLoad = () => {
-            const rows = this.db.prepare(
-                'SELECT tag_a, tag_b, similarity FROM tag_pair_similarity WHERE model_sig = ?'
-            ).all(this.modelSig);
-
-            this.tagPairSimilarities = new Map();
-            for (const row of rows) {
-                this.tagPairSimilarities.set(`${row.tag_a}:${row.tag_b}`, row.similarity);
-            }
+            this.tagPairSimilarities = this.readPairwiseSimilaritiesSnapshot();
             return this.tagPairSimilarities.size;
         };
 
@@ -3184,10 +3302,14 @@ class TagMemoEngine {
      * 🌟 V8.2-γ: 查询两个 tag 的持久化余弦相似度
      * 约定 a < b，未命中返回 0（由 buildDirectedCooccurrenceMatrix 包装为配置化 fallback）
      */
-    getSim(idA, idB) {
+    getSim(idA, idB, pairwiseView = null) {
         if (idA === idB) return 1.0;
+        // scope 路径显式传入只读快照：Rust 接管后 this.tagPairSimilarities 被重置为空 Map，
+        // 沿用实例字段会让每条边静默退化到 lowSimFallback（不报错、图却是错的）。
+        const lookup = pairwiseView instanceof Map ? pairwiseView : this.tagPairSimilarities;
+        if (!(lookup instanceof Map)) return 0;
         const [a, b] = idA < idB ? [idA, idB] : [idB, idA];
-        const v = this.tagPairSimilarities.get(`${a}:${b}`);
+        const v = lookup.get(`${a}:${b}`);
         return Number.isFinite(v) ? v : 0;
     }
 
@@ -3298,58 +3420,73 @@ class TagMemoEngine {
     }
 
     // 🌟 TagMemo V7/V9: 加载双语义内生残差
+    /**
+     * 从 tag_intrinsic_residuals 只读快照读出 anchorGain / rawResidualRatio / artifact，
+     * 不写任何实例字段。数值裁剪与 loadIntrinsicResiduals 完全一致，
+     * 保证 scope 路径与全局路径的物理量语义不产生分叉。
+     */
+    readIntrinsicResidualsSnapshot() {
+        const rows = this.db.prepare(`
+            SELECT
+                tag_id,
+                residual_energy,
+                raw_residual_ratio,
+                v9_anchor_gain,
+                model_sig,
+                artifact_sig,
+                algorithm_version,
+                config_hash
+            FROM tag_intrinsic_residuals
+        `).all();
+
+        const anchorGainMap = new Map();
+        const rawResidualRatioMap = new Map();
+        let residualArtifact = null;
+
+        for (const row of rows) {
+            // Number(null) === 0，所有 nullable 派生列必须先检查非空，再做数值转换。
+            const hasFiniteValue = value =>
+                value !== null && value !== undefined && Number.isFinite(Number(value));
+
+            const anchorValue = hasFiniteValue(row.v9_anchor_gain)
+                ? Number(row.v9_anchor_gain)
+                : Number(row.residual_energy);
+            anchorGainMap.set(
+                row.tag_id,
+                Math.max(0.5, Math.min(2.0, Number.isFinite(anchorValue) ? anchorValue : 1.0))
+            );
+
+            if (hasFiniteValue(row.raw_residual_ratio)) {
+                rawResidualRatioMap.set(
+                    row.tag_id,
+                    Math.max(0, Math.min(1, Number(row.raw_residual_ratio)))
+                );
+            }
+
+            if (!residualArtifact && row.artifact_sig) {
+                residualArtifact = {
+                    artifactSig: row.artifact_sig,
+                    modelSig: row.model_sig || this.modelSig,
+                    algorithmVersion: row.algorithm_version || null,
+                    configHash: row.config_hash || null
+                };
+            }
+        }
+
+        return { anchorGainMap, rawResidualRatioMap, residualArtifact };
+    }
+
     loadIntrinsicResiduals(options = {}) {
         const { failOnCorruption = false } = options;
 
         const doLoad = () => {
-            const rows = this.db.prepare(`
-                SELECT
-                    tag_id,
-                    residual_energy,
-                    raw_residual_ratio,
-                    v9_anchor_gain,
-                    model_sig,
-                    artifact_sig,
-                    algorithm_version,
-                    config_hash
-                FROM tag_intrinsic_residuals
-            `).all();
-
-            this.tagIntrinsicResiduals = new Map();
-            this.tagRawResidualRatios = new Map();
-            this.intrinsicResidualArtifact = null;
-
-            for (const row of rows) {
-                // Number(null) === 0，所有 nullable 派生列必须先检查非空，再做数值转换。
-                const hasFiniteValue = value =>
-                    value !== null && value !== undefined && Number.isFinite(Number(value));
-
-                // 老数据库在首次 V9.1 全量重建前可能尚无 v9_anchor_gain；
-                // residual_energy 仅作为一次性启动兼容值，重建后会被 V9.1 数值覆盖。
-                const anchorValue = hasFiniteValue(row.v9_anchor_gain)
-                    ? Number(row.v9_anchor_gain)
-                    : Number(row.residual_energy);
-                this.tagIntrinsicResiduals.set(
-                    row.tag_id,
-                    Math.max(0.5, Math.min(2.0, Number.isFinite(anchorValue) ? anchorValue : 1.0))
-                );
-
-                if (hasFiniteValue(row.raw_residual_ratio)) {
-                    this.tagRawResidualRatios.set(
-                        row.tag_id,
-                        Math.max(0, Math.min(1, Number(row.raw_residual_ratio)))
-                    );
-                }
-
-                if (!this.intrinsicResidualArtifact && row.artifact_sig) {
-                    this.intrinsicResidualArtifact = {
-                        artifactSig: row.artifact_sig,
-                        modelSig: row.model_sig || this.modelSig,
-                        algorithmVersion: row.algorithm_version || null,
-                        configHash: row.config_hash || null
-                    };
-                }
-            }
+            // 老数据库在首次 V9.1 全量重建前可能尚无 v9_anchor_gain；
+            // residual_energy 仅作为一次性启动兼容值，重建后会被 V9.1 数值覆盖。
+            // 裁剪与回退逻辑统一收敛在 readIntrinsicResidualsSnapshot 内。
+            const snapshot = this.readIntrinsicResidualsSnapshot();
+            this.tagIntrinsicResiduals = snapshot.anchorGainMap;
+            this.tagRawResidualRatios = snapshot.rawResidualRatioMap;
+            this.intrinsicResidualArtifact = snapshot.residualArtifact;
 
             return {
                 v9Count: this.tagIntrinsicResiduals.size,

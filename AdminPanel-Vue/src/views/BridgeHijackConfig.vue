@@ -48,7 +48,7 @@
                 </UiField>
 
                 <UiField label="上游 API 地址" :description="descriptions.upstreamUrl" class="config-field">
-                  <UiInput v-model.trim="draft.upstreamUrl" type="text" placeholder="http://127.0.0.1:6005" />
+                  <UiInput v-model.trim="draft.upstreamUrl" type="text" placeholder="http://127.0.0.1:6015" />
                 </UiField>
 
                 <UiField label="上游协议类型" :description="descriptions.upstreamType" class="config-field">

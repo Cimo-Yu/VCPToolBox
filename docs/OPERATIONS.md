@@ -104,7 +104,7 @@ cargo --version
 
 | 端口 | 用途 | 说明 |
 |------|------|------|
-| 6005 | HTTP API | 主服务端口 (可配置) |
+| 6015 | HTTP API | 主服务端口 (可配置) |
 | 8088 | WebSocket | 分布式节点通信 (可配置) |
 
 ---
@@ -341,7 +341,7 @@ services:
     build: .
     container_name: vcptoolbox
     ports:
-      - "6005:6005"          # HTTP API 端口
+      - "6015:6015"          # HTTP API 端口
     environment:
       TZ: ${DEFAULT_TIMEZONE:-Asia/Shanghai}
     volumes:
@@ -382,7 +382,7 @@ volumes:
 DEFAULT_TIMEZONE=Asia/Shanghai
 
 # 端口映射 (如需修改)
-VCP_PORT=6005
+VCP_PORT=6015
 ```
 
 ### 4.6 Docker 常用命令
@@ -434,7 +434,7 @@ docker images vcptoolbox
 |--------|------|------|
 | `API_Key` | 后端 AI 服务 API 密钥 | `sk-xxxx...` |
 | `API_URL` | 后端 AI 服务地址 | `https://api.openai.com` |
-| `PORT` | VCP 服务端口 | `6005` |
+| `PORT` | VCP 服务端口 | `6015` |
 | `Key` | VCP API 访问密钥 | `your_secret_key` |
 | `VCP_Key` | WebSocket 认证密钥 | `your_vcp_key` |
 | `AdminUsername` | 管理面板用户名 | `admin` |
@@ -518,16 +518,16 @@ echo "检查完成!"
 #### 错误 1: 端口被占用
 
 ```
-Error: listen EADDRINUSE: address already in use :::6005
+Error: listen EADDRINUSE: address already in use :::6015
 ```
 
 **解决方案：**
 
 ```bash
 # 查找占用端口的进程
-lsof -i :6005
+lsof -i :6015
 # 或
-netstat -tlnp | grep 6005
+netstat -tlnp | grep 6015
 
 # 终止进程
 kill -9 <PID>
@@ -660,11 +660,11 @@ DEBUG=VCP* node server.js
 
 ```bash
 # 检查服务是否响应
-curl http://localhost:6005/health
+curl http://localhost:6015/health
 
 # 检查 API 连通性
 curl -H "Authorization: Bearer YOUR_KEY" \
-     http://localhost:6005/v1/models
+     http://localhost:6015/v1/models
 ```
 
 ### 6.4 性能问题排查
@@ -740,7 +740,7 @@ grep "POST /v1/chat" ~/.pm2/logs/vcptoolbox-out.log | wc -l
 
 ### 7.5 Web 管理面板监控
 
-访问 `http://<服务器IP>:6005/AdminPanel` 查看：
+访问 `http://<服务器IP>:6015/AdminPanel` 查看：
 
 - 实时 CPU/内存使用率
 - PM2 进程状态
@@ -893,7 +893,7 @@ diff config.env.example config.env
 pm2 start vcptoolbox
 
 # 7. 验证服务
-curl http://localhost:6005/health
+curl http://localhost:6015/health
 ```
 
 ### 9.3 Docker 升级
@@ -981,18 +981,18 @@ pm2 start vcptoolbox
 pm2 status
 
 # 检查端口监听
-netstat -tlnp | grep 6005
+netstat -tlnp | grep 6015
 
 # 检查 API 可用性
 curl -H "Authorization: Bearer YOUR_KEY" \
-     http://localhost:6005/v1/models
+     http://localhost:6015/v1/models
 
 # 检查知识库
 ls -la dailynote/
 ls -la VectorStore/
 
 # 检查插件加载
-curl http://localhost:6005/AdminPanel/api/plugins
+curl http://localhost:6015/AdminPanel/api/plugins
 ```
 
 ---
@@ -1021,7 +1021,7 @@ docker-compose up --build -d
 docker-compose logs -f
 
 # 健康检查
-curl http://localhost:6005/health
+curl http://localhost:6015/health
 ```
 
 ### B. 相关文档
@@ -1036,7 +1036,7 @@ curl http://localhost:6005/health
 
 - GitHub Issues: [VCPToolBox](https://github.com/lioensky/VCPToolBox/issues)
 - 官方文档: README.md
-- Web 管理面板: `http://<server>:6005/AdminPanel`
+- Web 管理面板: `http://<server>:6015/AdminPanel`
 
 ---
 

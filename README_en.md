@@ -193,7 +193,7 @@ cp config.env.example config.env
 node server.js
 ```
 
-The admin panel automatically listens on **main port + 1** (for example, if the main service is 6005, the panel is 6006). Visit `http://<server-address>:<port+1>/AdminPanel`.
+The admin panel automatically listens on **main port + 1** (for example, if the main service is 6015, the panel is 6006). Visit `http://<server-address>:<port+1>/AdminPanel`.
 
 Docker one-click deployment is also supported:
 

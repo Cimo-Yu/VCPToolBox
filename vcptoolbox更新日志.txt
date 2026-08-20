@@ -1,3 +1,7 @@
+2026-08-01 - BilibiliFetch：修复字幕回退通道被全局 Bearer 鉴权拦截（401）的问题，/internal/chrome-bridge 加入鉴权白名单
+2026-08-01 - BilibiliFetch：managed Chrome 回退抓取后自动关闭标签页，避免标签页达到上限后阻断后续回退
+2026-08-01 - BilibiliFetch：新增动态 Cookie 机制（BILIBILI_DYNAMIC_COOKIE / BILIBILI_COOKIE_BOOTSTRAP），优先从托管 Chrome 实时拉取 B 站登录 Cookie，静态 Cookie 兜底
+2026-08-01 - BilibiliFetch：修复 config.env 中 BILIBILI_COOKIE 值换行导致静态 Cookie 从未生效的问题
 2026-02-22 - 适配上下文折叠技术v2 (c9500c0) [lioensky]
 2026-02-22 - 反转showbase64为transbase64 (681d494) [lioensky]
 2026-02-22 - 引入短时安全防抖机制 (d25e07c) [lioensky]

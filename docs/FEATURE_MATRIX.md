@@ -1200,7 +1200,7 @@ Agent B (执行者)
 
 ```env
 # 服务配置
-PORT=6005
+PORT=6015
 Key=YOUR_KEY                    # Bearer Token 密钥
 VCP_Key=YOUR_VCP_KEY            # WebSocket 认证密钥
 

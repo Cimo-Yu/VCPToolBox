@@ -65,7 +65,7 @@ VCPToolBox 配置系统遵循以下优先级（从高到低）：
 
 | 参数 | 环境变量 | config.env | 默认值 | 最终值 |
 |------|----------|------------|--------|--------|
-| PORT | 8080 | 6005 | 3000 | **8080** |
+| PORT | 8080 | 6015 | 3000 | **8080** |
 | DebugMode | true | false | false | **true** |
 | Key | - | mykey123 | - | **mykey123** |
 
@@ -108,7 +108,7 @@ API_URL=https://api.openai.com
 
 | 参数 | 类型 | 默认值 | 说明 | 风险等级 |
 |------|------|--------|------|----------|
-| `PORT` | number | 6005 | VCP 服务监听端口 | 🟢 低 |
+| `PORT` | number | 6015 | VCP 服务监听端口 | 🟢 低 |
 | `Key` | string | - | 聊天 API 访问密钥 | 🔴 **高** |
 | `Image_Key` | string | - | 图片服务访问密钥 | 🔴 **高** |
 | `File_Key` | string | - | 文件服务访问密钥 | 🔴 **高** |
@@ -183,7 +183,7 @@ API_URL=https://api.openai.com
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `CALLBACK_BASE_URL` | string | http://localhost:6005/plugin-callback | 插件异步任务回调地址 |
+| `CALLBACK_BASE_URL` | string | http://localhost:6015/plugin-callback | 插件异步任务回调地址 |
 
 **注意：** 部署到服务器时，需将 `localhost` 替换为实际 IP 或域名。
 
@@ -514,7 +514,7 @@ services:
     build: .
     container_name: vcptoolbox
     ports:
-      - "6005:6005"
+      - "6015:6015"
     environment:
       TZ: ${DEFAULT_TIMEZONE:-Asia/Shanghai}
     volumes:
@@ -530,7 +530,7 @@ services:
 |--------|-----|------|
 | 基础镜像 | node:22-alpine | 轻量级 Node.js 环境 |
 | 工作目录 | /usr/src/app | 容器内应用路径 |
-| 暴露端口 | 6005 | VCP 服务端口 |
+| 暴露端口 | 6015 | VCP 服务端口 |
 | 运行用户 | root | ⚠️ 安全风险（见下文） |
 | 进程管理 | pm2-runtime | 生产级进程守护 |
 
@@ -702,7 +702,7 @@ Agent prompt 使用 `{{VCPDynamicTools}}` 后，请求预处理阶段会注入�
 **排查步骤：**
 1. 查看日志：`docker-compose logs -f`
 2. 检查 `config.env` 是否存在
-3. 检查端口 6005 是否被占用
+3. 检查端口 6015 是否被占用
 
 ---
 
@@ -714,7 +714,7 @@ Agent prompt 使用 `{{VCPDynamicTools}}` 后，请求预处理阶段会注入�
 # 核心配置（必需）
 API_Key=sk-your-api-key
 API_URL=https://api.openai.com
-PORT=6005
+PORT=6015
 Key=your-random-key-at-least-16-chars
 
 # 管理面板（必需修改）
@@ -725,7 +725,7 @@ AdminPassword=your-strong-password
 VCP_Key=your-websocket-key
 
 # 回调地址（部署时修改）
-CALLBACK_BASE_URL=http://your-server-ip:6005/plugin-callback
+CALLBACK_BASE_URL=http://your-server-ip:6015/plugin-callback
 ```
 
 ---

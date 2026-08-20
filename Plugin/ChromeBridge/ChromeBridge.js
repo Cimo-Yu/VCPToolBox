@@ -3,8 +3,14 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const puppeteer = require('puppeteer');
 const pluginManager = require('../../Plugin.js');
 const browserRuntimeManager = require('../../modules/browserRuntimeManager.js');
+
+const execFileAsync = promisify(execFile);
 
 let pluginConfig = {};
 let debugMode = false;
@@ -16,6 +22,15 @@ const connectedChromes = new Map();
 // 存储等待响应的命令
 // key: requestId, value: { resolve, reject, timeout, waitForPageInfo }
 const pendingCommands = new Map();
+
+// 浏览器端主动投喂的数据队列（来自 VCPBridge-Extension 的 feed_data 消息）
+const feedQueue = [];
+const FEED_QUEUE_MAX = 100;
+
+// 抖音页面回退路由允许的域名（含 v.douyin.com 短链 / iesdouyin.com 分享域）
+const DOUYIN_PAGE_HOST_RE = /(^|\.)(douyin\.com|iesdouyin\.com)$/i;
+// 抖音 Cookie 拉取涉及的域名（页面 / 视频流 / 图片 / 接口）
+const DOUYIN_COOKIE_DOMAIN_RE = /(^|\.)(douyin\.com|douyinvod\.com|douyinpic\.com|douyinstatic\.com|iesdouyin\.com|zijieapi\.com|bytedance\.com|byteimg\.com|amemv\.com|snssdk\.com)$/i;
 
 const HIGH_PRIVILEGE_COMMANDS = new Set([
     'execute_script',
@@ -100,10 +115,279 @@ function initialize(config) {
     pluginManager.staticPlaceholderValues.set("{{VCPChromePageInfo}}", "Chrome桥接已加载，等待浏览器连接...");
 }
 
+// 在 managed Chrome 中打开页面并返回渲染后的 Markdown（供抖音等平台回退使用）
+async function openManagedPageForMarkdown(url, label) {
+    const client = await selectChromeClient({ browserTarget: 'managed' }, { allowAutoCreate: true });
+    const openResult = await executeSingleCommand(client, {
+        command: 'open_url',
+        url,
+        wait_for_page_info: true,
+        pageInfoFallbackMs: 6000
+    }, true, false);
+    let markdown = openResult.page_info || '';
+
+    if (!markdown) {
+        const pageResult = await executeSingleCommand(client, { command: 'get_page_info' }, false, false);
+        markdown = pageResult?.result?.markdown || '';
+    }
+
+    // 抓取完成后关闭本次打开的标签页，避免 managed Chrome 标签页堆积到上限
+    const autoCloseAfterFetch = String(
+        process.env.VCP_BROWSER_AUTO_CLOSE_AFTER_URLFETCH ?? 'true'
+    ).toLowerCase() !== 'false';
+    if (autoCloseAfterFetch) {
+        try {
+            await executeSingleCommand(client, { command: 'close_tab' }, false, false);
+        } catch (closeError) {
+            console.warn(`[ChromeBridge] ${label} fallback tab close failed (ignored): ${closeError.message}`);
+        }
+    }
+
+    return { markdown, pageInfoMeta: openResult.page_info_meta || null };
+}
+
 function registerRoutes(app, config, projectBasePath) {
     if (debugMode) {
         console.log('[ChromeBridge] Registering routes...');
     }
+
+    app.post('/internal/chrome-bridge/bilibili-page', async (req, res) => {
+        const suppliedKey = String(req.get('x-vcp-key') || '');
+        const expectedKey = String(process.env.VCP_Key || process.env.VCP_KEY || '');
+        if (!expectedKey || suppliedKey !== expectedKey) {
+            return res.status(401).json({ success: false, error: 'Unauthorized' });
+        }
+
+        const requestedUrl = String(req.body?.url || '').trim();
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(requestedUrl);
+        } catch {
+            return res.status(400).json({ success: false, error: '无效的 Bilibili URL' });
+        }
+        if (parsedUrl.protocol !== 'https:' || !/(^|\.)bilibili\.com$/i.test(parsedUrl.hostname)) {
+            return res.status(400).json({ success: false, error: 'fallback 只允许访问 bilibili.com HTTPS URL' });
+        }
+
+        try {
+            const client = await selectChromeClient({ browserTarget: 'managed' }, { allowAutoCreate: true });
+            const openResult = await executeSingleCommand(client, {
+                command: 'open_url',
+                url: parsedUrl.toString(),
+                wait_for_page_info: true,
+                pageInfoFallbackMs: 6000
+            }, true, false);
+            let markdown = openResult.page_info || '';
+
+            if (!markdown) {
+                const pageResult = await executeSingleCommand(client, { command: 'get_page_info' }, false, false);
+                markdown = pageResult?.result?.markdown || '';
+            }
+
+            // 抓取完成后关闭本次打开的标签页，避免 managed Chrome 标签页堆积到上限后再次阻断后续回退
+            const autoCloseAfterFetch = String(
+                process.env.VCP_BROWSER_AUTO_CLOSE_AFTER_URLFETCH ?? 'true'
+            ).toLowerCase() !== 'false';
+            if (autoCloseAfterFetch) {
+                try {
+                    await executeSingleCommand(client, { command: 'close_tab' }, false, false);
+                } catch (closeError) {
+                    console.warn(`[ChromeBridge] Bilibili fallback tab close failed (ignored): ${closeError.message}`);
+                }
+            }
+
+            return res.json({
+                success: true,
+                markdown,
+                pageInfoMeta: openResult.page_info_meta || null
+            });
+        } catch (error) {
+            console.warn(`[ChromeBridge] Bilibili fallback failed: ${error.message}`);
+            return res.status(502).json({
+                success: false,
+                error: 'managed Chrome 未能获取 Bilibili 页面',
+                code: error.code || 'BILIBILI_BROWSER_FALLBACK_FAILED'
+            });
+        }
+    });
+
+    // 动态获取托管 Chrome 中 B 站的登录 Cookie（供 BilibiliFetch 等插件按需取用）
+    app.post('/internal/chrome-bridge/bilibili-cookie', async (req, res) => {
+        const suppliedKey = String(req.get('x-vcp-key') || '');
+        const expectedKey = String(process.env.VCP_Key || process.env.VCP_KEY || '');
+        if (!expectedKey || suppliedKey !== expectedKey) {
+            return res.status(401).json({ success: false, error: 'Unauthorized' });
+        }
+
+        try {
+            await browserRuntimeManager.ensureManagedBrowser();
+            const browserWSEndpoint = await browserRuntimeManager.getManagedBrowserWebSocketEndpoint();
+            if (!browserWSEndpoint) {
+                throw new Error('managed Chrome DevTools WebSocket endpoint unavailable');
+            }
+
+            const browser = await puppeteer.connect({ browserWSEndpoint });
+            try {
+                const pages = await browser.pages();
+                if (!pages || pages.length === 0) {
+                    throw new Error('managed Chrome 没有可用的页面 target');
+                }
+                const cdpSession = await pages[0].createCDPSession();
+                await cdpSession.send('Network.enable');
+
+                let { cookies } = await cdpSession.send('Network.getAllCookies');
+
+                // 可选引导：托管浏览器无登录态时，用配置中的静态 Cookie 种入浏览器一次，
+                // 之后浏览器即成为动态会话来源（BILIBILI_COOKIE_BOOTSTRAP=true 开启）
+                const bootstrapEnabled = String(process.env.BILIBILI_COOKIE_BOOTSTRAP || 'false').toLowerCase() === 'true';
+                const hasSessionCookie = Array.isArray(cookies) && cookies.some(c => c.name === 'SESSDATA' && c.value);
+                if (bootstrapEnabled && !hasSessionCookie) {
+                    const staticCookie = String(process.env.BILIBILI_COOKIE || '');
+                    const sessionNames = new Set(['SESSDATA', 'bili_jct', 'DedeUserID', 'DedeUserID__ckMd5', 'sid']);
+                    const pairs = staticCookie.split(';').map(p => p.trim()).filter(Boolean);
+                    for (const pair of pairs) {
+                        const eq = pair.indexOf('=');
+                        if (eq <= 0) continue;
+                        const name = pair.slice(0, eq).trim();
+                        if (!sessionNames.has(name)) continue;
+                        const value = pair.slice(eq + 1);
+                        try {
+                            await cdpSession.send('Network.setCookie', {
+                                name,
+                                value,
+                                domain: '.bilibili.com',
+                                path: '/',
+                                secure: true,
+                                httpOnly: name === 'SESSDATA',
+                                expires: name === 'SESSDATA' ? Math.floor(Date.now() / 1000) + 15552000 : -1
+                            });
+                        } catch (setError) {
+                            console.warn(`[ChromeBridge] Bootstrap cookie set failed (${name}): ${setError.message}`);
+                        }
+                    }
+                    const refreshed = await cdpSession.send('Network.getAllCookies');
+                    if (refreshed && Array.isArray(refreshed.cookies)) {
+                        cookies = refreshed.cookies;
+                    }
+                }
+
+                const biliCookieDomains = /(^|\.)(bilibili\.com|bilivideo\.com|hdslb\.com|b23\.tv)$/i;
+                const biliCookies = (Array.isArray(cookies) ? cookies : [])
+                    .filter(c => c && c.name && c.domain && biliCookieDomains.test(c.domain));
+
+                const cookieString = biliCookies
+                    .map(c => `${c.name}=${c.value}`)
+                    .join('; ');
+
+                return res.json({
+                    success: true,
+                    cookie: cookieString,
+                    count: biliCookies.length,
+                    hasSession: /(^|;\s*)SESSDATA=[^;]/i.test(cookieString)
+                });
+            } finally {
+                try {
+                    await browser.disconnect();
+                } catch (_) {
+                    // ignore
+                }
+            }
+        } catch (error) {
+            console.warn(`[ChromeBridge] Bilibili cookie fetch failed: ${error.message}`);
+            return res.status(502).json({
+                success: false,
+                error: 'managed Chrome Cookie 获取失败',
+                code: error.code || 'BILIBILI_COOKIE_FETCH_FAILED'
+            });
+        }
+    });
+
+    // 动态获取 managed Chrome 中抖音页面渲染后的 Markdown（供 DouyinFetch 等插件按需回退）
+    app.post('/internal/chrome-bridge/douyin-page', async (req, res) => {
+        const suppliedKey = String(req.get('x-vcp-key') || '');
+        const expectedKey = String(process.env.VCP_Key || process.env.VCP_KEY || '');
+        if (!expectedKey || suppliedKey !== expectedKey) {
+            return res.status(401).json({ success: false, error: 'Unauthorized' });
+        }
+
+        const requestedUrl = String(req.body?.url || '').trim();
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(requestedUrl);
+        } catch {
+            return res.status(400).json({ success: false, error: '无效的 Douyin URL' });
+        }
+        if (parsedUrl.protocol !== 'https:' || !DOUYIN_PAGE_HOST_RE.test(parsedUrl.hostname)) {
+            return res.status(400).json({ success: false, error: 'fallback 只允许访问 douyin.com HTTPS URL' });
+        }
+
+        try {
+            const result = await openManagedPageForMarkdown(parsedUrl.toString(), 'Douyin');
+            return res.json({ success: true, ...result });
+        } catch (error) {
+            console.warn(`[ChromeBridge] Douyin fallback failed: ${error.message}`);
+            return res.status(502).json({
+                success: false,
+                error: 'managed Chrome 未能获取 Douyin 页面',
+                code: error.code || 'DOUYIN_BROWSER_FALLBACK_FAILED'
+            });
+        }
+    });
+
+    // 动态获取 managed Chrome 中抖音相关域名的 Cookie（供 DouyinFetch 等插件按需取用）
+    app.post('/internal/chrome-bridge/douyin-cookie', async (req, res) => {
+        const suppliedKey = String(req.get('x-vcp-key') || '');
+        const expectedKey = String(process.env.VCP_Key || process.env.VCP_KEY || '');
+        if (!expectedKey || suppliedKey !== expectedKey) {
+            return res.status(401).json({ success: false, error: 'Unauthorized' });
+        }
+
+        try {
+            await browserRuntimeManager.ensureManagedBrowser();
+            const browserWSEndpoint = await browserRuntimeManager.getManagedBrowserWebSocketEndpoint();
+            if (!browserWSEndpoint) {
+                throw new Error('managed Chrome DevTools WebSocket endpoint unavailable');
+            }
+
+            const browser = await puppeteer.connect({ browserWSEndpoint });
+            try {
+                const pages = await browser.pages();
+                if (!pages || pages.length === 0) {
+                    throw new Error('managed Chrome 没有可用的页面 target');
+                }
+                const cdpSession = await pages[0].createCDPSession();
+                await cdpSession.send('Network.enable');
+
+                const { cookies } = await cdpSession.send('Network.getAllCookies');
+                const douyinCookies = (Array.isArray(cookies) ? cookies : [])
+                    .filter(c => c && c.name && c.domain && DOUYIN_COOKIE_DOMAIN_RE.test(c.domain));
+
+                const cookieString = douyinCookies
+                    .map(c => `${c.name}=${c.value}`)
+                    .join('; ');
+
+                return res.json({
+                    success: true,
+                    cookie: cookieString,
+                    count: douyinCookies.length,
+                    hasSession: /(^|;\s*)sessionid(_ss)?=[^;]/i.test(cookieString)
+                });
+            } finally {
+                try {
+                    await browser.disconnect();
+                } catch (_) {
+                    // ignore
+                }
+            }
+        } catch (error) {
+            console.warn(`[ChromeBridge] Douyin cookie fetch failed: ${error.message}`);
+            return res.status(502).json({
+                success: false,
+                error: 'managed Chrome Cookie 获取失败',
+                code: error.code || 'DOUYIN_COOKIE_FETCH_FAILED'
+            });
+        }
+    });
 }
 
 function updateClientFromHello(entry, helloData = {}) {
@@ -247,6 +531,87 @@ function handleClientMessage(clientId, message) {
                 pendingCommands.delete(requestId);
             }
         });
+    }
+
+    // 处理平台桥接扩展（VCPBridge-Extension）返回的数据提取结果
+    if (message.type === 'extract_result') {
+        const data = message.data || {};
+        const requestId = data.requestId;
+        const pending = requestId && pendingCommands.get(requestId);
+        if (!pending) {
+            if (debugMode) console.warn(`[ChromeBridge] extract_result 无匹配的 pending 命令: ${requestId}`);
+            return;
+        }
+        clearTimeout(pending.timeout);
+        if (pending.fallbackTimer) clearTimeout(pending.fallbackTimer);
+        pendingCommands.delete(requestId);
+
+        if (data.status === 'error') {
+            pending.reject(new Error(data.error || '数据提取失败'));
+        } else {
+            console.log(`[ChromeBridge] 🎉 数据提取完成: ${requestId}, 类型: ${data.extract_type}`);
+            pending.resolve({
+                success: true,
+                extract_type: data.extract_type,
+                data: data.extractedData,
+                source_url: data.sourceUrl,
+                page_type: data.page_type || null,
+                extracted_at: new Date().toISOString()
+            });
+        }
+        return;
+    }
+
+    // 处理平台桥接扩展返回的视频下载结果
+    if (message.type === 'download_result') {
+        const data = message.data || {};
+        const requestId = data.requestId;
+        const pending = requestId && pendingCommands.get(requestId);
+        if (!pending) {
+            if (debugMode) console.warn(`[ChromeBridge] download_result 无匹配的 pending 命令: ${requestId}`);
+            return;
+        }
+        clearTimeout(pending.timeout);
+        if (pending.fallbackTimer) clearTimeout(pending.fallbackTimer);
+        pendingCommands.delete(requestId);
+
+        if (data.status === 'error') {
+            pending.reject(new Error(data.error || '视频下载失败'));
+        } else {
+            console.log(`[ChromeBridge] 🎉 视频下载任务已创建: ${requestId}`);
+            pending.resolve({
+                success: true,
+                message: data.message || '视频下载任务已开始',
+                task_id: data.task_id || null,
+                file_name: data.file_name || null,
+                save_path: data.save_path || null,
+                source_url: data.source_url || null,
+                created_at: new Date().toISOString()
+            });
+        }
+        return;
+    }
+
+    // 处理浏览器扩展主动投喂的数据（用户点击“投喂VCP”等）
+    if (message.type === 'feed_data') {
+        const data = message.data || {};
+        console.log(`[ChromeBridge] 🎁 收到浏览器投喂数据: ${data.extract_type} from ${data.sourceUrl}`);
+        const feedData = {
+            id: `feed-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            extract_type: data.extract_type,
+            page_type: data.page_type || null,
+            data: data.extractedData,
+            apiEnrichedData: data.apiEnrichedData || null,
+            comments: data.comments || null,
+            video_id: data.video_id || null,
+            feed_warning: data.feed_warning || null,
+            source_url: data.sourceUrl || null,
+            fed_at: new Date().toISOString()
+        };
+        feedQueue.push(feedData);
+        if (feedQueue.length > FEED_QUEUE_MAX) feedQueue.shift();
+        console.log(`[ChromeBridge] 📥 投喂数据已入队，当前队列长度: ${feedQueue.length}`);
+        return;
     }
 }
 
@@ -396,13 +761,23 @@ async function selectChromeClient(cmdParams = {}, options = {}) {
     const allowAutoCreate = options.allowAutoCreate !== false;
     let clients = getOpenClients();
 
+    const isManagedEntry = (entry) =>
+        (entry.clientKind === 'managed' && entry.managedTokenValid) || entry.clientKind === 'agent';
+
     const findByKind = (kind) => clients.find(entry => {
-        if (kind === 'managed') return (entry.clientKind === 'managed' && entry.managedTokenValid) || entry.clientKind === 'agent';
+        if (kind === 'managed') return isManagedEntry(entry);
         return entry.clientKind === kind;
     });
 
+    // 通用浏览器控制命令优先选择声明 pageInfo 能力的客户端（VCPChrome 扩展）；
+    // 平台提取类命令由 selectPlatformBridgeClient 按 extract_data 能力单独路由（VCPBridge 扩展）。
+    // 只有一个客户端时行为与原来完全一致。
+    const hasGeneralControlCapability = (entry) =>
+        Array.isArray(entry.capabilities) && entry.capabilities.includes('pageInfo');
+
     if (target === 'managed') {
-        let managed = findByKind('managed');
+        let managed = clients.find(entry => isManagedEntry(entry) && hasGeneralControlCapability(entry));
+        if (!managed) managed = findByKind('managed');
         if (!managed && allowAutoCreate) {
             await browserRuntimeManager.ensureManagedBrowser();
             managed = await waitForManagedClient();
@@ -965,6 +1340,319 @@ function normalizeToolResultForAi(commandResult) {
     return buildAiFriendlyTextResult(formatCommandResultAsMarkdown(commandResult), details, extraContent);
 }
 
+// ========== 平台桥接（Douyin 等）命令支持 ==========
+
+// 选择承载 extract_data/download_video 能力的桥接扩展客户端
+function selectPlatformBridgeClient(params = {}) {
+    const clients = getOpenClients();
+    if (params.client_id) {
+        const exact = connectedChromes.get(String(params.client_id));
+        if (exact && isOpen(exact.ws)) return exact;
+        console.warn(`[ChromeBridge] 指定的 client_id "${params.client_id}" 未找到，回退到能力匹配`);
+    }
+
+    // 优先选择声明了 extract_data / douyin_extract 能力的扩展
+    const capable = clients.find(entry =>
+        Array.isArray(entry.capabilities) &&
+        (entry.capabilities.includes('extract_data') || entry.capabilities.includes('douyin_extract'))
+    );
+    if (capable) return capable;
+
+    // 其次选择最近活跃的客户端（VCPBridge-Extension 会定期上报页面信息）
+    const sorted = [...clients].sort((a, b) => new Date(b.lastSeenAt || 0) - new Date(a.lastSeenAt || 0));
+    return sorted[0] || null;
+}
+
+function formatExtractDataAsMarkdown(result) {
+    const lines = [];
+    lines.push('## 页面数据提取结果');
+    lines.push('');
+    lines.push(`- 类型: ${result.extract_type || 'unknown'}`);
+    if (result.source_url) lines.push(`- 来源 URL: ${result.source_url}`);
+    if (result.page_type) lines.push(`- 页面类型: ${result.page_type}`);
+    if (result.extracted_at) lines.push(`- 提取时间: ${result.extracted_at}`);
+    if (result.data) {
+        lines.push('');
+        lines.push('### 提取的数据');
+        lines.push('');
+        lines.push(formatObjectAsMarkdown(result.data, { maxDepth: 6 }));
+    }
+    return lines.join('\n');
+}
+
+// 发送 extract_data 命令并等待扩展返回 extract_result（60 秒超时）
+async function executeExtractCommand(entry, params) {
+    const requestId = `cb-extract-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const extractType = params.extract_type || 'douyin_full';
+
+    const auth = authorizeChromeCommand(entry, 'extract_data');
+    if (!auth.allowed) throw new Error(auth.reason);
+
+    console.log(`[ChromeBridge] 🕵️ 数据提取请求: type=${extractType}, url=${params.url || '当前页面'}, requestId=${requestId}`);
+
+    const commandMessage = {
+        type: 'command',
+        data: {
+            requestId,
+            command: 'extract_data',
+            extract_type: extractType,
+            url: params.url || null,
+            options: {
+                comment_count: Number.parseInt(params.comment_count, 10) || 50,
+                include_replies: String(params.include_replies).toLowerCase() !== 'false',
+                sort_by: params.sort_by || 'likes',
+                keyword: params.keyword || null,
+                search_type: params.search_type || null,
+                maxRounds: params.max_rounds ? Number.parseInt(params.max_rounds, 10) : (params.maxRounds ? Number.parseInt(params.maxRounds, 10) : undefined),
+                maxItems: params.max_items ? Number.parseInt(params.max_items, 10) : (params.maxItems ? Number.parseInt(params.maxItems, 10) : undefined),
+                danmaku_num: params.danmaku_num ? Number.parseInt(params.danmaku_num, 10) : undefined,
+                portrait_count: params.portrait_count ? Number.parseInt(params.portrait_count, 10) : undefined
+            }
+        }
+    };
+
+    entry.ws.send(JSON.stringify(commandMessage));
+
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            pendingCommands.delete(requestId);
+            reject(new Error(`数据提取超时 (${extractType})`));
+        }, 60000);
+
+        pendingCommands.set(requestId, {
+            resolve,
+            reject,
+            timeout,
+            waitForPageInfo: false,
+            commandExecuted: false,
+            executionMessage: null,
+            fallbackTimer: null
+        });
+    });
+}
+
+// 发送 download_video 命令并等待扩展返回 download_result（60 秒超时）
+async function executeDownloadCommand(entry, params) {
+    const requestId = `cb-download-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+    const auth = authorizeChromeCommand(entry, 'download_video');
+    if (!auth.allowed) throw new Error(auth.reason);
+
+    console.log(`[ChromeBridge] ⬇️ 视频下载请求: url=${params.url || '当前页面'}, requestId=${requestId}`);
+
+    const commandMessage = {
+        type: 'command',
+        data: {
+            requestId,
+            command: 'download_video',
+            url: params.url || null,
+            filename: params.filename || null
+        }
+    };
+
+    entry.ws.send(JSON.stringify(commandMessage));
+
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            pendingCommands.delete(requestId);
+            reject(new Error('视频下载请求超时'));
+        }, 60000);
+
+        pendingCommands.set(requestId, {
+            resolve,
+            reject,
+            timeout,
+            waitForPageInfo: false,
+            commandExecuted: false,
+            executionMessage: null,
+            fallbackTimer: null
+        });
+    });
+}
+
+// 读取浏览器投喂队列（读取后清空）
+function handleGetFeed() {
+    if (feedQueue.length === 0) {
+        return {
+            success: true,
+            message: '当前没有待处理的投喂数据。',
+            result: { feeds: [], count: 0 }
+        };
+    }
+
+    const feeds = [...feedQueue];
+    feedQueue.length = 0;
+    console.log(`[ChromeBridge] 📤 Agent读取了 ${feeds.length} 条投喂数据`);
+
+    return {
+        success: true,
+        message: `共有 ${feeds.length} 条来自浏览器的投喂数据。`,
+        result: { feeds, count: feeds.length }
+    };
+}
+
+function handleGetStatus() {
+    return {
+        success: true,
+        message: '获取 ChromeBridge 状态成功',
+        result: {
+            connected_chromes: getOpenClients().map(summarizeClient),
+            feed_queue_size: feedQueue.length,
+            maxTabs: getMaxTabsLimit()
+        }
+    };
+}
+
+// ========== 抖音字幕 ASR 转写（视频无自带字幕时启用） ==========
+
+function getFfmpegPath() {
+    const candidates = [
+        path.join(__dirname, '..', '..', 'bin', 'ffmpeg', 'bin', 'ffmpeg.exe'),
+        path.join(__dirname, '..', '..', '..', 'VCPChat', 'bin', 'ffmpeg.exe'),
+        'ffmpeg'
+    ];
+    for (const candidate of candidates) {
+        try {
+            if (candidate === 'ffmpeg' || fs.existsSync(candidate)) return candidate;
+        } catch (_) {
+            // ignore
+        }
+    }
+    return 'ffmpeg';
+}
+
+// 下载无水印视频 → ffmpeg 抽音频 → 调 OpenAI 兼容转写接口，返回带时间戳字幕
+function asrConfig(name, fallback) {
+    const cfgValue = pluginConfig ? pluginConfig[name] : undefined;
+    return (cfgValue !== undefined && cfgValue !== null && cfgValue !== '') ? cfgValue : (process.env[name] || fallback);
+}
+
+async function transcribeVideoWithAsr(playUrl) {
+    const baseUrl = String(asrConfig('DOUYIN_ASR_BASE_URL', 'https://api.openai.com/v1')).replace(/\/+$/, '');
+    const apiKey = String(asrConfig('DOUYIN_ASR_API_KEY', '') || '').trim();
+    const model = String(asrConfig('DOUYIN_ASR_MODEL', 'whisper-1')).trim();
+    const timeoutMs = Number.parseInt(asrConfig('DOUYIN_ASR_TIMEOUT_MS', '300000'), 10) || 300000;
+    if (!apiKey) throw new Error('DOUYIN_ASR_API_KEY 未配置');
+
+    console.log(`[ChromeBridge] [ASR] 开始转写: model=${model}, baseUrl=${baseUrl}, timeoutMs=${timeoutMs}`);
+    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'vcp-douyin-asr-'));
+    const videoPath = path.join(tmpDir, 'input.mp4');
+    const wavPath = path.join(tmpDir, 'audio.wav');
+    try {
+        // 1. 下载无水印视频（带抖音 Referer/UA）
+        const downloadController = new AbortController();
+        const downloadTimer = setTimeout(() => downloadController.abort(), timeoutMs);
+        let videoResp;
+        try {
+            videoResp = await fetch(playUrl, {
+                signal: downloadController.signal,
+                headers: {
+                    'Referer': 'https://www.douyin.com/',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+            });
+        } finally {
+            clearTimeout(downloadTimer);
+        }
+        if (!videoResp.ok) throw new Error(`视频下载失败 HTTP ${videoResp.status}`);
+        const videoBuffer = Buffer.from(await videoResp.arrayBuffer());
+        await fs.promises.writeFile(videoPath, videoBuffer);
+        console.log(`[ChromeBridge] [ASR] 视频已下载: ${(videoBuffer.length / 1024 / 1024).toFixed(1)} MB`);
+
+        // 2. ffmpeg 抽音频为 16k 单声道 wav
+        await execFileAsync(getFfmpegPath(), ['-y', '-i', videoPath, '-ar', '16000', '-ac', '1', '-f', 'wav', wavPath], { timeout: 120000 });
+        console.log(`[ChromeBridge] [ASR] 音频抽取完成: ${(await fs.promises.stat(wavPath)).size / 1024 / 1024 > 1 ? ((await fs.promises.stat(wavPath)).size / 1024 / 1024).toFixed(1) + ' MB' : (await fs.promises.stat(wavPath)).size + ' bytes'}`);
+
+        // 3. 调 OpenAI 兼容转写接口（verbose_json 带分段时间戳）
+        const form = new FormData();
+        form.append('file', new Blob([await fs.promises.readFile(wavPath)], { type: 'audio/wav' }), 'audio.wav');
+        form.append('model', model);
+        form.append('response_format', 'verbose_json');
+
+        const asrController = new AbortController();
+        const asrTimer = setTimeout(() => asrController.abort(), timeoutMs);
+        let asrResp;
+        try {
+            asrResp = await fetch(`${baseUrl}/audio/transcriptions`, {
+                method: 'POST',
+                signal: asrController.signal,
+                headers: { 'Authorization': `Bearer ${apiKey}` },
+                body: form
+            });
+        } finally {
+            clearTimeout(asrTimer);
+        }
+        const asrJson = await asrResp.json().catch(() => ({}));
+        if (!asrResp.ok) {
+            throw new Error(`ASR 接口错误 HTTP ${asrResp.status}: ${JSON.stringify(asrJson).slice(0, 300)}`);
+        }
+
+        const segments = Array.isArray(asrJson.segments)
+            ? asrJson.segments
+                .map(s => ({
+                    start: Number(s.start || 0),
+                    end: Number(s.end || 0),
+                    text: String(s.text || '').trim()
+                }))
+                .filter(s => s.text)
+            : [];
+
+        const result = {
+            provider: 'openai-compatible',
+            full_text: String(asrJson.text || ''),
+            segments
+        };
+        console.log(`[ChromeBridge] [ASR] 转写成功: text=${result.full_text.length} 字符, segments=${result.segments.length}`);
+        return result;
+    } finally {
+        // 转写完成后立即删除音频与视频临时文件，避免占用磁盘；
+        // 即使中途失败（下载/ffmpeg/接口错误），也会走到这里清理
+        for (const filePath of [wavPath, videoPath]) {
+            try {
+                await fs.promises.unlink(filePath);
+            } catch (_) {
+                // 文件可能尚未创建，忽略
+            }
+        }
+        try {
+            await fs.promises.rm(tmpDir, { recursive: true, force: true });
+        } catch (_) {
+            // ignore
+        }
+    }
+}
+
+// douyin_captions 提取后处理：无自带字幕且配置了 ASR 时自动转写
+async function maybeTranscribeCaptions(extractResult) {
+    const data = extractResult?.data || {};
+    if (data.status !== 'no_builtin_subtitles' || !data.play_url) {
+        return extractResult;
+    }
+
+    const asrEnabled = String(asrConfig('DOUYIN_ASR_ENABLED', 'false')).toLowerCase() === 'true';
+    if (!asrEnabled) {
+        data.asr_note = '视频无自带字幕，play_url 已就绪；设置 DOUYIN_ASR_ENABLED=true 与 DOUYIN_ASR_API_KEY 后可自动转写';
+        return extractResult;
+    }
+
+    try {
+        const captions = await transcribeVideoWithAsr(data.play_url);
+        if (captions && (captions.full_text || (captions.segments && captions.segments.length))) {
+            data.status = 'asr_transcribed';
+            data.captions = captions.segments || [];
+            data.full_text = captions.full_text || '';
+            data.asr_provider = captions.provider || 'openai-compatible';
+            data.needs_asr = false;
+        } else {
+            data.asr_warning = 'ASR 未返回有效结果';
+        }
+    } catch (error) {
+        data.asr_error = String(error?.message || error);
+        data.asr_note = 'ASR 转写失败，play_url 已保留，可手动转写';
+    }
+    return extractResult;
+}
+
 // Direct调用接口（hybridservice 使用 processToolCall）
 async function processToolCall(params) {
     // 提取所有命令参数
@@ -988,6 +1676,32 @@ async function processToolCall(params) {
 
     if (commands.length === 1 && LIFECYCLE_COMMANDS.has(commands[0].command)) {
         return normalizeToolResultForAi(await runLifecycleCommand(commands[0].command, params));
+    }
+
+    // 平台桥接命令（Douyin 等）：单命令走专用通道，不进入通用命令链
+    if (commands.length === 1) {
+        const single = commands[0];
+        if (single.command === 'get_feed') {
+            return normalizeToolResultForAi(handleGetFeed());
+        }
+        if (single.command === 'get_status') {
+            return normalizeToolResultForAi(handleGetStatus());
+        }
+        if (single.command === 'extract_data' || single.command === 'download_video') {
+            const bridgeEntry = selectPlatformBridgeClient(params);
+            if (!bridgeEntry) {
+                throw new Error('没有可用的 VCPBridge-Extension 连接。请先安装并连接 VCPBridge 扩展（Plugin/ChromeBridge/VCPBridge-Extension）。');
+            }
+            if (single.command === 'extract_data') {
+                let extractResult = await executeExtractCommand(bridgeEntry, params);
+                if (String(params.extract_type || 'douyin_full') === 'douyin_captions') {
+                    extractResult = await maybeTranscribeCaptions(extractResult);
+                }
+                return buildAiFriendlyTextResult(formatExtractDataAsMarkdown(extractResult), extractResult);
+            }
+            const downloadResult = await executeDownloadCommand(bridgeEntry, params);
+            return buildAiFriendlyTextResult(formatCommandResultAsMarkdown(downloadResult), downloadResult);
+        }
     }
 
     console.log(`[ChromeBridge] 📋 收到 ${commands.length} 个命令，准备串行执行`);
@@ -1069,6 +1783,7 @@ function shutdown() {
         pending.reject(new Error('插件正在关闭'));
     });
     pendingCommands.clear();
+    feedQueue.length = 0;
 
     connectedChromes.clear();
 }

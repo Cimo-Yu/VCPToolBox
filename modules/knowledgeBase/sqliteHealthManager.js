@@ -9,6 +9,12 @@ class SqliteHealthManager {
         this.Database = options.Database || Database;
         this.onConnectionRebound = options.onConnectionRebound || (() => {});
         this.logPrefix = options.logPrefix || 'KnowledgeBase';
+        this.platform = options.platform || process.platform;
+        // Darwin 对已映射的 -shm 被缩短会直接发出不可恢复的 SIGBUS。
+        // PASSIVE checkpoint 是保守防线；根本防线是 rusqlite keepalive 与
+        // better-sqlite3 候选连接提交共同保证两个 SQLite runtime 的读写
+        // 连接引用在运行期不因“先关后开”而归零。
+        this.checkpointMode = this.platform === 'darwin' ? 'PASSIVE' : 'TRUNCATE';
         const configuredBusyTimeout = Number(options.busyTimeoutMs);
         this.busyTimeoutMs = Number.isFinite(configuredBusyTimeout)
             ? Math.max(0, Math.floor(configuredBusyTimeout))
@@ -24,6 +30,11 @@ class SqliteHealthManager {
         db.pragma('journal_mode = WAL');
         db.pragma('synchronous = NORMAL');
         db.pragma('foreign_keys = ON');
+        if (this.platform === 'darwin') {
+            // 只关闭主数据库文件的可选 mmap。WAL-index/SHM 仍由 SQLite
+            // 按协议管理；该设置不能替代两套 runtime 的 nRef 生命周期保护。
+            db.pragma('mmap_size = 0');
+        }
         // SQLite 同一时刻只有一个写者。Rust/rusqlite、管理维护脚本或其他
         // better-sqlite3 连接短暂持锁时，在原生层等待锁释放，而不是立即把
         // 瞬态写竞争上抛成文件摄取失败。该配置属于连接级 PRAGMA，因此每次
@@ -39,6 +50,10 @@ class SqliteHealthManager {
             error.code = 'SQLITE_CORRUPT';
             throw error;
         }
+    }
+
+    checkpoint(db) {
+        return db.pragma(`wal_checkpoint(${this.checkpointMode})`);
     }
 
     isCorruptionError(error) {
@@ -93,7 +108,7 @@ class SqliteHealthManager {
     checkpointAndAssertHealthy(reason = 'manual-checkpoint') {
         if (!this.db) return false;
         try {
-            this.db.pragma('wal_checkpoint(TRUNCATE)');
+            this.checkpoint(this.db);
             this.assertIntegrity(this.db);
             this.state = 'healthy';
             return true;
@@ -117,8 +132,9 @@ class SqliteHealthManager {
 
     /**
      * Rust 使用独立 SQLite 运行时提交派生写后，长期存活的 better-sqlite3
-     * 连接可能仍持有旧 pager/WAL/SHM read mark。先主动重开连接，再由新连接
-     * checkpoint + quick_check，避免在已可疑的旧视图上执行 TRUNCATE。
+     * 连接可能仍持有旧 pager/WAL/SHM read mark。候选连接先完成配置、
+     * checkpoint 和 quick_check，发布成功后才关闭旧连接，确保本 runtime
+     * 不出现会触发 readwrite first-attach 的 nRef 归零窗口。
      *
      * 该路径只用于低频 Rust 派生写屏障；普通 JS 写和手工健康检查仍复用现有连接。
      */
@@ -128,29 +144,30 @@ class SqliteHealthManager {
         this.recovering = true;
         this.state = 'recovering';
         const oldDb = this.db;
-        this.db = null;
 
         try {
-            try {
-                oldDb?.close();
-            } catch (closeError) {
-                console.warn(
-                    `[${this.logPrefix}] ⚠️ Failed to close pre-Rust-write SQLite connection cleanly: ` +
-                    closeError.message
-                );
-            }
-
             const reopened = new this.Database(this.dbPath);
             try {
                 this.configureConnection(reopened);
-                reopened.pragma('wal_checkpoint(TRUNCATE)');
+                this.checkpoint(reopened);
                 this.assertIntegrity(reopened);
             } catch (error) {
+                // 候选连接未通过验证时，旧连接仍保持存活，确保调用方仍有
+                // 可用连接且 better-sqlite3 的 nRef 不出现人为归零窗口。
                 try { reopened.close(); } catch (_) {}
                 throw error;
             }
 
+            // 验证全部通过后才发布候选连接；发布回调同步重绑所有已知消费者。
             this._publishConnection(reopened);
+            try {
+                oldDb?.close();
+            } catch (closeError) {
+                console.warn(
+                    `[${this.logPrefix}] ⚠️ Failed to close superseded SQLite connection cleanly: ` +
+                    closeError.message
+                );
+            }
             this.state = 'healthy';
             this.corruptionDetected = false;
             return true;
@@ -173,27 +190,30 @@ class SqliteHealthManager {
         this.recovering = true;
         this.state = 'recovering';
         const oldDb = this.db;
+        let reopened = null;
 
         try {
             console.warn(
                 `[${this.logPrefix}] 🩺 SQLite suspect state after ${reason}; ` +
                 'reopening connection for second-stage verification...'
             );
+
+            reopened = new this.Database(this.dbPath);
+            this.configureConnection(reopened);
+            this.checkpoint(reopened);
+            this.assertIntegrity(reopened);
+
+            // 二阶段候选也必须先验证、再发布；失败时旧连接仍未关闭。
+            this._publishConnection(reopened);
+            reopened = null;
             try {
                 oldDb?.close();
             } catch (closeError) {
                 console.warn(
-                    `[${this.logPrefix}] ⚠️ Failed to close suspect SQLite connection cleanly: ` +
+                    `[${this.logPrefix}] ⚠️ Failed to close superseded suspect SQLite connection cleanly: ` +
                     closeError.message
                 );
             }
-            if (this.db === oldDb) this.db = null;
-
-            const reopened = new this.Database(this.dbPath);
-            this.configureConnection(reopened);
-            reopened.pragma('wal_checkpoint(TRUNCATE)');
-            this.assertIntegrity(reopened);
-            this._publishConnection(reopened);
             this.state = 'healthy';
             this.corruptionDetected = false;
             console.warn(
@@ -202,6 +222,7 @@ class SqliteHealthManager {
             );
             return true;
         } catch (secondError) {
+            try { reopened?.close(); } catch (_) {}
             console.error(
                 `[${this.logPrefix}] 🚨 SQLite second-stage verification failed after ${reason}: ` +
                 `${secondError.message || secondError}`
@@ -209,10 +230,10 @@ class SqliteHealthManager {
             console.error(
                 `[${this.logPrefix}] First-stage failure was: ${firstError?.message || firstError}`
             );
-            this.db = null;
+            // 保留仍可能维持 SQLite runtime 映射的旧连接；业务层进入 corrupt
+            // 状态后应停止继续使用数据库，而不是主动制造最后关闭窗口。
             this.state = 'corrupt';
             this.corruptionDetected = true;
-            this.onConnectionRebound(null);
             return false;
         } finally {
             this.recovering = false;

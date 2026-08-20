@@ -5,6 +5,8 @@ import { resolve } from "path";
 import { visualizer } from "rollup-plugin-visualizer";
 
 function readVcpServerPort(): string {
+  // 保留 __dirname 与 6015 兜底：本机 vite 配置以 CJS 方式加载，import.meta.dirname 不可用；
+  // 端口与 config.env 的 PORT=6015 一致。
   const configPath = resolve(__dirname, "..", "config.env");
   if (!existsSync(configPath)) return "6015";
 
@@ -36,7 +38,7 @@ export default defineConfig(({ mode }) => {
     base: "/AdminPanel/",
     resolve: {
       alias: {
-        "@": resolve(__dirname, "src"),
+        "@": resolve(import.meta.dirname, "src"),
       },
     },
     server: {

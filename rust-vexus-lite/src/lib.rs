@@ -11,7 +11,7 @@ use rivermemo_topology_v3::MemoRuntime;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use rusqlite::{Connection, OpenFlags};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::Duration;
 use usearch::Index;
 
@@ -143,6 +143,125 @@ pub struct VexusIndex {
     memo_runtime: Arc<MemoRuntime>,
 }
 
+static INDEX_SAVE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn unique_index_sidecar_path(target: &std::path::Path, role: &str) -> std::path::PathBuf {
+    let sequence = INDEX_SAVE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let file_name = target
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "vexus-index".to_string());
+    target.with_file_name(format!(
+        ".{}.{}.{}.{}.{}",
+        file_name,
+        role,
+        std::process::id(),
+        timestamp,
+        sequence
+    ))
+}
+
+fn sync_index_file(path: &std::path::Path) -> std::io::Result<()> {
+    // Windows 的 FlushFileBuffers 要求句柄具备写权限；只读句柄即使文件
+    // 可读取也会返回 ERROR_ACCESS_DENIED。usearch 已完成临时文件写入，
+    // 此处仅重新打开同一文件执行持久化屏障，不修改内容。
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?
+        .sync_all()
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(target: &std::path::Path) -> std::io::Result<()> {
+    let parent = target.parent().unwrap_or_else(|| std::path::Path::new("."));
+    std::fs::File::open(parent)?.sync_all()
+}
+
+#[cfg(target_os = "windows")]
+fn retry_windows_file_operation<T, F>(mut operation: F) -> std::io::Result<T>
+where
+    F: FnMut() -> std::io::Result<T>,
+{
+    const RETRY_DELAYS_MS: [u64; 6] = [20, 40, 80, 160, 320, 500];
+    let mut last_error = None;
+
+    for attempt in 0..=RETRY_DELAYS_MS.len() {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if attempt < RETRY_DELAYS_MS.len()
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::PermissionDenied
+                            | std::io::ErrorKind::WouldBlock
+                            | std::io::ErrorKind::Interrupted
+                    ) =>
+            {
+                last_error = Some(error);
+                std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAYS_MS[attempt]));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| std::io::Error::other("file operation retry exhausted")))
+}
+
+fn publish_index_file(temp: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        let backup = unique_index_sidecar_path(target, "bak");
+        let had_target = target.exists();
+
+        if had_target {
+            retry_windows_file_operation(|| std::fs::rename(target, &backup))?;
+        }
+
+        if let Err(replace_error) = retry_windows_file_operation(|| std::fs::rename(temp, target)) {
+            let rollback_error = if had_target {
+                retry_windows_file_operation(|| std::fs::rename(&backup, target)).err()
+            } else {
+                None
+            };
+            return Err(match rollback_error {
+                Some(error) => std::io::Error::new(
+                    replace_error.kind(),
+                    format!(
+                        "failed to publish new index: {}; rollback also failed: {}",
+                        replace_error, error
+                    ),
+                ),
+                None => replace_error,
+            });
+        }
+
+        if had_target {
+            if let Err(error) = retry_windows_file_operation(|| std::fs::remove_file(&backup)) {
+                // 新目标已经完整发布；遗留唯一命名备份不应把成功保存误报为失败。
+                eprintln!(
+                    "[Vexus-Lite] Index published but stale backup cleanup failed ({}): {}",
+                    backup.to_string_lossy(),
+                    error
+                );
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::fs::rename(temp, target)?;
+        #[cfg(unix)]
+        sync_parent_directory(target)?;
+    }
+
+    Ok(())
+}
+
 #[napi]
 impl VexusIndex {
     /// 创建新的空索引
@@ -217,69 +336,46 @@ impl VexusIndex {
         })
     }
 
-    /// 保存索引到磁盘
+    /// 保存索引到磁盘。
+    ///
+    /// 临时文件始终与目标位于同一目录，保证 rename 不跨文件系统。Unix 使用
+    /// 原子覆盖并同步父目录；Windows 使用可回滚备份交换，并对杀毒软件、索引器
+    /// 短暂持有句柄造成的共享冲突进行有界重试。
     #[napi]
     pub fn save(&self, index_path: String) -> Result<()> {
+        // save 会发布共享磁盘状态；使用写锁串行化同一 VexusIndex 实例的保存，
+        // 避免多个读锁持有者同时争抢目标文件。唯一 sidecar 名仍防御多实例碰撞。
         let index = self
             .index
-            .read()
+            .write()
             .map_err(|e| Error::from_reason(format!("Lock failed: {}", e)))?;
+        let target = std::path::Path::new(&index_path);
+        let temp = unique_index_sidecar_path(target, "tmp");
+        let temp_text = temp.to_string_lossy().into_owned();
 
-        // 原子写入：先写临时文件，再重命名
-        let temp_path = format!("{}.tmp", index_path);
-
-        index
-            .save(&temp_path)
-            .map_err(|e| Error::from_reason(format!("Failed to save index: {:?}", e)))?;
-
-        // Windows 不支持 rename 覆盖现有文件。先把旧索引移到备份，
-        // 新文件替换失败时再回滚，避免“先删除旧文件”造成不可恢复的数据丢失。
-        #[cfg(target_os = "windows")]
-        {
-            let target = std::path::Path::new(&index_path);
-            let backup_path = format!("{}.bak", index_path);
-            let backup = std::path::Path::new(&backup_path);
-            let had_target = target.exists();
-
-            if had_target {
-                if backup.exists() {
-                    std::fs::remove_file(backup).map_err(|e| {
-                        Error::from_reason(format!("Failed to remove stale index backup: {}", e))
-                    })?;
-                }
-                std::fs::rename(target, backup).map_err(|e| {
-                    Error::from_reason(format!("Failed to stage existing index backup: {}", e))
-                })?;
-            }
-
-            if let Err(replace_error) = std::fs::rename(&temp_path, target) {
-                let rollback_error = if had_target {
-                    std::fs::rename(backup, target).err()
-                } else {
-                    None
-                };
-                return Err(Error::from_reason(match rollback_error {
-                    Some(error) => format!(
-                        "Failed to replace index file: {}; rollback also failed: {}",
-                        replace_error, error
-                    ),
-                    None => format!("Failed to replace index file: {}", replace_error),
-                }));
-            }
-
-            if had_target {
-                std::fs::remove_file(backup).map_err(|e| {
-                    Error::from_reason(format!(
-                        "Index replaced but failed to remove backup {}: {}",
-                        backup_path, e
-                    ))
-                })?;
-            }
+        if let Err(error) = index.save(&temp_text) {
+            let _ = std::fs::remove_file(&temp);
+            return Err(Error::from_reason(format!(
+                "Failed to save temporary index {}: {:?}",
+                temp_text, error
+            )));
         }
 
-        #[cfg(not(target_os = "windows"))]
-        std::fs::rename(&temp_path, &index_path)
-            .map_err(|e| Error::from_reason(format!("Failed to rename index file: {}", e)))?;
+        if let Err(error) = sync_index_file(&temp) {
+            let _ = std::fs::remove_file(&temp);
+            return Err(Error::from_reason(format!(
+                "Failed to sync temporary index {}: {}",
+                temp_text, error
+            )));
+        }
+
+        if let Err(error) = publish_index_file(&temp, target) {
+            let _ = std::fs::remove_file(&temp);
+            return Err(Error::from_reason(format!(
+                "Failed to atomically publish index {}: {}",
+                index_path, error
+            )));
+        }
 
         Ok(())
     }
@@ -1264,11 +1360,62 @@ fn open_sqlite_readonly(db_path: &str) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
-fn open_sqlite_readwrite(db_path: &str) -> rusqlite::Result<Connection> {
+fn normalized_sqlite_path(db_path: &str) -> String {
+    std::fs::canonicalize(db_path)
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(db_path)
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(db_path))
+        })
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_lowercase()
+}
+
+static SQLITE_KEEPALIVES: LazyLock<Mutex<std::collections::HashMap<String, Connection>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+fn open_sqlite_readwrite_inner(db_path: &str) -> rusqlite::Result<Connection> {
     let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     configure_sqlite_connection(&conn, false)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
+    Ok(conn)
+}
+
+pub(crate) fn ensure_sqlite_keepalive(db_path: &str) {
+    let key = normalized_sqlite_path(db_path);
+    let mut guard = SQLITE_KEEPALIVES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if guard.contains_key(&key) {
+        return;
+    }
+
+    match open_sqlite_readwrite_inner(db_path).and_then(|keepalive| {
+        keepalive.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))?;
+        Ok(keepalive)
+    }) {
+        Ok(keepalive) => {
+            guard.insert(key.clone(), keepalive);
+            eprintln!(
+                "[Vexus] 🛡️ SQLite keepalive retained for {}",
+                key
+            );
+        }
+        Err(error) => {
+            eprintln!(
+                "[Vexus] ❌ SQLite keepalive unavailable for {}; retrying later: {}",
+                key, error
+            );
+        }
+    }
+}
+
+fn open_sqlite_readwrite(db_path: &str) -> rusqlite::Result<Connection> {
+    let conn = open_sqlite_readwrite_inner(db_path)?;
+    ensure_sqlite_keepalive(db_path);
     Ok(conn)
 }
 
@@ -1319,7 +1466,7 @@ fn json_escape(value: &str) -> String {
     value
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
-        .replace('\n', "\\n")
+        .replace('\n', "\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
 }
@@ -2831,6 +2978,73 @@ impl Task for PairwiseSimTask {
         let start = Instant::now();
         let dim = self.dimensions as usize;
         const PAIRWISE_ALGORITHM_VERSION: &str = "pairwise_cosine_v9_1_single_track";
+        let effective_config = format!(
+            "{{\"algorithm\":\"{}\",\"dimension\":{},\"minSimilarity\":{},\"modelSig\":\"{}\"}}",
+            PAIRWISE_ALGORITHM_VERSION,
+            dim,
+            self.min_similarity,
+            json_escape(&self.model_sig)
+        );
+        let config_hash = stable_sha256_hex(&effective_config);
+
+        // 扫描前代际门禁：事实事务通过 SQLite trigger 单调推进该值。
+        // 命中同模型/算法/配置的 ready artifact 时，避免读取全部高维 Tag BLOB、
+        // 扫描 file_tags 以及重新构造几十万条 pair_set。
+        let fact_generation = {
+            let conn = open_sqlite_readonly(&self.db_path).map_err(|e| {
+                Error::from_reason(format!("DB readonly generation open failed: {}", e))
+            })?;
+            conn.query_row(
+                "SELECT value FROM kv_store \
+                 WHERE key = 'tagmemo_pairwise_fact_generation'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_else(|_| "unavailable".to_string())
+        };
+        if !self.full_rebuild && fact_generation != "unavailable" {
+            let conn = open_sqlite_readonly(&self.db_path).map_err(|e| {
+                Error::from_reason(format!("DB readonly artifact gate open failed: {}", e))
+            })?;
+            let prefix = format!("fact:{}:%", fact_generation);
+            let cached_graph: Option<String> = conn
+                .query_row(
+                    "SELECT graph_generation FROM tagmemo_artifacts \
+                     WHERE asset_type = 'pairwise_similarity' \
+                       AND model_sig = ?1 \
+                       AND algorithm_version = ?2 \
+                       AND config_hash = ?3 \
+                       AND graph_generation LIKE ?4 \
+                       AND status = 'ready' \
+                     ORDER BY updated_at DESC LIMIT 1",
+                    rusqlite::params![
+                        &self.model_sig,
+                        PAIRWISE_ALGORITHM_VERSION,
+                        &config_hash,
+                        &prefix
+                    ],
+                    |row| row.get(0),
+                )
+                .ok();
+            if let Some(graph_generation) = cached_graph {
+                let pair_count = graph_generation
+                    .rsplit_once(":pairs:")
+                    .and_then(|(_, value)| value.parse::<u32>().ok())
+                    .unwrap_or(0);
+                let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+                println!(
+                    "[Vexus-Lite][Pairwise] fact generation unchanged; full scan skipped: generation={}, pairs={}, elapsed={:.2}ms",
+                    fact_generation, pair_count, elapsed_ms
+                );
+                return Ok(PairwiseSimResult {
+                    pair_count,
+                    computed_count: 0,
+                    skipped_count: pair_count,
+                    stored_count: 0,
+                    elapsed_ms,
+                });
+            }
+        }
 
         // ====================================================================
         // Step 1-3: 只读加载 Tag 向量、共现 pair 与缓存集合
@@ -2938,7 +3152,8 @@ impl Task for PairwiseSimTask {
             };
             let pair_count = pair_set.len() as u32;
             let graph_generation = format!(
-                "content:{}:tags:{}:max_tag:{}:file_tag_rows:{}:pairs:{}",
+                "fact:{}:content:{}:tags:{}:max_tag:{}:file_tag_rows:{}:pairs:{}",
+                fact_generation,
                 content_digest,
                 tag_vectors.len(),
                 max_tag_id,
@@ -2948,27 +3163,24 @@ impl Task for PairwiseSimTask {
             (pair_count, graph_generation)
         };
 
-        let effective_config = format!(
-            "{{\"algorithm\":\"{}\",\"dimension\":{},\"minSimilarity\":{},\"modelSig\":\"{}\"}}",
-            PAIRWISE_ALGORITHM_VERSION,
-            dim,
-            self.min_similarity,
-            json_escape(&self.model_sig)
-        );
-        let config_hash = stable_sha256_hex(&effective_config);
         let artifact_sig = stable_sha256_hex(&format!(
             "{}|{}|{}|{}",
             self.model_sig, graph_generation, PAIRWISE_ALGORITHM_VERSION, config_hash
         ));
 
         // ====================================================================
-        // Step 3: 增量模式 — 加载当前 artifact 已处理的正/负 pair 集合
-        // full_rebuild = true 时才按显式重建语义清空整张旧表。
+        // Step 3: 增量模式 — 跨图代际加载兼容的正/负 pair 状态。
         //
-        // 注意：非 full_rebuild 冷启动不能在 Rust 侧主动删除旧 model_sig。
-        // 部分用户可能处于“签名变化 / tag 索引尚未恢复 / 空库初始化”窗口；
-        // 如果此时先 DELETE 旧模型行，而本轮 pair_set 又为 0，就会造成旧缓存被清空且新缓存未生成。
-        // 旧模型行的安全清理交给 JS 侧在确认当前 model_sig 已有可用缓存后执行。
+        // artifact_sig 包含完整 graph_generation；只按当前 artifact 查询会导致
+        // 任意新增 file_tag / pair 都生成新签名，使旧图中几十万条未变化 pair
+        // 全部失去命中。pair 的余弦值只依赖：
+        //   model_sig + dimension + algorithm + min_similarity + 两端向量。
+        // Tag 向量更新会由 SQLite 事实事务删除涉及该 Tag 的正值与状态行，
+        // 因此这里可以安全地跨 graph_generation 复用兼容 artifact 的状态。
+        //
+        // full_rebuild = true 时仍按显式重建语义清空并重算全部 pair。
+        // 非 full_rebuild 不主动删除旧 model_sig，旧模型清理由 JS 在当前模型
+        // 已产生健康缓存后执行，避免空库/签名切换窗口形成缓存真空。
         // ====================================================================
         if !self.full_rebuild {
             let conn = open_sqlite_readonly(&self.db_path).map_err(|e| {
@@ -2976,21 +3188,47 @@ impl Task for PairwiseSimTask {
             })?;
             let mut stmt = conn
                 .prepare(
-                    "SELECT tag_a, tag_b FROM tag_pair_similarity_status \
-                     WHERE artifact_sig = ?1 AND status IN ('computed', 'below_threshold', 'missing_vector')",
+                    "SELECT DISTINCT s.tag_a, s.tag_b \
+                     FROM tag_pair_similarity_status s \
+                     JOIN tagmemo_artifacts a ON a.artifact_sig = s.artifact_sig \
+                     WHERE s.model_sig = ?1 \
+                       AND s.min_similarity = ?2 \
+                       AND s.status IN ('computed', 'below_threshold', 'missing_vector') \
+                       AND a.asset_type = 'pairwise_similarity' \
+                       AND a.model_sig = ?1 \
+                       AND a.algorithm_version = ?3 \
+                       AND a.config_hash = ?4 \
+                       AND a.status = 'ready'",
                 )
-                .map_err(|e| Error::from_reason(format!("Prepare pairwise status cache query failed: {}", e)))?;
-            let rows = stmt
-                .query_map(rusqlite::params![&artifact_sig], |row| {
-                    Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
-                })
                 .map_err(|e| {
-                    Error::from_reason(format!("Query pairwise status cache failed: {}", e))
+                    Error::from_reason(format!(
+                        "Prepare compatible pairwise status cache query failed: {}",
+                        e
+                    ))
+                })?;
+            let rows = stmt
+                .query_map(
+                    rusqlite::params![
+                        &self.model_sig,
+                        self.min_similarity,
+                        PAIRWISE_ALGORITHM_VERSION,
+                        &config_hash
+                    ],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .map_err(|e| {
+                    Error::from_reason(format!(
+                        "Query compatible pairwise status cache failed: {}",
+                        e
+                    ))
                 })?;
 
             for row in rows {
                 let (a, b) = row.map_err(|e| {
-                    Error::from_reason(format!("Decode pairwise status cache row failed: {}", e))
+                    Error::from_reason(format!(
+                        "Decode compatible pairwise status row failed: {}",
+                        e
+                    ))
                 })?;
                 cached.insert(pair_key(a, b));
             }
@@ -3326,7 +3564,6 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[napi(object)]

@@ -8,13 +8,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const vcpStatusBadge = document.getElementById('vcp-status');
     const toggleMonitorBtn = document.getElementById('toggleMonitor');
     const toggleVCPBtn = document.getElementById('toggleVCP');
-    const toggleClientModeBtn = document.getElementById('toggleClientMode');
+    const selectUserModeBtn = document.getElementById('selectUserMode');
+    const selectAgentModeBtn = document.getElementById('selectAgentMode');
+    const selectManagedModeBtn = document.getElementById('selectManagedMode');
+    const clientModeButtons = {
+        user: selectUserModeBtn,
+        agent: selectAgentModeBtn,
+        managed: selectManagedModeBtn
+    };
     const clientModeStatusBadge = document.getElementById('client-mode-status');
+    const clientModeError = document.getElementById('client-mode-error');
     const refreshButton = document.getElementById('refreshPage');
+    const copyGroundedMarkdownButton = document.getElementById('copyGroundedMarkdown');
+    const copyStatusDiv = document.getElementById('copy-status');
+    const syncUrlFetchCookiesButton = document.getElementById('syncUrlFetchCookies');
+    const urlFetchCookieStatusDiv = document.getElementById('urlfetch-cookie-status');
     const settingsToggle = document.getElementById('settings-toggle');
     const settingsDiv = document.getElementById('settings');
     const serverUrlInput = document.getElementById('serverUrl');
     const vcpKeyInput = document.getElementById('vcpKey');
+    const redactSensitiveDomInput = document.getElementById('redactSensitiveDom');
     const saveSettingsButton = document.getElementById('saveSettings');
     const pageInfoDiv = document.getElementById('page-info');
     const pageTitleDiv = document.getElementById('page-title');
@@ -53,16 +66,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateClientModeUI(clientKind) {
-        currentClientKind = clientKind === 'agent' ? 'agent' : 'user';
-        if (currentClientKind === 'agent') {
+        currentClientKind = ['user', 'agent', 'managed'].includes(clientKind) ? clientKind : 'user';
+        clientModeError.textContent = '';
+
+        Object.entries(clientModeButtons).forEach(([mode, button]) => {
+            button.classList.toggle('mode-button-active', mode === currentClientKind);
+            button.setAttribute('aria-pressed', mode === currentClientKind ? 'true' : 'false');
+        });
+
+        if (currentClientKind === 'managed') {
+            clientModeStatusBadge.textContent = 'Managed';
+            clientModeStatusBadge.className = 'status-badge badge-managed';
+        } else if (currentClientKind === 'agent') {
             clientModeStatusBadge.textContent = 'Agent';
             clientModeStatusBadge.className = 'status-badge badge-on';
-            toggleClientModeBtn.textContent = '切换为 User 模式';
         } else {
             clientModeStatusBadge.textContent = 'User';
             clientModeStatusBadge.className = 'status-badge badge-off';
-            toggleClientModeBtn.textContent = '切换为 Agent 模式';
         }
+    }
+
+    function showClientModeError(message) {
+        clientModeError.textContent = message || '客户端模式切换失败';
     }
 
     // 更新页面信息显示
@@ -84,16 +109,92 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    async function writeTextToClipboard(text) {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return;
+        }
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        textarea.remove();
+        if (!copied) throw new Error('浏览器拒绝写入剪贴板');
+    }
+
+    function setCopyStatus(message, isError = false) {
+        copyStatusDiv.textContent = message;
+        copyStatusDiv.style.color = isError ? '#b42318' : '#6d5a8f';
+    }
+
+    function setUrlFetchCookieStatus(message, isError = false) {
+        urlFetchCookieStatusDiv.textContent = message;
+        urlFetchCookieStatusDiv.style.color = isError ? '#b42318' : '#6b7280';
+    }
+
+    function getUrlFetchCookieRiskConfirmation() {
+        return new Promise(resolve => {
+            chrome.storage.local.get(['urlfetchCookieRiskConfirmed'], result => {
+                resolve(result.urlfetchCookieRiskConfirmed === true);
+            });
+        });
+    }
+
+    async function confirmUrlFetchCookieRiskIfNeeded() {
+        if (await getUrlFetchCookieRiskConfirmation()) return true;
+
+        const confirmed = window.confirm(
+            '此操作会读取当前网页可用的全部 Cookie，包括 HttpOnly Cookie，并通过已鉴权的 VCP WebSocket 上传到服务端，保存到 Plugin/UrlFetch/config.env。Cookie 可用于访问你的登录会话，请确认你信任当前 VCP 服务端。是否继续？'
+        );
+        if (!confirmed) return false;
+
+        await new Promise(resolve => {
+            chrome.storage.local.set({ urlfetchCookieRiskConfirmed: true }, resolve);
+        });
+        return true;
+    }
+
+    async function requestCurrentGroundedMarkdown() {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tab = tabs[0];
+        if (!tab?.id || !/^https?:/i.test(tab.url || '')) {
+            throw new Error('当前标签页不是可解析的 HTTP/HTTPS 页面');
+        }
+        return new Promise((resolve, reject) => {
+            chrome.tabs.sendMessage(tab.id, { type: 'GET_GROUNDED_PAGE_INFO' }, (response) => {
+                if (chrome.runtime.lastError) {
+                    reject(new Error(`无法连接页面解析器：${chrome.runtime.lastError.message}`));
+                    return;
+                }
+                const markdown = response?.markdown || response?.pageInfo?.agentView?.markdown;
+                if (!response?.success || !markdown) {
+                    reject(new Error(response?.pageInfo?.error || '页面解析器未返回 Grounded Markdown'));
+                    return;
+                }
+                resolve({ markdown, pageInfo: response.pageInfo });
+            });
+        });
+    }
+
     // 加载已保存的设置
     function loadSettings() {
-        chrome.storage.local.get(['serverUrl', 'vcpKey', 'clientKind', 'managedRuntime', 'managedToken'], (result) => {
+        chrome.storage.local.get(['serverUrl', 'vcpKey', 'clientKind', 'managedRuntime', 'redactSensitiveDom'], (result) => {
             if (result.serverUrl) {
                 serverUrlInput.value = result.serverUrl;
             }
             if (result.vcpKey) {
                 vcpKeyInput.value = result.vcpKey;
             }
-            updateClientModeUI(result.clientKind);
+            // 缺省值必须为 true，确保升级安装和首次安装都默认脱敏。
+            redactSensitiveDomInput.checked = result.redactSensitiveDom !== false;
+            if (result.redactSensitiveDom === undefined) {
+                chrome.storage.local.set({ redactSensitiveDom: true });
+            }
+            updateClientModeUI(result.managedRuntime === true ? 'managed' : result.clientKind);
             if (result.managedRuntime === true) {
                 settingsToggle.textContent = '⚙️ 设置（managed）';
                 if (!vcpKeyInput.value && result.managedToken) {
@@ -174,14 +275,35 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.runtime.sendMessage({ type: 'TOGGLE_CONNECTION' });
     });
 
-    toggleClientModeBtn.addEventListener('click', () => {
-        const nextMode = currentClientKind === 'agent' ? 'user' : 'agent';
-        chrome.runtime.sendMessage({ type: 'SET_CLIENT_MODE', mode: nextMode }, (response) => {
-            if (response) {
-                updateClientModeUI(response.clientKind);
+    function selectClientMode(mode) {
+        const selectedButton = clientModeButtons[mode];
+        if (!selectedButton || mode === currentClientKind) return;
+
+        selectedButton.disabled = true;
+        clientModeError.textContent = '';
+
+        chrome.runtime.sendMessage({
+            type: 'SET_CLIENT_MODE',
+            mode
+        }, (response) => {
+            selectedButton.disabled = false;
+            if (chrome.runtime.lastError) {
+                updateClientModeUI(currentClientKind);
+                showClientModeError(chrome.runtime.lastError.message);
+                return;
             }
+            if (!response?.success) {
+                updateClientModeUI(response?.clientKind || currentClientKind);
+                showClientModeError(response?.error);
+                return;
+            }
+            updateClientModeUI(response.clientKind);
         });
-    });
+    }
+
+    selectUserModeBtn.addEventListener('click', () => selectClientMode('user'));
+    selectAgentModeBtn.addEventListener('click', () => selectClientMode('agent'));
+    selectManagedModeBtn.addEventListener('click', () => selectClientMode('managed'));
 
     // 手动刷新按钮
     refreshButton.addEventListener('click', () => {
@@ -213,6 +335,76 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    copyGroundedMarkdownButton.addEventListener('click', async () => {
+        const originalText = copyGroundedMarkdownButton.textContent;
+        copyGroundedMarkdownButton.disabled = true;
+        copyGroundedMarkdownButton.textContent = '⏳ 正在编译页面图...';
+        setCopyStatus('正在从当前活动标签页生成最新 Grounded Markdown…');
+        try {
+            const { markdown, pageInfo } = await requestCurrentGroundedMarkdown();
+            await writeTextToClipboard(markdown);
+            copyGroundedMarkdownButton.textContent = '✅ 已复制';
+            setCopyStatus(
+                `已复制 ${markdown.length.toLocaleString()} 字符；Snapshot ${pageInfo.snapshotId}，${pageInfo.elementCount} 个操作目标。`
+            );
+        } catch (error) {
+            console.error('[VCP Popup] 复制 Grounded Markdown 失败:', error);
+            copyGroundedMarkdownButton.textContent = '❌ 复制失败';
+            setCopyStatus(error.message || String(error), true);
+        } finally {
+            setTimeout(() => {
+                copyGroundedMarkdownButton.textContent = originalText;
+                copyGroundedMarkdownButton.disabled = false;
+            }, 1800);
+        }
+    });
+
+    syncUrlFetchCookiesButton.addEventListener('click', async () => {
+        const originalText = syncUrlFetchCookiesButton.textContent;
+        syncUrlFetchCookiesButton.disabled = true;
+        setUrlFetchCookieStatus('正在读取当前站点 Cookie…');
+        try {
+            const confirmed = await confirmUrlFetchCookieRiskIfNeeded();
+            if (!confirmed) {
+                setUrlFetchCookieStatus('已取消 Cookie 配置。');
+                return;
+            }
+
+            setUrlFetchCookieStatus('正在读取并发送 Cookie…');
+            const response = await new Promise(resolve => {
+                chrome.runtime.sendMessage({ type: 'SYNC_URLFETCH_COOKIES' }, result => {
+                    if (chrome.runtime.lastError) {
+                        resolve({
+                            status: 'error',
+                            code: 'POPUP_MESSAGE_FAILED',
+                            error: chrome.runtime.lastError.message
+                        });
+                        return;
+                    }
+                    resolve(result || {
+                        status: 'error',
+                        code: 'EMPTY_RESPONSE',
+                        error: '扩展后台未返回结果'
+                    });
+                });
+            });
+
+            if (response.status !== 'success') {
+                throw new Error(response.error || 'UrlFetch Cookie 配置失败');
+            }
+
+            const updatedAt = response.updatedAt ? new Date(response.updatedAt).toLocaleString() : '刚刚';
+            setUrlFetchCookieStatus(
+                `已配置 ${response.siteKey}，共 ${response.cookieCount} 个 Cookie。更新时间：${updatedAt}`
+            );
+        } catch (error) {
+            setUrlFetchCookieStatus(error.message || String(error), true);
+        } finally {
+            syncUrlFetchCookiesButton.textContent = originalText;
+            syncUrlFetchCookiesButton.disabled = false;
+        }
+    });
+
     // 设置按钮
     settingsToggle.addEventListener('click', () => {
         if (settingsDiv.style.display === 'none' || !settingsDiv.style.display) {
@@ -228,8 +420,13 @@ document.addEventListener('DOMContentLoaded', () => {
     saveSettingsButton.addEventListener('click', () => {
         const serverUrl = serverUrlInput.value;
         const vcpKey = vcpKeyInput.value;
-        chrome.storage.local.set({ serverUrl, vcpKey }, () => {
+        const redactSensitiveDom = redactSensitiveDomInput.checked;
+        chrome.storage.local.set({ serverUrl, vcpKey, redactSensitiveDom }, () => {
             console.log('Settings saved.');
+            chrome.runtime.sendMessage({
+                type: 'PRIVACY_SETTINGS_CHANGED',
+                redactSensitiveDom
+            });
             saveSettingsButton.textContent = '✅ 已保存!';
             setTimeout(() => {
                 saveSettingsButton.textContent = '保存设置';

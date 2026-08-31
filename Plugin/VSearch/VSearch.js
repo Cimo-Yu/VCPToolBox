@@ -14,7 +14,7 @@ const rootConfigPath = process.env.VSEARCH_ROOT_CONFIG
     : path.resolve(__dirname, '../../config.env');
 const manifestPath = path.resolve(__dirname, './plugin-manifest.json');
 
-dotenv.config({ path: configPath });
+dotenv.config({ path: configPath, quiet: true });
 
 const {
     VSearchKey: API_KEY,

@@ -1,4 +1,6 @@
 // EmbeddingUtils.js
+const fs = require('fs').promises;
+const path = require('path');
 const { get_encoding } = require("@dqbd/tiktoken");
 const encoding = get_encoding("cl100k_base");
 
@@ -9,6 +11,29 @@ const MAX_BATCH_ITEMS = parseInt(process.env.EMBEDDING_MAX_BATCH_ITEMS, 10) || 3
 const DEFAULT_CONCURRENCY = parseInt(process.env.TAG_VECTORIZE_CONCURRENCY) || 5; // 🌟 读取并发配置
 // 🕐 Embedding 单次请求超时（毫秒）。未配置时默认 60s；上游挂起时不再无限等待。
 const EMBEDDING_TIMEOUT_MS = Math.max(5000, parseInt(process.env.EMBEDDING_TIMEOUT_MS, 10) || 60000);
+const EMBEDDING_AUDIT_LOG_ENABLED = String(process.env.EMBEDDING_AUDIT_LOG_ENABLED || 'false').toLowerCase() === 'true';
+const EMBEDDING_AUDIT_LOG_DIR = path.join(__dirname, 'DebugLog');
+const EMBEDDING_AUDIT_LOG_FILE = path.join(EMBEDDING_AUDIT_LOG_DIR, 'embeddinglog');
+
+/**
+ * 将成功向量化的原文写入独立审计日志。
+ * 日志写入失败不会影响正常的向量化流程，也不会进入服务器日志系统。
+ */
+async function _writeEmbeddingAuditLog(texts) {
+    if (!EMBEDDING_AUDIT_LOG_ENABLED || !texts || texts.length === 0) return;
+
+    const records = texts.map(content => JSON.stringify({
+        timestamp: new Date().toISOString(),
+        content
+    })).join('\n') + '\n';
+
+    try {
+        await fs.mkdir(EMBEDDING_AUDIT_LOG_DIR, { recursive: true });
+        await fs.appendFile(EMBEDDING_AUDIT_LOG_FILE, records, 'utf8');
+    } catch (_) {
+        // 开发审计日志不得影响向量服务，也不转发到服务器日志。
+    }
+}
 
 function _splitModelList(value) {
     return String(value || '')
@@ -151,7 +176,14 @@ async function _sendBatch(batchTexts, config, batchNumber) {
                 // 简单的 Log，证明并发正在跑
                 // console.log(`[Embedding] ✅ Batch ${batchNumber} completed (${batchTexts.length} items) via ${model}.`);
 
-                return data.data.sort((a, b) => a.index - b.index).map(item => item.embedding);
+                const sortedData = data.data.sort((a, b) => a.index - b.index);
+                const successfullyVectorizedTexts = sortedData
+                    .filter(item => item && item.embedding && Number.isInteger(item.index) && item.index >= 0 && item.index < batchTexts.length)
+                    .map(item => batchTexts[item.index]);
+
+                await _writeEmbeddingAuditLog(successfullyVectorizedTexts);
+
+                return sortedData.map(item => item.embedding);
 
             } catch (e) {
                 lastError = e;

@@ -7,7 +7,11 @@ const { tavily } = require('@tavily/core');
 
 // --- 1. 初始化与配置加载 ---
 const configPath = path.resolve(__dirname, './config.env');
-const rootConfigPath = path.resolve(__dirname, '../../config.env');
+// 根配置路径允许用 VSEARCH_ROOT_CONFIG 覆盖：测试需要拿一个空配置隔离本机真实凭据，
+// 否则"什么都没配"这类断言会被根目录里已有的 TavilyKey 带跑。生产环境不设此变量。
+const rootConfigPath = process.env.VSEARCH_ROOT_CONFIG
+    ? path.resolve(process.env.VSEARCH_ROOT_CONFIG)
+    : path.resolve(__dirname, '../../config.env');
 const manifestPath = path.resolve(__dirname, './plugin-manifest.json');
 
 dotenv.config({ path: configPath });
@@ -23,12 +27,17 @@ const {
     SummaryModel: SUMMARY_MODEL,
     VSearchMaxToken: MAX_TOKENS,
     MaxConcurrent: MAX_CONCURRENT,
-    HTTP_PROXY: PROXY,
     KimiSearchUrl: KIMI_SEARCH_URL,
     KimiSearchKey: KIMI_SEARCH_KEY,
     KimiSearchMaxResults: KIMI_SEARCH_MAX_RESULTS,
     KimiSearchIncludeContent: KIMI_SEARCH_INCLUDE_CONTENT,
 } = process.env;
+
+// 代理只服务 grounding 模式里 Vertex 重定向 URL 的解析（见 resolveRedirect），
+// 其余请求全部 proxy:false。插件自己的 config.env.example 第 5 节写的是 HTTP_PROXY，
+// 而根 config.env 用的是 HTTPS_PROXY，两边从未对齐，于是这个功能一直是死的。
+const resolveProxy = (env = {}) => env.HTTP_PROXY || env.HTTPS_PROXY || env.http_proxy || env.https_proxy || undefined;
+const PROXY = resolveProxy(process.env);
 
 const CONCURRENCY = parseInt(MAX_CONCURRENT, 10) || 5;
 const TOKENS = parseInt(MAX_TOKENS, 10) || 50000;
@@ -39,6 +48,59 @@ const MIN_SAFE_REPLY_MARGIN_MS = 5000;
 const MAX_SAFE_REPLY_MARGIN_MS = 15000;
 const GROK_MAX_RETRIES = 3;
 const GROK_BASE_RETRY_DELAY_MS = 1200;
+
+// --- 1.5 后端可用性与模式选择 ---
+// 出厂默认是 kimisearch（config.env.example:11），但 Plugin/VSearch/config.env 从没被创建过，
+// 14 个 configSchema 键里只有 TavilyKey 恰好因为 TavilySearch 插件而配上了。结果默认模式每次
+// 都秒败在"需要配置 KimiSearchKey"，而 grounding/grok 缺 VSearchUrl/VSearchKey 会产出一整篇
+// [搜索失败]。默认值必须落在真的能跑的后端上。
+const MODE_PRIORITY = ['kimisearch', 'tavily', 'grounding', 'grok'];
+
+const MODE_REQUIREMENTS = {
+    kimisearch: 'KimiSearchKey + KimiSearchUrl',
+    tavily: 'TavilyKey',
+    grounding: 'VSearchKey + VSearchUrl + VSearchModel',
+    grok: 'VSearchKey + VSearchUrl',
+};
+
+const describeAvailability = ({ kimiKey, kimiUrl, tavilyKey, apiKey, apiUrl, model } = {}) => ({
+    kimisearch: Boolean(kimiKey && kimiUrl),
+    tavily: Boolean(tavilyKey),
+    grounding: Boolean(apiKey && apiUrl && model),
+    grok: Boolean(apiKey && apiUrl),
+});
+
+const describeMissingConfig = () => MODE_PRIORITY.map(m => `${m} (${MODE_REQUIREMENTS[m]})`).join('、');
+
+// 调用方点名的模式一律照办，缺配置就让它自己报缺配置的错——静默换后端会让
+// "我明明指定了 grok" 这类问题彻底无法排查。只在没指定时才挑一个配置齐全的。
+const resolveSearchMode = (requested, availability = {}) => {
+    const wanted = typeof requested === 'string' ? requested.trim() : '';
+    if (wanted) return { mode: wanted, explicit: true };
+    const auto = MODE_PRIORITY.find(mode => availability[mode]);
+    return { mode: auto || null, explicit: false };
+};
+
+// AI 友好型返回：把报告文本包进 content 数组的 type:'text' 元素，规避 JSON 转义地狱
+const buildAiFriendlyResult = (reportText) => ({ content: [{ type: 'text', text: reportText }] });
+
+// 全部关键词都失败必须报 error。旧行为是 status:"success" 外加正文里塞 [搜索失败]，
+// 于是既进不了 PluginManager 的 ERROR 日志（2026-08-23 代理中断那 6 分钟只看得到
+// TavilySearch 在报错，VSearch 一声不响），AI 那头也会当成"确实没搜到"接着往下写。
+// 部分失败仍算成功，但在报告开头挂一行提示，让 AI 知道这份报告是不全的。
+const buildSearchOutcome = ({ modeLabel, topic, report, okCount, total, firstError }) => {
+    if (total > 0 && okCount === 0) {
+        return {
+            status: 'error',
+            error: `VSearch [${modeLabel}] 全部 ${total} 个关键词检索失败：${firstError || '未知错误'}`,
+        };
+    }
+    const notice = (total > 0 && okCount < total)
+        ? `> [提示] ${total - okCount}/${total} 个关键词检索失败，以下报告不完整。首个错误: ${firstError || '未知错误'}\n\n`
+        : '';
+    const reportText = `## VSearch 检索报告 [模式: ${modeLabel}]\n\n**研究主题**: ${topic}\n\n${notice}${report}`;
+    return { status: 'success', result: buildAiFriendlyResult(reportText) };
+};
 
 // --- 2. 辅助函数 ---
 const log = (message) => {
@@ -419,7 +481,7 @@ const callGrokMode = async (topic, keywordList, deadline) => {
         try {
             const result = await callGrokOnce(topic, keywordList, deadline, attempt);
             if (result && result.trim()) {
-                return result;
+                return { text: result, failed: false, error: null };
             }
 
             lastError = new Error('Grok 空响应');
@@ -446,7 +508,8 @@ const callGrokMode = async (topic, keywordList, deadline) => {
         ? `HTTP ${lastError.response.status}: ${lastError.message}`
         : (lastError?.message || '未知错误');
     log(`[Grok] 全量搜索失败: ${message}`);
-    return `[Grok 搜索失败] 错误原因: ${message}`;
+    // 返回结构体而不是失败字符串：main 要靠 failed 决定 status 是 error 还是 success。
+    return { text: `[Grok 搜索失败] 错误原因: ${message}`, failed: true, error: message };
 };
 
 /**
@@ -499,27 +562,42 @@ const callTavilySearch = async (query, tavilyKeyStr) => {
  */
 const callTavilyMode = async (topic, keywordList, tavilyKeyStr) => {
     // === 阶段1: 并发搜索 ===
+    const total = keywordList.length;
+    let okCount = 0;
+    let firstError = null;
     let combinedResults = '';
     try {
-        log(`[Tavily] 阶段1/2: 正在并发获取 ${keywordList.length} 个关键词的搜索结果 (直接调用 Tavily API)...`);
+        log(`[Tavily] 阶段1/2: 正在并发获取 ${total} 个关键词的搜索结果 (直接调用 Tavily API)...`);
 
         const searchPromises = keywordList.map(async (kw) => {
             try {
                 const result = await callTavilySearch(kw, tavilyKeyStr);
                 log(`[Tavily] 关键词 "${kw}" 搜索成功`);
-                return `### 关键词: ${kw}\n${result}`;
+                return { ok: true, text: `### 关键词: ${kw}\n${result}` };
             } catch (e) {
                 log(`[Tavily] 关键词 "${kw}" 搜索失败: ${e.message}`);
-                return `### 关键词: ${kw}\n[搜索失败]: ${e.message}\n`;
+                return { ok: false, error: e.message, text: `### 关键词: ${kw}\n[搜索失败]: ${e.message}\n` };
             }
         });
 
         const allSearchResults = await Promise.all(searchPromises);
-        combinedResults = allSearchResults.join('\n---\n');
-        log(`[Tavily] 阶段1/2 完成: 搜索结果总长度 ${combinedResults.length} 字符`);
+        okCount = allSearchResults.filter(r => r.ok).length;
+        firstError = allSearchResults.find(r => !r.ok)?.error || null;
+        combinedResults = allSearchResults.map(r => r.text).join('\n---\n');
+        log(`[Tavily] 阶段1/2 完成: ${okCount}/${total} 个关键词成功，搜索结果总长度 ${combinedResults.length} 字符`);
     } catch (searchError) {
         log(`[Tavily] 阶段1 搜索整体失败: ${searchError.message}`);
-        return `[Tavily 搜索阶段失败] 错误原因: ${searchError.message}`;
+        return {
+            report: `[Tavily 搜索阶段失败] 错误原因: ${searchError.message}`,
+            okCount: 0, total, firstError: searchError.message,
+        };
+    }
+
+    const done = (report) => ({ report, okCount, total, firstError });
+
+    // 一条都没搜到就别再花一次 LLM 的钱去总结满篇 [搜索失败]，main 会直接报 error。
+    if (okCount === 0) {
+        return done(combinedResults);
     }
 
     // === 阶段2: 模型总结 ===
@@ -529,7 +607,7 @@ const callTavilyMode = async (topic, keywordList, tavilyKeyStr) => {
 
     if (!summaryKey || !summaryUrl) {
         log(`[Tavily] 未配置总结用 LLM API（SummaryKey/SummaryUrl 或 VSearchKey/VSearchUrl），跳过总结阶段，直接返回原始结果`);
-        return combinedResults;
+        return done(combinedResults);
     }
 
     try {
@@ -555,14 +633,14 @@ const callTavilyMode = async (topic, keywordList, tavilyKeyStr) => {
         const summaryResponse = await axios.post(summaryUrl, summaryPayload, summaryAxiosConfig);
 
         log(`[Tavily] 阶段2/2 完成: 总结成功`);
-        return summaryResponse.data.choices[0].message.content;
+        return done(summaryResponse.data.choices[0].message.content);
     } catch (summaryError) {
         const statusCode = summaryError.response?.status || 'N/A';
         const errorDetail = summaryError.response?.data ? JSON.stringify(summaryError.response.data).substring(0, 500) : summaryError.message;
         log(`[Tavily] 阶段2 总结失败 (HTTP ${statusCode}): ${errorDetail}`);
 
         // 总结失败时，回退返回原始搜索结果而不是完全失败
-        return `[总结阶段失败 (HTTP ${statusCode}): ${summaryError.message}]\n\n**以下为原始搜索结果（未经整合）：**\n\n${combinedResults}`;
+        return done(`[总结阶段失败 (HTTP ${statusCode}): ${summaryError.message}]\n\n**以下为原始搜索结果（未经整合）：**\n\n${combinedResults}`);
     }
 };
 
@@ -609,7 +687,9 @@ const callKimiSearch = async (query, apiKey, baseUrl, maxResults, includeContent
     } catch (error) {
         const status = error.response?.status || 'N/A';
         log(`[KimiSearch] 搜索失败 (HTTP ${status}): ${error.message}`);
-        return `[搜索失败] 错误原因: ${error.message}`;
+        // 抛出而不是返回一句失败文本：调用方要靠这个区分"搜到了"和"没搜到"，
+        // 否则失败会被当成正常结果拼进报告，最终整体报 success。
+        throw new Error(`HTTP ${status} - ${error.message}`);
     }
 };
 
@@ -618,20 +698,39 @@ const callKimiSearch = async (query, apiKey, baseUrl, maxResults, includeContent
  */
 const callKimiSearchMode = async (topic, keywordList, apiKey, baseUrl, maxResults, includeContent) => {
     // === 阶段1: 并发搜索 ===
+    const total = keywordList.length;
+    let okCount = 0;
+    let firstError = null;
     let combinedResults = '';
     try {
-        log(`[KimiSearch] 阶段1/2: 正在并发获取 ${keywordList.length} 个关键词的搜索结果...`);
+        log(`[KimiSearch] 阶段1/2: 正在并发获取 ${total} 个关键词的搜索结果...`);
         const searchPromises = keywordList.map(async (kw) => {
-            const result = await callKimiSearch(kw, apiKey, baseUrl, maxResults, includeContent);
-            log(`[KimiSearch] 关键词 "${kw}" 搜索完成`);
-            return `### 关键词: ${kw}\n${result}`;
+            try {
+                const result = await callKimiSearch(kw, apiKey, baseUrl, maxResults, includeContent);
+                log(`[KimiSearch] 关键词 "${kw}" 搜索完成`);
+                return { ok: true, text: `### 关键词: ${kw}\n${result}` };
+            } catch (e) {
+                return { ok: false, error: e.message, text: `### 关键词: ${kw}\n[搜索失败] 错误原因: ${e.message}\n` };
+            }
         });
         const allSearchResults = await Promise.all(searchPromises);
-        combinedResults = allSearchResults.join('\n---\n');
-        log(`[KimiSearch] 阶段1/2 完成: 搜索结果总长度 ${combinedResults.length} 字符`);
+        okCount = allSearchResults.filter(r => r.ok).length;
+        firstError = allSearchResults.find(r => !r.ok)?.error || null;
+        combinedResults = allSearchResults.map(r => r.text).join('\n---\n');
+        log(`[KimiSearch] 阶段1/2 完成: ${okCount}/${total} 个关键词成功，搜索结果总长度 ${combinedResults.length} 字符`);
     } catch (searchError) {
         log(`[KimiSearch] 阶段1 搜索整体失败: ${searchError.message}`);
-        return `[KimiSearch 搜索阶段失败] 错误原因: ${searchError.message}`;
+        return {
+            report: `[KimiSearch 搜索阶段失败] 错误原因: ${searchError.message}`,
+            okCount: 0, total, firstError: searchError.message,
+        };
+    }
+
+    const done = (report) => ({ report, okCount, total, firstError });
+
+    // 一条都没搜到就别再花一次 LLM 的钱去总结满篇 [搜索失败]，main 会直接报 error。
+    if (okCount === 0) {
+        return done(combinedResults);
     }
 
     // === 阶段2: 模型总结 (如果配置了 LLM API) ===
@@ -641,7 +740,7 @@ const callKimiSearchMode = async (topic, keywordList, apiKey, baseUrl, maxResult
 
     if (!summaryKey || !summaryUrl) {
         log(`[KimiSearch] 未配置总结用 LLM API（SummaryKey/SummaryUrl 或 VSearchKey/VSearchUrl），跳过总结阶段，直接返回原始结果`);
-        return combinedResults;
+        return done(combinedResults);
     }
 
     try {
@@ -665,18 +764,29 @@ const callKimiSearchMode = async (topic, keywordList, apiKey, baseUrl, maxResult
         });
 
         log(`[KimiSearch] 阶段2/2 完成: 总结成功`);
-        return summaryResponse.data.choices[0].message.content;
+        return done(summaryResponse.data.choices[0].message.content);
     } catch (summaryError) {
         const statusCode = summaryError.response?.status || 'N/A';
         const errorDetail = summaryError.response?.data ? JSON.stringify(summaryError.response.data).substring(0, 500) : summaryError.message;
         log(`[KimiSearch] 阶段2 总结失败 (HTTP ${statusCode}): ${errorDetail}`);
-        return `[总结阶段失败 (HTTP ${statusCode}): ${summaryError.message}]\n\n**以下为原始搜索结果（未经整合）：**\n\n${combinedResults}`;
+        return done(`[总结阶段失败 (HTTP ${statusCode}): ${summaryError.message}]\n\n**以下为原始搜索结果（未经整合）：**\n\n${combinedResults}`);
+    }
+};
+
+// TavilyKey 的取值顺序：先读根目录 config.env（插件 example 第 42 行明说"插件会优先读取
+// 根目录配置"），读不到再退回子进程 env（VCP 会按 configSchema 注入，两者通常同值）。
+const readTavilyKey = async () => {
+    try {
+        const rootEnvContent = await fs.readFile(rootConfigPath, 'utf8');
+        return dotenv.parse(rootEnvContent).TavilyKey || process.env.TavilyKey || '';
+    } catch (e) {
+        log(`读取根目录配置失败: ${e.message}`);
+        return process.env.TavilyKey || '';
     }
 };
 
 async function main(request) {
-    const { SearchTopic, Keywords, ShowURL, 
-        SearchMode = process.env.SearchMode || 'kimisearch' } = request;
+    const { SearchTopic, Keywords, ShowURL, SearchMode } = request;
     const showURL = ShowURL === true || ShowURL === 'true';
 
     if (!SearchTopic || !Keywords) {
@@ -688,42 +798,58 @@ async function main(request) {
         return sendResponse({ status: "error", error: "未识别到有效的关键词。" });
     }
 
-    const { deadline } = await createDeadlineContext();
-    log(`启动 VSearch [模式: ${SearchMode}]。主题: "${SearchTopic}"，关键词数量: ${keywordList.length}`);
-
-    // AI 友好型返回：将报告文本包裹进 content 数组的 type:'text' 元素，规避 JSON 转义地狱
-    const buildAiFriendlyResult = (reportText) => ({
-        content: [
-            { type: 'text', text: reportText }
-        ]
+    const tavilyKeyStr = await readTavilyKey();
+    const availability = describeAvailability({
+        kimiKey: KIMI_SEARCH_KEY, kimiUrl: KIMI_SEARCH_URL,
+        tavilyKey: tavilyKeyStr,
+        apiKey: API_KEY, apiUrl: API_URL, model: MODEL,
     });
+    const { mode, explicit } = resolveSearchMode(SearchMode || process.env.SearchMode, availability);
 
-    if (SearchMode === 'grok') {
-        // Grok 模式：单次请求处理所有关键词，安全截止前截断流式输出，并对 503/空响应做指数退避重试
-        const result = await callGrokMode(SearchTopic, keywordList, deadline);
-        const reportText = `## VSearch 检索报告 [模式: Grok]\n\n**研究主题**: ${SearchTopic}\n\n${result}`;
-        return sendResponse({ status: "success", result: buildAiFriendlyResult(reportText) });
+    if (!mode) {
+        return sendResponse({
+            status: "error",
+            error: `VSearch 没有任何可用的检索后端。请在根目录 config.env 中至少配置一组：${describeMissingConfig()}。`,
+        });
+    }
+    if (!MODE_PRIORITY.includes(mode)) {
+        return sendResponse({
+            status: "error",
+            error: `不支持的 SearchMode: "${mode}"。可选值: ${MODE_PRIORITY.join(' / ')}。`,
+        });
+    }
+    if (explicit && !availability[mode]) {
+        log(`调用方显式指定 ${mode} 模式，但其所需配置（${MODE_REQUIREMENTS[mode]}）不完整，按指定模式继续并如实报错`);
+    } else if (!explicit) {
+        log(`未指定 SearchMode，自动选用已配置的后端: ${mode}（可用: ${MODE_PRIORITY.filter(m => availability[m]).join(', ') || '无'}）`);
     }
 
-    if (SearchMode === 'tavily') {
-        // Tavily 模式：直接调用 Tavily SDK 并发搜索 + 单次总结
-        let tavilyKeyStr = '';
-        try {
-            const rootEnvContent = await fs.readFile(rootConfigPath, 'utf8');
-            const rootEnv = dotenv.parse(rootEnvContent);
-            tavilyKeyStr = rootEnv.TavilyKey || '';
-        } catch (e) {
-            log(`读取根目录配置失败: ${e.message}`);
+    const { deadline } = await createDeadlineContext();
+    log(`启动 VSearch [模式: ${mode}]。主题: "${SearchTopic}"，关键词数量: ${keywordList.length}`);
+    const total = keywordList.length;
+
+    if (mode === 'grok') {
+        // Grok 模式：单次请求处理所有关键词，安全截止前截断流式输出，并对 503/空响应做指数退避重试
+        if (!API_URL || !API_KEY) {
+            return sendResponse({ status: "error", error: `Grok 模式需要在 config.env 中配置 ${MODE_REQUIREMENTS.grok}。` });
         }
+        const { text, failed, error } = await callGrokMode(SearchTopic, keywordList, deadline);
+        return sendResponse(buildSearchOutcome({
+            modeLabel: 'Grok', topic: SearchTopic, report: text,
+            okCount: failed ? 0 : total, total, firstError: error,
+        }));
+    }
+
+    if (mode === 'tavily') {
+        // Tavily 模式：直接调用 Tavily SDK 并发搜索 + 单次总结
         if (!tavilyKeyStr) {
             return sendResponse({ status: "error", error: "Tavily 模式需要在根目录 config.env 中配置 TavilyKey。" });
         }
-        const result = await callTavilyMode(SearchTopic, keywordList, tavilyKeyStr);
-        const reportText = `## VSearch 检索报告 [模式: Tavily]\n\n**研究主题**: ${SearchTopic}\n\n${result}`;
-        return sendResponse({ status: "success", result: buildAiFriendlyResult(reportText) });
+        const outcome = await callTavilyMode(SearchTopic, keywordList, tavilyKeyStr);
+        return sendResponse(buildSearchOutcome({ modeLabel: 'Tavily', topic: SearchTopic, ...outcome }));
     }
 
-    if (SearchMode === 'kimisearch') {
+    if (mode === 'kimisearch') {
         // KimiSearch 模式：调用 Kimi Search API
         if (!KIMI_SEARCH_KEY) {
             return sendResponse({ status: "error", error: "KimiSearch 模式需要在 config.env 中配置 KimiSearchKey。" });
@@ -731,13 +857,17 @@ async function main(request) {
         if (!KIMI_SEARCH_URL) {
             return sendResponse({ status: "error", error: "KimiSearch 模式需要在 config.env 中配置 KimiSearchUrl。" });
         }
-        const result = await callKimiSearchMode(SearchTopic, keywordList, KIMI_SEARCH_KEY, KIMI_SEARCH_URL, KIMI_MAX_RESULTS, KIMI_INCLUDE_CONTENT);
-        const reportText = `## VSearch 检索报告 [模式: KimiSearch]\n\n**研究主题**: ${SearchTopic}\n\n${result}`;
-        return sendResponse({ status: "success", result: buildAiFriendlyResult(reportText) });
+        const outcome = await callKimiSearchMode(SearchTopic, keywordList, KIMI_SEARCH_KEY, KIMI_SEARCH_URL, KIMI_MAX_RESULTS, KIMI_INCLUDE_CONTENT);
+        return sendResponse(buildSearchOutcome({ modeLabel: 'KimiSearch', topic: SearchTopic, ...outcome }));
     }
 
     // Grounding 模式：并发分批执行；到达安全截止时间时，抛弃未返回搜索，直接返回已完成结果
+    if (!API_URL || !API_KEY || !MODEL) {
+        return sendResponse({ status: "error", error: `Grounding 模式需要在 config.env 中配置 ${MODE_REQUIREMENTS.grounding}。` });
+    }
     let allResults = [];
+    let okCount = 0;
+    let firstError = null;
     let timedOut = false;
     for (let i = 0; i < keywordList.length; i += CONCURRENCY) {
         if (getRemainingMs(deadline) <= 0) {
@@ -752,10 +882,15 @@ async function main(request) {
 
         const promises = chunk.map((kw, idx) => callGroundingMode(SearchTopic, kw, showURL, deadline, controllers[idx].signal)
             .then(result => {
-                settledResults[idx] = { keyword: kw, result };
+                // callGroundingMode 失败时不抛异常，而是返回一段以 [搜索失败] 开头的文本，
+                // 所以这里只能靠前缀判断成败——这是它和 tavily/kimi 分支的形状差异。
+                const failed = typeof result === 'string' && result.startsWith('[搜索失败]');
+                settledResults[idx] = { keyword: kw, result, ok: !failed };
+                if (failed && !firstError) firstError = result;
             })
             .catch(error => {
-                settledResults[idx] = { keyword: kw, result: `[搜索失败] 关键词: ${kw}。错误原因: ${error.message}` };
+                settledResults[idx] = { keyword: kw, result: `[搜索失败] 关键词: ${kw}。错误原因: ${error.message}`, ok: false };
+                if (!firstError) firstError = error.message;
             }));
 
         await withDeadline(
@@ -771,6 +906,7 @@ async function main(request) {
 
         settledResults.forEach(item => {
             if (item) {
+                if (item.ok) okCount += 1;
                 allResults.push(`### 关键词: ${item.keyword}\n${item.result}\n\n---\n\n`);
             }
         });
@@ -779,24 +915,44 @@ async function main(request) {
     }
 
     const timeoutNotice = timedOut
-        ? `\n\n> [提示] 已到达插件安全截止时间，未完成的 Grounding 搜索已被抛弃；以下为截止前已完成的结果。\n\n`
-        : '\n\n';
-    const finalOutput = `## VSearch 检索报告 [模式: Grounding]\n\n**研究主题**: ${SearchTopic}${timeoutNotice}${allResults.join('') || '[提示] 安全截止前没有搜索任务完成。'}`;
-    sendResponse({ status: "success", result: buildAiFriendlyResult(finalOutput) });
+        ? `> [提示] 已到达插件安全截止时间，未完成的 Grounding 搜索已被抛弃；以下为截止前已完成的结果。\n\n`
+        : '';
+    const groundingReport = `${timeoutNotice}${allResults.join('') || '[提示] 安全截止前没有搜索任务完成。'}`;
+    // 被安全截止抛弃的关键词既没成功也没失败，不计入分母，否则一次超时会把整次调用误判成
+    // 全失败。但若截止前一个都没跑完，那就确实是彻底失败，要如实报 error。
+    const completed = allResults.length;
+    sendResponse(buildSearchOutcome({
+        modeLabel: 'Grounding', topic: SearchTopic, report: groundingReport,
+        okCount, total: completed > 0 ? completed : total,
+        firstError: firstError || (completed === 0 ? '安全截止前没有任何搜索完成' : null),
+    }));
 }
 
-// 插件入口 (stdio)
-let inputData = '';
-process.stdin.on('data', chunk => { inputData += chunk; });
-process.stdin.on('end', () => {
-    try {
-        if (!inputData) {
-            throw new Error("未从 stdin 接收到任何数据。");
+// 插件入口 (stdio)。用 require.main 守起来，好让测试能 require 这个文件去直接测
+// 纯函数，而不会在 require 时挂上 stdin 监听、也不会走到 process.exit。
+if (require.main === module) {
+    let inputData = '';
+    process.stdin.on('data', chunk => { inputData += chunk; });
+    process.stdin.on('end', () => {
+        try {
+            if (!inputData) {
+                throw new Error("未从 stdin 接收到任何数据。");
+            }
+            const request = JSON.parse(inputData);
+            main(request);
+        } catch (e) {
+            log(`解析输入JSON时出错: ${e.message}`);
+            sendResponse({ status: "error", error: "无法解析来自主服务的输入参数。" });
         }
-        const request = JSON.parse(inputData);
-        main(request);
-    } catch (e) {
-        log(`解析输入JSON时出错: ${e.message}`);
-        sendResponse({ status: "error", error: "无法解析来自主服务的输入参数。" });
-    }
-});
+    });
+}
+
+module.exports = {
+    MODE_PRIORITY,
+    MODE_REQUIREMENTS,
+    describeAvailability,
+    describeMissingConfig,
+    resolveSearchMode,
+    resolveProxy,
+    buildSearchOutcome,
+};

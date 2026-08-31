@@ -35,8 +35,8 @@
     "invocationCommands": [
       {
         "commandIdentifier": "SearchCode",
-        "description": "调用此工具在VCP项目源码中搜索指定的代码片段或关键词。支持使用正则表达式进行高级搜索。\n参数:\n- query (字符串, 必需): 需要搜索的关键词、代码片段或正则表达式。\n- search_path (字符串, 可选): 指定要搜索的相对路径。如果未提供，则默认为整个项目的工作区。\n- case_sensitive (布尔值, 可选, 默认false): 是否区分大小写搜索。\n- whole_word (布尔值, 可选, 默认false): 是否进行全词匹配。\n- context_lines (整数, 可选, 默认2): 返回结果时，在匹配行前后额外显示的上下文行数。\n\n调用格式:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」ServerCodeSearcher「末」,\nquery:「始」关键词或正则表达式「末」,\nsearch_path:「始」(可选)相对路径「末」,\ncase_sensitive:「始」(可选)true/false「末」,\nwhole_word:「始」(可选)true/false「末」,\ncontext_lines:「始」(可选)数字「末」\n<<<[END_TOOL_REQUEST]>>>",
-        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ServerCodeSearcher「末」,\nquery:「始」function\\s+processToolCall\\(「末」,\nsearch_path:「始」modules「末」,\ncase_sensitive:「始」false「末」,\ncontext_lines:「始」3「末」\n<<<[END_TOOL_REQUEST]>>>"
+        "description": "调用此工具在VCP项目源码中搜索指定的代码片段或关键词。支持使用正则表达式进行高级搜索。\n参数:\n- query (字符串, 必需): 需要搜索的关键词、代码片段或正则表达式。\n- is_regex (布尔值, 可选, 默认false): 是否把 query 当作正则表达式。为 false 时 query 按字面量匹配（其中的正则元字符会被转义），需要正则语法时必须显式传 true。\n- search_path (字符串, 可选): 指定要搜索的相对路径（也接受绝对路径）。如果未提供，则默认为整个项目的工作区。\n- case_sensitive (布尔值, 可选, 默认false): 是否区分大小写搜索。\n- whole_word (布尔值, 可选, 默认false): 是否进行全词匹配。\n- context_lines (整数, 可选, 默认2): 返回结果时，在匹配行前后额外显示的上下文行数。\n\n返回结果中 truncated 为 true 表示命中数超过 MAX_RESULTS 已被截断，total 为截断前的命中总数；结果按 文件路径→行号 稳定排序，重复调用同一查询得到同一页。\n\n调用格式:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」ServerCodeSearcher「末」,\nquery:「始」关键词或正则表达式「末」,\nis_regex:「始」(可选)true/false「末」,\nsearch_path:「始」(可选)相对路径「末」,\ncase_sensitive:「始」(可选)true/false「末」,\nwhole_word:「始」(可选)true/false「末」,\ncontext_lines:「始」(可选)数字「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ServerCodeSearcher「末」,\nquery:「始」function\\s+processToolCall\\(「末」,\nis_regex:「始」true「末」,\nsearch_path:「始」modules「末」,\ncase_sensitive:「始」false「末」,\ncontext_lines:「始」3「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
   }

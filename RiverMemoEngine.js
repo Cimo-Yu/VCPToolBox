@@ -4,22 +4,6 @@ const {
     computeRiverObservability
 } = require('./modules/tagmemoV10/riverObservability');
 
-let legacyNativeTopologyV3 = null;
-
-function getLegacyNativeTopologyV3() {
-    if (legacyNativeTopologyV3) return legacyNativeTopologyV3;
-    const native = require('./rust-vexus-lite');
-    if (typeof native.rerankRivermemoTopologyV3 !== 'function') {
-        const error = new Error(
-            'RiverMemo Topology V3 native kernel is unavailable; rebuild rust-vexus-lite.'
-        );
-        error.code = 'RIVERMEMO_NATIVE_TOPOLOGY_V3_UNAVAILABLE';
-        throw error;
-    }
-    legacyNativeTopologyV3 = native.rerankRivermemoTopologyV3;
-    return legacyNativeTopologyV3;
-}
-
 const VERSION = 'rivermemo_v1';
 const ALGORITHM_VERSION = 'rivermemo.topology-v3.1';
 const RESULT_SCHEMA = 'rivermemo-topology-v3-result-v1';
@@ -56,67 +40,6 @@ class RiverMemoEngine {
 
     getArtifactSnapshot(options = {}) {
         return this.runtime.getArtifactSnapshot(options);
-    }
-
-    _computeAnchorScores(localDomain, curves) {
-        const tagIds = Array.isArray(localDomain?.ids)
-            ? [...new Set(localDomain.ids
-                .map(Number)
-                .filter(id => Number.isFinite(id) && id > 0))]
-            : [];
-        const chunkIds = [...new Set(
-            (Array.isArray(curves) ? curves : [])
-                .map(curve => Number(curve?.chunkId))
-                .filter(id => Number.isFinite(id) && id > 0)
-        )];
-        const scores = new Map();
-        if (tagIds.length === 0 || chunkIds.length === 0 || !this.runtime.db?.prepare) {
-            return scores;
-        }
-
-        // 两组 IN 参数同时存在，使用保守的双层分块以兼容 SQLite 参数上限。
-        // Tag 批次互不重叠，因此各批 COUNT(DISTINCT tag_id) 可以安全相加。
-        const hitsByChunkId = new Map();
-        const batchSize = 200;
-        for (let tagOffset = 0; tagOffset < tagIds.length; tagOffset += batchSize) {
-            const tagBatch = tagIds.slice(tagOffset, tagOffset + batchSize);
-            const tagPlaceholders = tagBatch.map(() => '?').join(',');
-            for (
-                let chunkOffset = 0;
-                chunkOffset < chunkIds.length;
-                chunkOffset += batchSize
-            ) {
-                const chunkBatch = chunkIds.slice(
-                    chunkOffset,
-                    chunkOffset + batchSize
-                );
-                const chunkPlaceholders = chunkBatch.map(() => '?').join(',');
-                const rows = this.runtime.db.prepare(`
-                    SELECT c.id AS chunk_id,
-                           COUNT(DISTINCT ft.tag_id) AS hits
-                    FROM chunks c
-                    JOIN file_tags ft ON ft.file_id = c.file_id
-                    WHERE ft.tag_id IN (${tagPlaceholders})
-                      AND c.id IN (${chunkPlaceholders})
-                    GROUP BY c.id
-                `).all(...tagBatch, ...chunkBatch);
-                for (const row of rows) {
-                    const chunkId = Number(row.chunk_id);
-                    const hits = Math.max(0, Number(row.hits) || 0);
-                    hitsByChunkId.set(
-                        chunkId,
-                        (hitsByChunkId.get(chunkId) || 0) + hits
-                    );
-                }
-            }
-        }
-
-        const maximumHits = Math.max(0, ...hitsByChunkId.values());
-        if (maximumHits <= 0) return scores;
-        for (const [chunkId, hits] of hitsByChunkId.entries()) {
-            scores.set(chunkId, hits / maximumHits);
-        }
-        return scores;
     }
 
     measureOmega(queryState, options = {}) {
@@ -255,39 +178,36 @@ class RiverMemoEngine {
                     ? []
                     : Array.from(query?.vector || options.vector || [])
             },
-            denoisedVector: observationHandle
-                ? []
-                : Array.from(prepared.denoisedVector),
-            localVector: Array.from(prepared.localVector),
-            transferVector: Array.from(prepared.transferVector),
+            ...(observationHandle ? {} : {
+                denoisedVector: Array.from(prepared.denoisedVector),
+                localVector: Array.from(prepared.localVector),
+                transferVector: Array.from(prepared.transferVector)
+            }),
             candidates: inputCandidates.map(candidate => ({
                 id: candidateId(candidate),
                 score: Number(candidate.score) || 0,
                 hybridScore: Number(candidate.hybridScore) || 0,
                 vectorScore: Number(candidate.vectorScore) || 0,
                 bm25Score: Number(candidate.bm25Score) || 0,
+                timeScore: Number(candidate.timeScore) || 0,
                 anchorScore: Number(candidate.anchorScore) || 0
             })).filter(candidate => candidate.id !== null),
             queryState: {
                 queryId: queryState.queryId,
-                sourceField: observationHandle
-                    ? []
-                    : (queryState.sourceField || []),
-                localField: queryState.localField || [],
-                transferField: queryState.transferField || [],
-                localDomainIds: queryState.localDomain?.ids || [],
-                transferDomainIds: queryState.transferDomain?.ids || [],
-                riverNodes: observationHandle
-                    ? []
-                    : (Array.isArray(river.nodes) ? river.nodes : []),
-                riverEdges: observationHandle
-                    ? []
-                    : (Array.isArray(river.edges) ? river.edges : []),
-                fieldProvenance: observationHandle ? [] : fieldProvenance,
                 completeObservation: observationHandle
                     ? true
                     : queryState.sourceObservation?.diagnostics
-                        ?.completeObservation === true
+                        ?.completeObservation === true,
+                ...(observationHandle ? {} : {
+                    sourceField: queryState.sourceField || [],
+                    localField: queryState.localField || [],
+                    transferField: queryState.transferField || [],
+                    localDomainIds: queryState.localDomain?.ids || [],
+                    transferDomainIds: queryState.transferDomain?.ids || [],
+                    riverNodes: Array.isArray(river.nodes) ? river.nodes : [],
+                    riverEdges: Array.isArray(river.edges) ? river.edges : [],
+                    fieldProvenance
+                })
             },
             allowedFileIds: Array.isArray(agentContext.allowedFileIds)
                 ? agentContext.allowedFileIds.map(Number).filter(Number.isFinite)
@@ -297,22 +217,127 @@ class RiverMemoEngine {
         const nativeStartedAt = Date.now();
         const inputJson = JSON.stringify(payload);
         const tagIndex = this.runtime.tagIndex;
-        const usesUnifiedMemoRuntime =
-            typeof tagIndex?.rerankRivermemoTopologyV3 === 'function';
-        const nativePayload = usesUnifiedMemoRuntime
-            ? await tagIndex.rerankRivermemoTopologyV3(
-                dbPath,
-                artifact.artifactSig,
-                inputJson
-            )
-            : await getLegacyNativeTopologyV3()(
+        const nativeKnowledgeRuntime = options.nativeKnowledgeRuntime || null;
+        const jointRequested = options.nativeJointQuery === true;
+        let jointUsed = false;
+        let jointFallbackReason = null;
+        let nativePayload;
+
+        if (jointRequested) {
+            const hybridPlan = options.nativeHybridPlan
+                && typeof options.nativeHybridPlan === 'object'
+                ? options.nativeHybridPlan
+                : null;
+            const supplementalVectors = options.nativeSupplementalVectors instanceof Float32Array
+                ? options.nativeSupplementalVectors
+                : new Float32Array(options.nativeSupplementalVectors || []);
+            const useHybridAbi = !!hybridPlan;
+            const nativeMethodAvailable = nativeKnowledgeRuntime && (
+                useHybridAbi
+                    ? typeof nativeKnowledgeRuntime.executeRiverQueryHybrid === 'function'
+                    : typeof nativeKnowledgeRuntime.executeRiverQuery === 'function'
+            );
+            if (!nativeMethodAvailable) {
+                const error = new Error(
+                    useHybridAbi
+                        ? 'NativeKnowledgeRuntime hybrid River ABI is unavailable'
+                        : 'NativeKnowledgeRuntime joint River ABI is unavailable'
+                );
+                error.code = 'NATIVE_RIVER_QUERY_ABI_UNAVAILABLE';
+                if (options.nativeJointFallbackToLegacy === false) throw error;
+                jointFallbackReason = error.code;
+            } else {
+                try {
+                    const diaryNames = [...new Set(
+                        (Array.isArray(agentContext.diaryNames)
+                            ? agentContext.diaryNames
+                            : []
+                        ).map(name => String(name || '').trim()).filter(Boolean)
+                    )];
+                    if (diaryNames.length === 0) {
+                        const error = new Error(
+                            'Native joint River query requires an explicit diary scope'
+                        );
+                        error.code = 'NATIVE_RIVER_QUERY_EMPTY_DIARY_SCOPE';
+                        throw error;
+                    }
+                    const queryVector = query?.vector instanceof Float32Array
+                        ? query.vector
+                        : new Float32Array(query?.vector || []);
+                    const nativePerIndexK = Math.max(
+                        1,
+                        Math.floor(Number(options.nativePerIndexK) || 300)
+                    );
+                    const nativeCandidateK = Math.max(
+                        1,
+                        Math.floor(Number(
+                            options.nativeCandidateK
+                            ?? inputCandidates.length
+                            ?? 300
+                        ) || 300)
+                    );
+                    const nativeSemanticThreshold = Math.max(
+                        -1,
+                        Math.min(
+                            1,
+                            Number(options.nativeSemanticThreshold) || 0.92
+                        )
+                    );
+
+                    if (useHybridAbi) {
+                        nativePayload = await nativeKnowledgeRuntime.executeRiverQueryHybrid(
+                            dbPath,
+                            artifact.artifactSig,
+                            inputJson,
+                            diaryNames,
+                            queryVector,
+                            supplementalVectors,
+                            JSON.stringify(hybridPlan),
+                            nativePerIndexK,
+                            nativeCandidateK,
+                            nativeSemanticThreshold
+                        );
+                    } else {
+                        nativePayload = await nativeKnowledgeRuntime.executeRiverQuery(
+                            dbPath,
+                            artifact.artifactSig,
+                            inputJson,
+                            diaryNames,
+                            queryVector,
+                            nativePerIndexK,
+                            nativeCandidateK,
+                            nativeSemanticThreshold
+                        );
+                    }
+                    jointUsed = true;
+                } catch (error) {
+                    if (options.nativeJointFallbackToLegacy === false) throw error;
+                    jointFallbackReason =
+                        error.code || error.message || 'native-joint-failed';
+                    console.warn(
+                        `[RiverMemo] Native joint query failed; falling back to ` +
+                        `legacy native Topology input: ${error.message}`
+                    );
+                }
+            }
+        }
+
+        if (!jointUsed) {
+            if (typeof tagIndex?.rerankRivermemoTopologyV3 !== 'function') {
+                const error = new Error(
+                    'RiverMemo requires the VexusIndex-owned native runtime; rebuild rust-vexus-lite.'
+                );
+                error.code = 'RIVERMEMO_UNIFIED_NATIVE_RUNTIME_UNAVAILABLE';
+                throw error;
+            }
+            nativePayload = await tagIndex.rerankRivermemoTopologyV3(
                 dbPath,
                 artifact.artifactSig,
                 inputJson
             );
+        }
         const nativeResult = JSON.parse(nativePayload);
-        const memoRuntimeStats = usesUnifiedMemoRuntime
-            && typeof tagIndex?.memoRuntimeStats === 'function'
+        const memoRuntimeStats = typeof tagIndex?.memoRuntimeStats === 'function'
             ? tagIndex.memoRuntimeStats()
             : null;
         this._nativeArtifactCacheObserved = true;
@@ -322,6 +347,40 @@ class RiverMemoEngine {
                 .map(candidate => [candidateId(candidate), candidate])
                 .filter(([id]) => id !== null)
         );
+
+        // 联合路径没有把中间候选返回 JS。只按最终 Top-K ID 批量 hydrate
+        // 正文和路径，恢复现有公共结果对象契约。
+        if (jointUsed && this.runtime.db?.prepare) {
+            const finalIds = [...new Set(
+                (Array.isArray(nativeResult.results)
+                    ? nativeResult.results
+                    : []
+                ).map(item => Number(item?.chunkId ?? item?.id))
+                    .filter(id => Number.isSafeInteger(id) && id > 0)
+            )];
+            if (finalIds.length > 0) {
+                const placeholders = finalIds.map(() => '?').join(',');
+                const rows = this.runtime.db.prepare(`
+                    SELECT c.id, c.content AS text, f.path AS sourceFile,
+                           f.diary_name AS diaryName, f.id AS fileId
+                    FROM chunks c
+                    JOIN files f ON f.id = c.file_id
+                    WHERE c.id IN (${placeholders})
+                `).all(...finalIds);
+                for (const row of rows) {
+                    inputById.set(Number(row.id), {
+                        id: Number(row.id),
+                        chunkId: Number(row.id),
+                        text: row.text,
+                        sourceFile: row.sourceFile,
+                        fullPath: row.sourceFile,
+                        diaryName: row.diaryName,
+                        fileId: Number(row.fileId),
+                        source: 'rag'
+                    });
+                }
+            }
+        }
         const sourceObservation = queryState.sourceObservation || {};
         const queryMatchedTags = Object.freeze(
             [...new Set(
@@ -350,6 +409,20 @@ class RiverMemoEngine {
             : []
         ).map(item => {
             const original = inputById.get(Number(item.chunkId)) || {};
+            const rawCandidateSources = (Array.isArray(item.candidateSources)
+                ? item.candidateSources
+                : []
+            ).map(source => typeof source === 'string'
+                ? source
+                : String(source?.source || '')
+            ).filter(Boolean);
+            const resolvedSource = rawCandidateSources.includes('time')
+                ? 'time'
+                : (rawCandidateSources.includes('bm25')
+                    ? (options.nativeHybridPlan?.bm25Mode === 'body'
+                        ? 'bm25_body'
+                        : 'bm25_tag')
+                    : (original.source || 'rag'));
             const matchedTags = Object.freeze(
                 [...new Set(
                     (Array.isArray(item.matchedTags) ? item.matchedTags : [])
@@ -361,6 +434,7 @@ class RiverMemoEngine {
                 ...original,
                 id: Number(item.chunkId),
                 chunkId: Number(item.chunkId),
+                source: resolvedSource,
                 rank: Number(item.rank),
                 score: clamp01(item.score),
                 originalScore: Number(item.originalScore) || 0,
@@ -381,9 +455,7 @@ class RiverMemoEngine {
                     || nativeResult.omega?.regime
                     || 'collapsed',
                 candidateSources: Object.freeze(
-                    (Array.isArray(item.candidateSources)
-                        ? item.candidateSources
-                        : [])
+                    rawCandidateSources
                         .map(source => typeof source === 'string'
                             ? Object.freeze({ source })
                             : Object.freeze({ ...source }))
@@ -426,9 +498,13 @@ class RiverMemoEngine {
                 nativeTopologyV3: Object.freeze({
                     ...(nativeResult.diagnostics || {}),
                     ffiTotalMs: Date.now() - nativeStartedAt,
-                    runtimeOwnership: usesUnifiedMemoRuntime
-                        ? 'vexus-index-instance'
-                        : 'legacy-module-cache',
+                    hybridPlanUsed: jointUsed && !!options.nativeHybridPlan,
+                    runtimeOwnership: jointUsed
+                        ? 'native-knowledge-runtime-joint'
+                        : 'vexus-index-instance',
+                    jointRequested,
+                    jointUsed,
+                    jointFallbackReason,
                     memoRuntime: memoRuntimeStats
                         ? Object.freeze({ ...memoRuntimeStats })
                         : null
@@ -445,21 +521,6 @@ class RiverMemoEngine {
                 anchorBatchAvailable: true
             })
         });
-    }
-
-    _isRetiredArtifactError(error) {
-        const message = String(error?.message || '');
-        return error?.code === 'RIVERMEMO_ARTIFACT_UNAVAILABLE'
-            || /RiverMemo artifact .* unavailable: Query returned no rows/i.test(message);
-    }
-
-    _refreshArtifactAfterRetirement(artifact) {
-        if (typeof this.runtime?.invalidateArtifact === 'function') {
-            this.runtime.invalidateArtifact(
-                `native-artifact-unavailable:${artifact?.artifactSig || 'unknown'}`
-            );
-        }
-        return this.runtime.getArtifactSnapshot({ forceRefresh: true });
     }
 
     async rerank(query, candidates, agentContext = {}, options = {}) {
@@ -532,34 +593,15 @@ class RiverMemoEngine {
         // Topology V3 的候选投影、路径几何、相对拓扑、DSTC、Direct Anchor、
         // 批级条件创新和最终排序全部由 Rust/Rayon 在一个 N-API 调用内完成。
         // JS 仅准备查询连续场并消费稳定结果，禁止再进入旧的逐候选计算链。
-        try {
-            return await this._rerankNative(
-                query,
-                inputCandidates,
-                agentContext,
-                options,
-                artifact,
-                prepared
-            );
-        } catch (error) {
-            if (!this._isRetiredArtifactError(error)) throw error;
-            const refreshedArtifact = this._refreshArtifactAfterRetirement(artifact);
-            if (!refreshedArtifact || refreshedArtifact.artifactSig === artifact.artifactSig) {
-                throw error;
-            }
-            console.warn(
-                `[RiverMemo] Retrying once after retired artifact ${artifact.artifactSig}; ` +
-                `using ${refreshedArtifact.artifactSig}.`
-            );
-            return await this._rerankNative(
-                query,
-                inputCandidates,
-                agentContext,
-                options,
-                refreshedArtifact,
-                prepared
-            );
-        }
+        return await this._rerankNative(
+            query,
+            inputCandidates,
+            agentContext,
+            options,
+            artifact,
+            prepared
+        );
+
     }
 }
 

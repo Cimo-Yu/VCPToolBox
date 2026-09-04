@@ -5,7 +5,6 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const http = require('http');
-const net = require('net');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_PROFILE_DIR = path.join(PROJECT_ROOT, 'Plugin', 'ChromeBridge', 'managed-profile');
@@ -16,6 +15,7 @@ const MANAGED_TOKEN_FILE = path.join(PROJECT_ROOT, 'Plugin', 'ChromeBridge', 'ma
 
 let chromeProcess = null;
 let launchPromise = null;
+let closePromise = null;
 let idleTimer = null;
 const expectedCloseReasons = new WeakMap();
 let managedToken = null;
@@ -24,7 +24,6 @@ let currentExecutablePath = null;
 let currentProfileDir = null;
 let currentDebuggingPort = null;
 let currentExtensionDir = null;
-let currentExtensionDirs = null;
 let currentLaunchConfig = null;
 let currentExtensionStage = null;
 let lastLaunchArgs = [];
@@ -36,10 +35,6 @@ let previousPid = null;
 let lastCloseReason = null;
 let lastClosedAt = null;
 let shutdownHooksRegistered = false;
-// Chrome 启动时经 stderr 输出的官方 DevTools 端点（"DevTools listening on ws://..."）。
-// 实测 chrome-for-testing 151 不再可靠写出 DevToolsActivePort 文件，stderr 是权威来源。
-let stderrWebSocketEndpoint = null;
-let stderrTailBuffer = '';
 
 function readBooleanEnv(name, defaultValue = false) {
     const raw = process.env[name];
@@ -77,50 +72,12 @@ function resolveExtensionDir() {
     return configured;
 }
 
-function splitEnvList(value) {
-    if (!value) return [];
-    return String(value)
-        .split(/[,;]/)
-        .map(s => String(s || '').trim())
-        .filter(Boolean);
-}
-
-// 托管浏览器需要同时加载两类扩展：
-// 1) VCPBridge-Extension（平台数据桥接：extract_data/download_video/feed）
-// 2) VCPChrome（通用浏览器控制：open_url/click/type/list_tabs/cdp 等）
-// 默认自动附带同目录打包的 VCPChrome；也可用 VCP_BROWSER_EXTRA_EXTENSION_DIRS 覆盖。
-function resolveExtensionDirs() {
-    const primary = resolveExtensionDir();
-    const dirs = [primary];
-    let extras = splitEnvList(process.env.VCP_BROWSER_EXTRA_EXTENSION_DIRS);
-
-    if (extras.length === 0) {
-        const bundled = DEFAULT_EXTENSION_DIR;
-        if (bundled !== primary && fs.existsSync(path.join(bundled, 'manifest.json'))) {
-            extras = [bundled];
-        }
-    }
-
-    for (const raw of extras) {
-        const dir = resolveProjectPath(raw, null);
-        if (!dir || dir === primary) continue;
-        if (!fs.existsSync(path.join(dir, 'manifest.json'))) {
-            console.warn(`[BrowserRuntimeManager] extra extension dir unavailable: ${dir}`);
-            continue;
-        }
-        dirs.push(dir);
-    }
-
-    return dirs;
-}
-
 function getRuntimeConfig() {
     return {
         enabled: readBooleanEnv('VCP_BROWSER_RUNTIME_ENABLED', false),
         idleTimeoutMs: readIntegerEnv('VCP_BROWSER_IDLE_TIMEOUT_MS', 300000, 10000),
         profileDir: resolveProjectPath(process.env.VCP_BROWSER_PROFILE_DIR, DEFAULT_PROFILE_DIR),
         extensionDir: resolveExtensionDir(),
-        extensionDirs: resolveExtensionDirs(),
         stagedExtensionRoot: resolveProjectPath(process.env.VCP_BROWSER_STAGED_EXTENSION_DIR, DEFAULT_STAGED_EXTENSION_ROOT),
         loadExtension: readBooleanEnv('VCP_BROWSER_LOAD_VCPCHROME', true),
         headless: readBooleanEnv('VCP_BROWSER_HEADLESS', false),
@@ -132,9 +89,10 @@ function getRuntimeConfig() {
         startMinimized: readBooleanEnv('VCP_BROWSER_START_MINIMIZED', false),
         windowsHide: readBooleanEnv('VCP_BROWSER_WINDOWS_HIDE', false),
         disableGpu: readBooleanEnv('VCP_BROWSER_DISABLE_GPU', false),
+        chromeVerboseLogging: readBooleanEnv('VCP_BROWSER_CHROME_VERBOSE_LOGGING', false),
         restrictExtensions: readBooleanEnv('VCP_BROWSER_RESTRICT_EXTENSIONS', false),
         maxTabs: readIntegerEnv('VCP_BROWSER_MAX_TABS', 8, 1, 200),
-        serverUrl: String(process.env.VCP_BROWSER_SERVER_URL || `ws://localhost:${process.env.PORT || 6015}`).trim(),
+        serverUrl: String(process.env.VCP_BROWSER_SERVER_URL || `ws://localhost:${process.env.PORT || 6005}`).trim(),
         vcpKey: String(process.env.VCP_Key || process.env.VCP_KEY || '').trim()
     };
 }
@@ -194,8 +152,11 @@ function findChromeExecutable() {
     return null;
 }
 
-function isProcessAlive() {
-    return !!chromeProcess && !chromeProcess.killed && chromeProcess.exitCode === null;
+function isProcessAlive(proc = chromeProcess) {
+    // ChildProcess.killed 仅表示 kill() 成功发出了信号，不表示操作系统进程已经退出。
+    // 若把它当作死亡状态，closeManagedBrowser() 会在 SIGTERM 后跳过进程树强杀，
+    // 从而留下仍运行的 Chrome/扩展进程。
+    return !!proc && proc.exitCode === null && proc.signalCode === null;
 }
 
 function loadPersistedManagedToken(options = {}) {
@@ -295,95 +256,68 @@ async function writeManagedStorageFallback(config, payload) {
     }, null, 2), 'utf8');
 }
 
-async function stageManagedExtensions(config) {
+async function stageManagedExtension(config) {
     if (!config.loadExtension) {
         return {
-            extensionDirs: [config.extensionDir].filter(Boolean),
+            extensionDir: config.extensionDir,
             stageGeneration: null,
             sourceManifestHash: null,
-            stagedManifestHash: null,
-            manifestHashes: []
+            stagedManifestHash: null
         };
     }
 
-    const sources = config.extensionDirs && config.extensionDirs.length
-        ? config.extensionDirs
-        : [config.extensionDir];
+    const sourceManifestPath = path.join(config.extensionDir, 'manifest.json');
+    let sourceManifest;
+    try {
+        sourceManifest = await fsp.readFile(sourceManifestPath);
+    } catch (error) {
+        throw new Error(`VCPChrome 源扩展目录不可用: ${config.extensionDir}`);
+    }
+
     // 不要把 --load-extension 的 unpacked 扩展目录放进 --user-data-dir。
     // Chrome/Edge 在部分版本中会拒绝或静默忽略 user-data-dir 内部的 unpacked extension。
     const stagedRoot = config.stagedExtensionRoot;
+    const stagedExtensionDir = path.join(stagedRoot, 'VCPChrome');
+    await fsp.rm(stagedExtensionDir, { recursive: true, force: true });
     await fsp.mkdir(stagedRoot, { recursive: true });
-
-    const stagedDirs = [];
-    const manifestHashes = [];
-    for (let i = 0; i < sources.length; i++) {
-        const sourceDir = sources[i];
-        const sourceManifestPath = path.join(sourceDir, 'manifest.json');
-        let sourceManifest;
-        try {
-            sourceManifest = await fsp.readFile(sourceManifestPath);
-        } catch (error) {
-            throw new Error(`VCPChrome 源扩展目录不可用: ${sourceDir}`);
+    await fsp.cp(config.extensionDir, stagedExtensionDir, {
+        recursive: true,
+        force: true,
+        filter: (src) => {
+            const base = path.basename(src);
+            return !['.git', 'node_modules'].includes(base);
         }
+    });
 
-        // 主扩展沿用旧的 VCPBridge 目录名，避免 unpacked 扩展 ID 变化导致 managed 连接身份漂移；
-        // 附加扩展按自身目录名 staging（如 VCPChrome）。
-        const stagedExtensionDir = path.join(stagedRoot, i === 0 ? 'VCPBridge' : path.basename(sourceDir));
-        await fsp.rm(stagedExtensionDir, { recursive: true, force: true });
-        await fsp.cp(sourceDir, stagedExtensionDir, {
-            recursive: true,
-            force: true,
-            filter: (src) => {
-                const base = path.basename(src);
-                return !['.git', 'node_modules'].includes(base);
-            }
-        });
-
-        // 上游的 Manifest 唯一性校验推广到每个 staging 目录：拷贝结果必须与源码逐字节一致，
-        // 否则拒绝启动，避免加载上一代残留副本。
-        const stagedManifest = await fsp.readFile(path.join(stagedExtensionDir, 'manifest.json'));
-        const sourceManifestHash = hashBuffer(sourceManifest);
-        const stagedManifestHash = hashBuffer(stagedManifest);
-        if (sourceManifestHash !== stagedManifestHash) {
-            throw new Error(`VCPChrome staged Manifest 与源码不一致，已拒绝启动旧扩展副本: ${sourceDir}`);
-        }
-
-        stagedDirs.push(stagedExtensionDir);
-        manifestHashes.push({ sourceManifestHash, stagedManifestHash });
+    const stagedManifest = await fsp.readFile(path.join(stagedExtensionDir, 'manifest.json'));
+    const sourceManifestHash = hashBuffer(sourceManifest);
+    const stagedManifestHash = hashBuffer(stagedManifest);
+    if (sourceManifestHash !== stagedManifestHash) {
+        throw new Error('VCPChrome staged Manifest 与源码不一致，已拒绝启动旧扩展副本');
     }
 
     return {
-        extensionDirs: stagedDirs,
+        extensionDir: stagedExtensionDir,
         stageGeneration: crypto.randomUUID(),
-        // 主扩展（索引 0）的哈希代表这批 staging；附加扩展的哈希在 manifestHashes 里。
-        sourceManifestHash: manifestHashes[0]?.sourceManifestHash ?? null,
-        stagedManifestHash: manifestHashes[0]?.stagedManifestHash ?? null,
-        manifestHashes
+        sourceManifestHash,
+        stagedManifestHash
     };
 }
 
-async function writeManagedExtensionConfigs(config) {
+async function writeManagedExtensionConfig(config) {
     if (!config.loadExtension) return null;
 
-    const dirs = config.extensionDirs && config.extensionDirs.length
-        ? config.extensionDirs
-        : [config.extensionDir];
-    const payload = makeManagedRuntimePayload(config);
-    let runtimeConfigPath = null;
-
-    for (const dir of dirs) {
-        const manifestPath = path.join(dir, 'manifest.json');
-        try {
-            await fsp.access(manifestPath);
-        } catch (error) {
-            throw new Error(`VCPChrome 扩展目录不可用: ${dir}`);
-        }
-
-        const dirRuntimeConfigPath = path.join(dir, MANAGED_CONFIG_FILE);
-        await fsp.writeFile(dirRuntimeConfigPath, JSON.stringify(payload, null, 2), 'utf8');
-        runtimeConfigPath = dirRuntimeConfigPath;
+    const manifestPath = path.join(config.extensionDir, 'manifest.json');
+    try {
+        await fsp.access(manifestPath);
+    } catch (error) {
+        throw new Error(`VCPChrome 扩展目录不可用: ${config.extensionDir}`);
     }
 
+    const runtimeConfigPath = path.join(config.extensionDir, MANAGED_CONFIG_FILE);
+    const payload = makeManagedRuntimePayload(config);
+
+    await fsp.writeFile(runtimeConfigPath, JSON.stringify(payload, null, 2), 'utf8');
     await writeManagedStorageFallback(config, payload).catch(error => {
         console.warn('[BrowserRuntimeManager] managed storage fallback write failed:', error.message);
     });
@@ -475,13 +409,21 @@ function buildChromeArgs(config) {
         '--noerrdialogs',
         '--disable-sync',
         '--disable-popup-blocking',
+        // 关闭最后一个窗口时必须结束托管运行时，不能让扩展 Service Worker
+        // 通过 Chrome background mode 留驻并持续向父 Node 进程输出日志。
+        '--disable-background-mode',
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
         '--disable-features=Translate,MediaRouter,SessionRestore,InfiniteSessionRestore',
-        '--enable-logging=stderr',
-        '--v=1',
         `--window-size=${config.windowWidth},${config.windowHeight}`
     ];
+
+    // Chromium --v=1 会输出高频 verbose 日志。扩展刷新后关闭窗口时，
+    // Service Worker/WebSocket/Profile shutdown 可产生持续 stderr 洪流；
+    // Node 若持续 drain + toString，会表现为服务器 JS 主线程满核。
+    if (config.chromeVerboseLogging) {
+        args.push('--enable-logging=stderr', '--v=1');
+    }
 
     if (config.remoteDebuggingPort > 0) {
         args.push(`--remote-debugging-port=${config.remoteDebuggingPort}`);
@@ -503,14 +445,10 @@ function buildChromeArgs(config) {
         // 托管运行时必须让命令行加载的未打包扩展成为唯一扩展来源。
         // 仅使用 --load-extension 在部分 Chrome/Edge 环境中会被策略/安全提示静默禁用；
         // 与 --disable-extensions-except 同时使用是自动化场景加载 unpacked MV3 扩展的更稳定组合。
-        const dirs = config.extensionDirs && config.extensionDirs.length
-            ? config.extensionDirs
-            : [config.extensionDir];
-        const extensionList = dirs.join(',');
         if (config.restrictExtensions) {
-            args.push(`--disable-extensions-except=${extensionList}`);
+            args.push(`--disable-extensions-except=${config.extensionDir}`);
         }
-        args.push(`--load-extension=${extensionList}`);
+        args.push(`--load-extension=${config.extensionDir}`);
         // Chrome 137+ may reject unpacked extensions unless explicit debugging is enabled.
         args.push('--enable-unsafe-extension-debugging');
     }
@@ -554,6 +492,12 @@ async function ensureManagedBrowser(options = {}) {
         throw new Error('托管浏览器运行时未启用，请设置 VCP_BROWSER_RUNTIME_ENABLED=true');
     }
 
+    // 空闲关闭、人工关闭与自动拉起可能来自不同消费者。启动必须等待当前关闭
+    // 完全收敛，否则同一 Profile 会短暂存在两代 Chrome，并放大扩展重连竞态。
+    if (closePromise) {
+        await closePromise;
+    }
+
     if (isProcessAlive()) {
         touchManagedBrowser();
         return getManagedBrowserStatus();
@@ -571,54 +515,32 @@ async function ensureManagedBrowser(options = {}) {
         return getManagedBrowserStatus({ reusedExistingProcess: true });
     }
 
-    // 固定调试端口预检：若端口被其他程序占用，Chrome 会静默放弃 DevTools 绑定继续运行，
-    // 导致之后所有依赖 DevTools 的调用失败。这里提前失败并给出可操作的错误信息。
-    if (config.remoteDebuggingPort > 0) {
-        const adoptableEndpoint = await probeWebSocketEndpointOnPort(config.remoteDebuggingPort);
-        if (adoptableEndpoint) {
-            // 竞态兜底：reuse 探测刚失败但端口上有带 DevTools 的 Chromium —— 直接采纳复用
-            currentProfileDir = config.profileDir;
-            currentDebuggingPort = config.remoteDebuggingPort;
-            currentExecutablePath = config.executablePath || findChromeExecutable();
-            lastTouchedAt = Date.now();
-            await persistDevToolsActivePort(config.profileDir, adoptableEndpoint);
-            return getManagedBrowserStatus({ reusedExistingProcess: true });
-        }
-        if (await isTcpPortListening(config.remoteDebuggingPort)) {
-            throw new Error(`固定调试端口 ${config.remoteDebuggingPort} 已被其他程序占用。请释放该端口，或在 config.env 中更换 VCP_BROWSER_REMOTE_DEBUGGING_PORT。`);
-        }
-    }
-
     if (launchPromise) {
         return launchPromise;
     }
 
     launchPromise = (async () => {
         lastError = null;
-        stderrWebSocketEndpoint = null;
-        stderrTailBuffer = '';
         const executablePath = config.executablePath || findChromeExecutable();
         if (!executablePath) {
             throw new Error('未找到 Chrome/Chromium/Edge 可执行文件，请设置 VCP_BROWSER_EXECUTABLE_PATH');
         }
 
         await prepareManagedProfile(config);
-        const extensionStage = await stageManagedExtensions(config);
-        const stagedExtensionDirs = extensionStage.extensionDirs;
+        const extensionStage = await stageManagedExtension(config);
         const launchConfig = {
             ...config,
-            extensionDir: stagedExtensionDirs[0] || config.extensionDir,
-            extensionDirs: stagedExtensionDirs,
+            extensionDir: extensionStage.extensionDir,
             stageGeneration: extensionStage.stageGeneration,
             sourceManifestHash: extensionStage.sourceManifestHash,
             stagedManifestHash: extensionStage.stagedManifestHash
         };
-        const runtimeConfigPath = await writeManagedExtensionConfigs(launchConfig);
+        const runtimeConfigPath = await writeManagedExtensionConfig(launchConfig);
         if (launchConfig.loadExtension) {
-            for (const dir of stagedExtensionDirs) {
-                await fsp.access(path.join(dir, 'manifest.json'));
-                await fsp.access(path.join(dir, MANAGED_CONFIG_FILE));
-            }
+            const stagedManifestPath = path.join(launchConfig.extensionDir, 'manifest.json');
+            const stagedRuntimeConfigPath = path.join(launchConfig.extensionDir, MANAGED_CONFIG_FILE);
+            await fsp.access(stagedManifestPath);
+            await fsp.access(stagedRuntimeConfigPath);
         }
 
         const args = buildChromeArgs(launchConfig);
@@ -626,14 +548,17 @@ async function ensureManagedBrowser(options = {}) {
         currentLaunchConfig = {
             headless: launchConfig.headless === true,
             windowsHide: launchConfig.windowsHide === true,
-            startMinimized: launchConfig.startMinimized === true
+            startMinimized: launchConfig.startMinimized === true,
+            chromeVerboseLogging: launchConfig.chromeVerboseLogging === true
         };
         currentExtensionStage = extensionStage;
-        console.log(`[BrowserRuntimeManager] launching managed Chrome: executable=${executablePath}, profile=${launchConfig.profileDir}, extensions=${launchConfig.loadExtension ? launchConfig.extensionDirs.join(';') : 'disabled'}, runtimeConfig=${runtimeConfigPath || 'N/A'}, headless=${currentLaunchConfig.headless}, stageGeneration=${extensionStage.stageGeneration || 'N/A'}`);
+        console.log(`[BrowserRuntimeManager] launching managed Chrome: executable=${executablePath}, profile=${launchConfig.profileDir}, extension=${launchConfig.loadExtension ? launchConfig.extensionDir : 'disabled'}, runtimeConfig=${runtimeConfigPath || 'N/A'}, headless=${currentLaunchConfig.headless}, chromeVerboseLogging=${currentLaunchConfig.chromeVerboseLogging}, stageGeneration=${extensionStage.stageGeneration || 'N/A'}`);
         const spawnedProcess = spawn(executablePath, args, {
             cwd: PROJECT_ROOT,
             detached: false,
-            stdio: ['ignore', 'ignore', 'pipe'],
+            // 默认不创建 stderr pipe，避免 Chrome verbose 日志洪流占满 Node
+            // 事件循环。仅显式诊断模式才由父进程消费 Chromium 日志。
+            stdio: ['ignore', 'ignore', launchConfig.chromeVerboseLogging ? 'pipe' : 'ignore'],
             windowsHide: launchConfig.windowsHide
         });
         chromeProcess = spawnedProcess;
@@ -642,27 +567,22 @@ async function ensureManagedBrowser(options = {}) {
         currentProfileDir = launchConfig.profileDir;
         currentDebuggingPort = launchConfig.remoteDebuggingPort;
         currentExtensionDir = launchConfig.loadExtension ? launchConfig.extensionDir : null;
-        currentExtensionDirs = launchConfig.loadExtension ? [...launchConfig.extensionDirs] : null;
         runtimeInstanceId = crypto.randomUUID();
         lastCloseReason = null;
         startedAt = Date.now();
         lastTouchedAt = Date.now();
 
-        spawnedProcess.stderr.on('data', data => {
-            const text = data.toString().trim();
-            if (!text) return;
-            lastError = text.slice(-1000);
-            // 捕获官方 DevTools 端点行：DevTools listening on ws://127.0.0.1:<port>/devtools/browser/<id>
-            // stderr 分块可能截断该行，用滚动缓冲匹配。
-            stderrTailBuffer = (stderrTailBuffer + text).slice(-4000);
-            const wsMatch = stderrTailBuffer.match(/DevTools listening on (ws:\/\/[^\s]+)/);
-            if (wsMatch) {
-                stderrWebSocketEndpoint = wsMatch[1];
-            }
-            if (readBooleanEnv('DebugMode', false)) {
-                console.warn('[BrowserRuntimeManager][chrome]', text);
-            }
-        });
+        if (spawnedProcess.stderr) {
+            spawnedProcess.stderr.on('data', data => {
+                const text = data.toString().trim();
+                if (text) {
+                    lastError = text.slice(-1000);
+                    if (readBooleanEnv('DebugMode', false)) {
+                        console.warn('[BrowserRuntimeManager][chrome]', text);
+                    }
+                }
+            });
+        }
 
         spawnedProcess.on('exit', (code, signal) => {
             const expectedReason = expectedCloseReasons.get(spawnedProcess) || null;
@@ -685,8 +605,6 @@ async function ensureManagedBrowser(options = {}) {
                 chromeProcess = null;
                 startedAt = null;
                 currentLaunchConfig = null;
-                stderrWebSocketEndpoint = null;
-                stderrTailBuffer = '';
                 clearIdleTimer();
             }
         });
@@ -697,8 +615,6 @@ async function ensureManagedBrowser(options = {}) {
                 chromeProcess = null;
                 startedAt = null;
                 currentLaunchConfig = null;
-                stderrWebSocketEndpoint = null;
-                stderrTailBuffer = '';
                 clearIdleTimer();
             }
         });
@@ -744,92 +660,68 @@ function killProcessTree(pid) {
 }
 
 async function closeManagedBrowser(reason = 'manual') {
-    clearIdleTimer();
-    lastCloseReason = reason;
-    lastClosedAt = Date.now();
+    if (closePromise) {
+        await closePromise;
+        return getManagedBrowserStatus();
+    }
 
-    const proc = chromeProcess;
-    if (!proc) {
+    const operation = (async () => {
+        clearIdleTimer();
+        lastCloseReason = reason;
+        lastClosedAt = Date.now();
+
+        const proc = chromeProcess;
+        if (!proc) {
+            return getManagedBrowserStatus({ lastCloseReason: reason });
+        }
+
+        const pid = proc.pid;
+        previousPid = pid;
+        expectedCloseReasons.set(proc, reason);
+        try {
+            proc.kill('SIGTERM');
+        } catch (_) {
+            // ignore
+        }
+
+        await Promise.race([
+            new Promise(resolve => proc.once('exit', resolve)),
+            new Promise(resolve => setTimeout(resolve, 2500))
+        ]);
+
+        // 必须检查捕获的具体进程，不能检查 ChildProcess.killed。后者在信号发出
+        // 后立即为 true，即使 Chrome 仍未退出，会导致原实现永远跳过树清理。
+        if (isProcessAlive(proc)) {
+            await killProcessTree(pid);
+            await Promise.race([
+                new Promise(resolve => proc.once('exit', resolve)),
+                new Promise(resolve => setTimeout(resolve, 1000))
+            ]);
+        }
+
+        if (chromeProcess === proc) {
+            chromeProcess = null;
+            startedAt = null;
+            currentLaunchConfig = null;
+        }
+
         return getManagedBrowserStatus({ lastCloseReason: reason });
-    }
+    })();
 
-    const pid = proc.pid;
-    previousPid = pid;
-    expectedCloseReasons.set(proc, reason);
+    closePromise = operation;
     try {
-        proc.kill('SIGTERM');
-    } catch (_) {
-        // ignore
+        return await operation;
+    } finally {
+        if (closePromise === operation) {
+            closePromise = null;
+        }
     }
-
-    await Promise.race([
-        new Promise(resolve => proc.once('exit', resolve)),
-        new Promise(resolve => setTimeout(resolve, 2500))
-    ]);
-
-    if (chromeProcess === proc && isProcessAlive()) {
-        await killProcessTree(pid);
-    }
-
-    if (chromeProcess === proc) {
-        chromeProcess = null;
-    }
-
-    startedAt = null;
-    return getManagedBrowserStatus({ lastCloseReason: reason });
 }
 
 async function restartManagedBrowser() {
     await closeManagedBrowser('restart');
     return ensureManagedBrowser();
 }
-function extractPortFromWebSocketEndpoint(endpoint) {
-    try {
-        const port = Number.parseInt(new URL(endpoint).port, 10);
-        return Number.isFinite(port) && port > 0 ? port : null;
-    } catch (_) {
-        return null;
-    }
-}
-
-async function probeWebSocketEndpointOnPort(port) {
-    try {
-        const version = await httpGetJson(`http://127.0.0.1:${port}/json/version`);
-        const endpoint = version && typeof version.webSocketDebuggerUrl === 'string'
-            ? version.webSocketDebuggerUrl
-            : null;
-        return endpoint || null;
-    } catch (_) {
-        return null;
-    }
-}
-
-function isTcpPortListening(port, host = '127.0.0.1') {
-    return new Promise(resolve => {
-        const socket = net.createConnection({ host, port });
-        const done = result => {
-            socket.destroy();
-            resolve(result);
-        };
-        socket.once('connect', () => done(true));
-        socket.once('error', () => done(false));
-        socket.setTimeout(1000, () => done(false));
-    });
-}
-
-// 自愈：把发现到的真实端点回写 DevToolsActivePort 文件，保持文件与运行实例一致。
-// 失败不影响主流程（文件只是三层发现来源之一）。
-async function persistDevToolsActivePort(profileDir, endpoint) {
-    try {
-        const port = extractPortFromWebSocketEndpoint(endpoint);
-        if (!port || !profileDir) return;
-        const wsPath = new URL(endpoint).pathname || '/devtools/browser';
-        await fsp.writeFile(path.join(profileDir, 'DevToolsActivePort'), `${port}\n${wsPath}\n`, 'utf8');
-    } catch (_) {
-        // best-effort
-    }
-}
-
 async function readDevToolsActivePort(options = {}) {
     const allowUnownedProcess = options.allowUnownedProcess === true;
     if (!allowUnownedProcess && !isProcessAlive()) {
@@ -858,53 +750,16 @@ async function readDevToolsActivePort(options = {}) {
 }
 
 async function getManagedBrowserWebSocketEndpoint(options = {}) {
-    const allowUnownedProcess = options.allowUnownedProcess === true;
-    const profileDir = options.profileDir || currentProfileDir || getRuntimeConfig().profileDir;
-
-    // 1) stderr 端点：Chrome 启动时输出的 "DevTools listening on ws://..."，官方权威来源，
-    //    仅对由本进程托管的 Chrome 生效。使用前轻量校验其端口仍然可用。
-    if (!allowUnownedProcess && isProcessAlive() && stderrWebSocketEndpoint) {
-        const stderrPort = extractPortFromWebSocketEndpoint(stderrWebSocketEndpoint);
-        const alive = stderrPort ? await probeWebSocketEndpointOnPort(stderrPort) : null;
-        if (alive) {
-            await persistDevToolsActivePort(profileDir, stderrWebSocketEndpoint);
-            return stderrWebSocketEndpoint;
-        }
-        stderrWebSocketEndpoint = null; // DevTools server 内部重启过，落回文件/固定端口探测
+    const activePort = await readDevToolsActivePort(options);
+    if (!activePort) return null;
+    try {
+        const version = await httpGetJson(`http://127.0.0.1:${activePort.port}/json/version`);
+        return typeof version.webSocketDebuggerUrl === 'string' && version.webSocketDebuggerUrl
+            ? version.webSocketDebuggerUrl
+            : null;
+    } catch (_) {
+        return null;
     }
-
-    // 2) DevToolsActivePort 文件（兼容旧行为；单次快速读取，重试节奏交给外层轮询）
-    const activePort = await readDevToolsActivePort({ ...options, attempts: 1 });
-    if (activePort) {
-        const endpoint = await probeWebSocketEndpointOnPort(activePort.port);
-        if (endpoint) {
-            await persistDevToolsActivePort(profileDir, endpoint);
-            return endpoint;
-        }
-    }
-
-    // 3) 固定调试端口直探：VCP_BROWSER_REMOTE_DEBUGGING_PORT 为固定端口时完全摆脱对
-    //    DevToolsActivePort 文件的依赖（实测新版 Chrome 可能根本不写该文件）。
-    const fixedPortCandidates = new Set();
-    if (Number.isInteger(options.fixedPort) && options.fixedPort > 0) {
-        fixedPortCandidates.add(options.fixedPort);
-    }
-    if (!allowUnownedProcess && Number.isInteger(currentDebuggingPort) && currentDebuggingPort > 0) {
-        fixedPortCandidates.add(currentDebuggingPort);
-    }
-    const configuredPort = getRuntimeConfig().remoteDebuggingPort;
-    if (Number.isInteger(configuredPort) && configuredPort > 0) {
-        fixedPortCandidates.add(configuredPort);
-    }
-    for (const port of fixedPortCandidates) {
-        const endpoint = await probeWebSocketEndpointOnPort(port);
-        if (endpoint) {
-            await persistDevToolsActivePort(profileDir, endpoint);
-            return endpoint;
-        }
-    }
-
-    return null;
 }
 
 async function waitForManagedBrowserWebSocketEndpoint(timeoutMs = 10000) {
@@ -939,17 +794,16 @@ function httpGetJson(url) {
 }
 
 async function getManagedBrowserDebugTargets() {
-    const endpoint = await getManagedBrowserWebSocketEndpoint({});
-    const port = endpoint ? extractPortFromWebSocketEndpoint(endpoint) : null;
-    if (!port) {
+    const activePort = await readDevToolsActivePort();
+    if (!activePort) {
         return {
             available: false,
-            reason: 'DevTools endpoint not available',
+            reason: 'DevToolsActivePort not available',
             devToolsActivePortFile: path.join(currentProfileDir || getRuntimeConfig().profileDir, 'DevToolsActivePort')
         };
     }
 
-    const targets = await httpGetJson(`http://127.0.0.1:${port}/json/list`);
+    const targets = await httpGetJson(`http://127.0.0.1:${activePort.port}/json/list`);
     const summarizedTargets = Array.isArray(targets)
         ? targets.map(target => ({
             id: target.id,
@@ -962,7 +816,7 @@ async function getManagedBrowserDebugTargets() {
 
     return {
         available: true,
-        port,
+        port: activePort.port,
         targetCount: summarizedTargets.length,
         extensionTargets: summarizedTargets.filter(target => String(target.url || '').startsWith('chrome-extension://')),
         targets: summarizedTargets
@@ -995,7 +849,6 @@ function getManagedBrowserStatus(extra = {}) {
         executablePath: currentExecutablePath,
         profileDir: currentProfileDir || config.profileDir,
         extensionDir: currentExtensionDir || config.extensionDir,
-        extensionDirs: currentExtensionDirs || config.extensionDirs,
         sourceExtensionDir: config.extensionDir,
         stagedExtensionRoot: config.stagedExtensionRoot,
         remoteDebuggingPort: currentDebuggingPort,
@@ -1006,6 +859,9 @@ function getManagedBrowserStatus(extra = {}) {
         headless: currentLaunchConfig ? currentLaunchConfig.headless : config.headless,
         windowsHide: currentLaunchConfig ? currentLaunchConfig.windowsHide : config.windowsHide,
         disableGpu: config.disableGpu,
+        chromeVerboseLogging: currentLaunchConfig
+            ? currentLaunchConfig.chromeVerboseLogging
+            : config.chromeVerboseLogging,
         startMinimized: currentLaunchConfig ? currentLaunchConfig.startMinimized : config.startMinimized,
         effectiveHeadlessArgPresent: lastLaunchArgs.includes('--headless=new'),
         extensionStage: currentExtensionStage,

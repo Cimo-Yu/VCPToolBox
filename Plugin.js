@@ -1018,10 +1018,6 @@ class PluginManager extends EventEmitter {
                             if (typeof ragPluginModule.getAIMemoBridge === 'function') {
                                 dependencies.aiMemoBridge = ragPluginModule.getAIMemoBridge();
                             }
-                            // 注入 VCPInfo 广播能力：LightMemo 检索成功后推送检索详情到 info 窗口
-                            if (typeof ragPluginModule.pushVcpInfo === 'function') {
-                                dependencies.pushVcpInfo = ragPluginModule.pushVcpInfo;
-                            }
                             if (this.debugMode) console.log(`[PluginManager] Injected VectorDBManager, embeddings, ContextBridge and AIMemoBridge into LightMemo.`);
                         } else {
                             console.error(`[PluginManager] Critical dependency failure: RAGDiaryPlugin or its components not available for LightMemo injection.`);
@@ -1030,17 +1026,6 @@ class PluginManager extends EventEmitter {
                         if (this.tdbKnowledgeManager) {
                             dependencies.tdbKnowledgeManager = this.tdbKnowledgeManager;
                             if (this.debugMode) console.log(`[PluginManager] Injected TDBKnowledgeManager into LightMemo.`);
-                        }
-                    }
-                    // --- TDBnote 冷知识库写入插件：注入 TDBKnowledgeManager 用于主动入库 ---
-                    // TDBnote 落盘 knowledge/<library>/ 后调用 upsertFile() 触发 TriviumDB 入库，
-                    // 必须与 server.js 持有的同一个 TDBKnowledge 单例协同，避免子进程重复实例化 watcher。
-                    if (manifest.name === 'TDBnote') {
-                        if (this.tdbKnowledgeManager) {
-                            dependencies.tdbKnowledgeManager = this.tdbKnowledgeManager;
-                            if (this.debugMode) console.log(`[PluginManager] 🧊 Injected TDBKnowledgeManager into TDBnote.`);
-                        } else {
-                            console.warn(`[PluginManager] TDBnote loaded without TDBKnowledgeManager; files will be written but indexing will be deferred.`);
                         }
                     }
                     // --- 注入结束 ---
@@ -2381,15 +2366,32 @@ class PluginManager extends EventEmitter {
         }
         if (this.debugMode) console.log('[PluginManager] Starting plugin file watcher...');
 
+        // 强约束：只监听各插件根目录下的 plugin-manifest.json / plugin-manifest.json.block。
+        // depth: 1 严格限定只下潜到 Plugin/<PluginName> 这一层，深层子目录完全不建立文件系统监听句柄；
+        // ignored 函数在递归入口处立即阻断所有与 manifest 无关的子目录和文件，避免任何运行时数据（如浏览器 Profile）被扫描。
         this.pluginWatcher = chokidar.watch(PLUGIN_DIR, {
-            ignored: [
-                '**/node_modules/**',
-                '**/.git/**',
-                '**/dist/**',
-                '**/target/**',
-                '**/image/**',
-                '**/.*'
-            ],
+            depth: 1,
+            ignored: (targetPath, stats) => {
+                if (!targetPath) return false;
+                const normalized = targetPath.replace(/\\/g, '/');
+                if (normalized === PLUGIN_DIR.replace(/\\/g, '/')) return false;
+
+                const base = path.basename(targetPath);
+                if (base.startsWith('.')) return true;
+
+                // 目录层级判断：只允许 Plugin/<PluginFolder>，禁止进入第三层及以后的子目录
+                const rel = path.relative(PLUGIN_DIR, targetPath);
+                const segments = rel.split(/[\\/]/).filter(Boolean);
+
+                if (stats ? stats.isDirectory() : !base.includes('.')) {
+                    // segments.length >= 2 说明已经进入插件子文件夹内部（如 Plugin/ChromeBridge/managed-profile）
+                    return segments.length >= 2;
+                }
+
+                // 文件层级判断：只接收 segments.length === 2 且名字匹配 manifestFileName 的文件
+                if (segments.length !== 2) return true;
+                return base !== manifestFileName && base !== `${manifestFileName}.block`;
+            },
             persistent: true,
             ignoreInitial: true,
             awaitWriteFinish: {
@@ -2399,6 +2401,9 @@ class PluginManager extends EventEmitter {
         });
 
         const filterManifest = (filePath) => {
+            const rel = path.relative(PLUGIN_DIR, filePath);
+            const segments = rel.split(/[\\/]/).filter(Boolean);
+            if (segments.length !== 2) return false;
             const fileName = path.basename(filePath);
             return fileName === manifestFileName || fileName === `${manifestFileName}.block`;
         };
@@ -2413,7 +2418,7 @@ class PluginManager extends EventEmitter {
             .on('unlink', filePath => enqueueManifestChange('unlink', filePath))
             .on('error', error => console.error('[PluginManager] Plugin watcher error:', error));
 
-        console.log(`[PluginManager] Chokidar is now watching ${PLUGIN_DIR} for manifest changes.`);
+        console.log(`[PluginManager] Chokidar is now watching ${PLUGIN_DIR} (depth: 1, strict manifest filter).`);
         return this.pluginWatcher;
     }
 

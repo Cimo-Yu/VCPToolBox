@@ -30,4 +30,6 @@ Docker内置ffmpeg：新版Dockerfile中直接包含了ffmpeg的安装指令。�
 
 信源/出处：VCPToolBox 2.19至今更新记录，约60个提交的ChangeLog。
 
+核对记录(2026-09-02): Dockerfile两个阶段（build与production）均含ffmpeg安装（apk add ffmpeg），此项成立；同步插件返回协议统一为{status,result,error,messageForAI}并推荐content数组格式（docs/VCP同步异步插件开发手册§3.3），仍成立。"可控思维链参数"现行实现为config.env的ChinaModel1(模型tag列表)+ChinaModel1Cot(布尔开关)，modules/chatCompletionHandler.js的applyChinaModelThinkingControl对命中模型设置或删除body.thinking字段——是开/关切换，不支持"深度/展开程度"调节，也不作用于系统提示词。"短时安全防抖机制"（更新日志2026-02-22 d25e07c）实为VCPTavern访问时间戳防抖：60秒窗口（DEBOUNCE_MS硬编码，无config.env调节项）内重复请求不刷新"上次对话时间"，逻辑现仍存于Plugin/VCPTavern/VCPTavern.js；当前源码中不存在工具调用级重复抑制机制。
+
 Tag: 防抖机制，思维链参数，同步插件协议，Docker，ffmpeg，BilibiliFetch，运维优化，稳定性，开箱即用

@@ -33,13 +33,15 @@ Canvas协同模块详解：
 可能的解决办法：
 1. Canvas沙盒限制是设计决策，需要系统权限的代码应使用VchatCLI终端执行，而不是Canvas沙盒。
 2. 调短心流锁的CD时间，并在引导语中明确告知AI"请主动推进任务并汇报进度"。
-3. 养成在重要节点手动保存的习惯，或在Canvas设置中开启自动保存间隔。
+3. 养成在重要节点手动保存的习惯，重要保存会在时间轴上自动生成变动节点。
 4. 多人协同时建议分工明确，避免同时编辑同一段代码，减少冲突概率。
 
 关联节点：VCPChat_Agent管理与群聊模式（群组Canvas集成）、VCPChat_聊天界面与渲染能力（Canvas渲染引擎）、VCPChat_高级功能集合（VchatCLI终端）。
 
 反思与洞察：Canvas和心流锁共同构建了"AI自主工作"的完整闭环。Canvas提供了AI工作的"物理空间"，心流锁提供了AI工作的"时间自主权"。两者结合，让AI真正从"工具"进化为"协作者"。
 
-信源/出处：README For VCPChat.md，VCPChat GitHub仓库。
+信源/出处：VCPChat README.md，VCPChat GitHub仓库。
+
+核对记录(2026-09-02): VCPChat源码Canvasmodules/canvas.js未发现"自动保存间隔"设置项，按README"每次重要保存创建时间轴变动节点"改为保守表述。
 
 Tag: VCPChat，Canvas，协同编辑，沙盒执行，版本回溯，心流锁，AI自主工作，实时协同，结对编程，群组协作，主动AI

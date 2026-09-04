@@ -6,24 +6,24 @@
 
 关键原理与逻辑：
 
-第一，TimeDecay的核心公式是Score_final = Score_original × 0.5^(days / halfLife)，其中days是日记条目的创建日期距今天的天数，halfLife是半衰期参数（默认180天，即半年前的日记权重衰减到原来的50%）。这是经典的指数衰减模型，与放射性衰变的数学原理相同。半衰期越短，系统越偏好近期内容；半衰期越长，时间的影响越弱。
+第一，TimeDecay的核心公式是Score_final = Score_original × 0.5^(days / halfLife)，其中days是日记条目的创建日期距今天的天数，halfLife是半衰期参数（现行默认30天，见rag_params.json的RAGDiaryPlugin.timeDecay.halfLifeDays，即30天前的日记权重衰减到原来的50%）。这是经典的指数衰减模型，与放射性衰变的数学原理相同。半衰期越短，系统越偏好近期内容；半衰期越长，时间的影响越弱。
 
 第二，TimeDecay的日期提取逻辑分为两步。首先尝试从日记内容文本中正则匹配日期格式（如2026-03-14、2026/03/14等），如果文本中没有明确日期，则尝试从文件路径中提取日期信息。如果两步都失败，则该条目不参与时间衰减（保持原始分数不变），避免因日期缺失而错误惩罚。
 
-第三，TimeDecay支持标签白名单机制。通过配置timeDecayTagWhitelist，可以指定只有包含特定Tag的日记条目才参与时间衰减。例如设置白名单为["日常","生活"]，则只有带有这些Tag的生活日记会被时间衰减影响，而技术文档类日记（不含这些Tag）保持原始分数不受时间影响。这对混合使用生活日记和知识文档的用户非常重要。
+第三，TimeDecay支持标签目标筛选机制。通过::TimeDecay修饰符第三段的标签目标（如::TimeDecay30/0.5/日常,生活），可以指定只有包含特定Tag的日记条目才参与时间衰减。例如设置白名单为["日常","生活"]，则只有带有这些Tag的生活日记会被时间衰减影响，而技术文档类日记（不含这些Tag）保持原始分数不受时间影响。这对混合使用生活日记和知识文档的用户非常重要。
 
-第四，RRF倒数秩融合的核心公式是RRF(d) = α/(K + rerank_rank) + (1 - α)/(K + retrieval_rank)，其中K是平滑常数（默认60，来自经典RRF论文的推荐值），α是Rerank权重（默认0.6，即Rerank模型的排名权重略高于向量检索），rerank_rank是文档在Rerank模型排序中的名次，retrieval_rank是文档在原始向量检索排序中的名次。K=60的作用是防止排名靠前的文档获得过于悬殊的分数优势。
+第四，RRF倒数秩融合的核心公式是RRF(d) = α/(K + rerank_rank) + (1 - α)/(K + retrieval_rank)，其中K是平滑常数（默认60，来自经典RRF论文的推荐值），α是Rerank权重（默认0.5，可用::Rerank+0.7这类写法内联指定），rerank_rank是文档在Rerank模型排序中的名次，retrieval_rank是文档在原始向量检索排序中的名次。K=60的作用是防止排名靠前的文档获得过于悬殊的分数优势。
 
 第五，RRF的执行流程包含多层保护机制。首先将查询文本截断到最大长度（防止超出Rerank模型的输入限制），然后将候选文档分批发送给Rerank API（批次大小可配置），收到Rerank结果后与原始向量检索排名进行RRF融合计算。关键的断路器（Circuit Breaker）模式保障了可靠性：如果Rerank API调用失败（网络错误、超时、模型不可用等），系统不会崩溃，而是静默回退到纯向量检索排序，并在日志中记录警告。这意味着Rerank是一个"锦上添花"的增强层，不是必须依赖的核心环节。
 
-第六，TimeDecay和RRF的执行顺序是先RRF后TimeDecay。即先通过Rerank+RRF获得精排结果，然后再对精排结果应用时间衰减，最终得到同时考虑"语义相关度"和"时间新鲜度"的综合排序。
+第六，TimeDecay和RRF的执行顺序是先TimeDecay后RRF（源码注释为"统一后置处理 TimeDecay -> Rerank -> Truncate"），即先对全量候选应用时间衰减重排，再进行Rerank/RRF融合精排。
 
-使用方法：在RAG占位符中添加::Time修饰符启用时间衰减，添加::Rerank修饰符启用RRF重排序。两者可以同时使用，例如[[Nova日记本::1.5::Time::Rerank]]表示K倍率1.5、启用时间衰减和RRF重排序。时间衰减的半衰期和RRF的参数在rag_params.json或AdminPanel管理面板中配置。如果不添加这些修饰符，系统只使用原始的向量检索分数排序。
+使用方法：在RAG占位符中添加::TimeDecay修饰符启用时间衰减（支持::TimeDecay[halfLife]/[minScore]/[targets]参数化写法，如::TimeDecay30/0.5/box归档；注意::Time是时间双路召回，与TimeDecay是两个机制），添加::Rerank+修饰符启用RRF重排序（::Rerank为标准Rerank排序，不做RRF融合）。两者可以同时使用，例如[[Nova日记本::1.5::Time::Rerank]]表示K倍率1.5、启用时间加权召回和Rerank。时间衰减的半衰期等参数在rag_params.json或AdminPanel管理面板中配置，RRF的α由::Rerank+内联指定（K常数60为硬编码）。如果不添加这些修饰符，系统只使用原始的向量检索分数排序。
 
 可能遇到的问题：
 1. 启用Rerank后响应变慢——Rerank需要额外调用外部API，增加了网络延迟。检查Rerank API的响应速度，考虑降低RerankMultiplier（默认2.0）来减少发送给Rerank的候选数量。
 2. Rerank API调用失败导致结果质量下降——断路器模式已自动回退到纯向量检索，结果仍然可用但缺少精排增强。检查config.env中的Rerank相关配置（API Key、模型名称、端点URL）是否正确。
-3. 时间衰减过于激进，老的重要文档排不上来——halfLife参数设置过短，在rag_params.json中调大半衰期值（如从180天改为365天），或使用标签白名单限制时间衰减只影响生活日记类条目。
+3. 时间衰减过于激进，老的重要文档排不上来——halfLife参数设置过短，在rag_params.json中调大半衰期值（如从30天改为365天），或使用标签白名单限制时间衰减只影响生活日记类条目。
 4. 时间衰减不生效——日记条目中没有可识别的日期格式，系统无法提取日期则跳过衰减。确保日记内容中包含标准日期格式（如2026-03-14），或确保文件路径中包含日期信息。
 5. RRF融合后排序结果与预期不符——α参数控制Rerank与向量检索的权重比例，默认0.6偏向Rerank。如果觉得向量检索的判断更准确，可以在配置中降低α值（如改为0.4）。
 
@@ -38,5 +38,7 @@
 反思与洞察：TimeDecay和RRF的组合体现了VCP在RAG后处理上的分层设计思想——先用语义精排确保"找得准"，再用时间衰减确保"找得新"。断路器模式的引入尤为关键，它让Rerank这个依赖外部API的增强层不会成为系统的单点故障。整个设计遵循了"优雅降级"原则：最好的情况下RRF+TimeDecay双重加持，最差的情况下回退到纯向量检索，系统始终可用。
 
 信源出处：Plugin/RAGDiaryPlugin/RAGDiaryPlugin.js第2259-2337行TimeDecay实现、第2601-2816行_rerankDocuments与RRF融合实现，rag_params.json参数配置文件。
+
+核对记录(2026-09-02): 已按现行源码修正四处——①半衰期全局默认为30天（rag_params.json第29-32行RAGDiaryPlugin.timeDecay.halfLifeDays=30、minScore=0.5），原文"默认180天"过时；②timeDecayTagWhitelist配置键不存在，标签筛选由::TimeDecay修饰符第三段指定（优先精准匹配Tag:行，回退matchedTags部分匹配，RAGDiaryPlugin.js第4052-4071行）；③RRF融合由::Rerank+修饰符触发且α默认0.5（原文0.6过时，K=60硬编码，RAGDiaryPlugin.js第2726-2730行、第4348-4369行），普通::Rerank为标准Rerank排序；④执行顺序为TimeDecay→Rerank/RRF→Truncate（第3038行注释），原文"先RRF后TimeDecay"颠倒。另注意::Time（时间双路召回，含时间路结果跳过衰减逻辑）与::TimeDecay为两个不同机制。断路器失败回退纯向量排序、日期提取多级回退（Tag行→括号→首行→文件路径）、RerankMultiplier默认2.0的描述均与源码一致。依据：Plugin/RAGDiaryPlugin/RAGDiaryPlugin.js、rag_params.json。
 
 Tag: TimeDecay，时间衰减，指数衰减，半衰期，RRF，倒数秩融合，Rerank，重排序，断路器模式，优雅降级，RAG后处理，标签白名单，rag_params

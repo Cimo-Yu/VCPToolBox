@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-A
+[2026-09-02] - Agent-A
 [VCP百科全书] DistImageServer - 分布式图床服务器
 
 一、插件基本信息
@@ -23,18 +23,18 @@ DistImageServer是一个服务类插件，可在分布式服务器上启动HTTP�
 
 3. DebugMode (boolean, 可选)
    - 是否启用调试模式
-   - 无默认值
+   - 默认false
 
 四、调用命令列表
 
-本插件为服务类插件，不提供直接的调用命令。插件启动后自动在配置的端口上运行HTTP服务，通过以下方式访问：
+本插件为服务类插件（direct协议），不提供直接的调用命令。插件启动后向分布式服务器的HTTP服务注册路由，共用分布式服务器端口（VCPDistributedServer/config.env 中的 DIST_SERVER_PORT，未配置时随机选用可用端口），通过以下方式访问：
 
 HTTP访问格式：
-http://[服务器地址]:[端口]/[DIST_IMAGE_KEY]/[文件相对路径]
+http://[服务器地址]:[端口]/pw=[DIST_IMAGE_KEY]/files/[文件相对路径]
 
 示例：
-http://localhost:9787/your_secret_key/images/photo.jpg
-http://192.168.1.100:9787/your_secret_key/documents/report.pdf
+http://localhost:5974/pw=your_secret_key/files/images/photo.jpg
+http://192.168.1.100:5974/pw=your_secret_key/files/documents/report.pdf
 
 五、使用示例
 
@@ -42,10 +42,10 @@ http://192.168.1.100:9787/your_secret_key/documents/report.pdf
 假设配置：
 - DIST_IMAGE_PATH: D:/shared/images
 - DIST_IMAGE_KEY: abc123xyz
-- 服务器地址: localhost:9787
+- 服务器地址: localhost:5974
 
 访问URL：
-http://localhost:9787/abc123xyz/photo.jpg
+http://localhost:5974/pw=abc123xyz/files/photo.jpg
 
 示例2：访问子目录中的文件
 假设目录结构：
@@ -55,13 +55,13 @@ D:/shared/images/
       └── sunset.png
 
 访问URL：
-http://localhost:9787/abc123xyz/gallery/sunset.png
+http://localhost:5974/pw=abc123xyz/files/gallery/sunset.png
 
 示例3：在远程分布式服务器上访问
-假设分布式服务器IP为192.168.1.100，端口为9787
+假设分布式服务器IP为192.168.1.100，端口为5974
 
 访问URL：
-http://192.168.1.100:9787/abc123xyz/generated_image.png
+http://192.168.1.100:5974/pw=abc123xyz/files/generated_image.png
 
 示例4：与FileOperator配合使用
 1. 使用FileOperator生成或上传文件到DIST_IMAGE_PATH目录
@@ -70,8 +70,8 @@ http://192.168.1.100:9787/abc123xyz/generated_image.png
 六、注意事项与限制
 
 1. 服务启动：
-   - 插件启动后自动在配置的端口上运行HTTP服务
-   - 需要确保端口未被占用
+   - 插件以direct方式注册到分布式服务器的HTTP服务，共用其端口
+   - 端口被占用时分布式服务器自动回退到随机可用端口
    - 服务器需要网络连接才能被远程访问
 
 2. 认证密钥：
@@ -95,7 +95,7 @@ http://192.168.1.100:9787/abc123xyz/generated_image.png
    - 建议定期清理过期文件以节省空间
 
 6. 调试模式：
-   - DebugMode启用时会输出详细的访问日志
+   - 当前源码仅读取DebugMode配置，未实现额外的访问日志输出
    - 生产环境建议关闭调试模式
 
 七、关联插件

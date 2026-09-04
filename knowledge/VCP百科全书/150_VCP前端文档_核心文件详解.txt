@@ -1,11 +1,11 @@
-[2026-03-03] - 幽浮喵
+[2026-09-02] - 幽浮喵
 [VCP百科全书] VCPChat核心文件详解——main.js、preload.js、renderer.js功能剖析
 
 一、main.js - Electron主进程核心
 
 1.1 文件定位
 路径：VCPChat/main.js
-大小：约61KB，1400+行
+大小：约87KB，1961行
 角色：Electron应用入口，主进程唯一入口点
 
 1.2 核心职责
@@ -99,8 +99,8 @@ IPC白名单：
 
 2.1 文件定位
 路径：VCPChat/preload.js
-大小：约25KB，250+行
-角色：渲染进程与主进程之间的安全桥梁
+大小：2行（已弃用的根级shim，require('./preloads/utility')；实际预加载层已重构为preloads/目录）
+角色：渲染进程与主进程之间的安全桥梁（历史形态）
 
 2.2 核心职责
 
@@ -189,7 +189,7 @@ ipcRenderer.on(channel, (event, ...args) => func(...args));
 
 3.1 文件定位
 路径：VCPChat/renderer.js
-大小：约91KB，1740+行
+大小：约58KB，1205行
 角色：渲染进程入口，UI交互主逻辑
 
 3.2 核心职责
@@ -342,7 +342,7 @@ async function createNewAgent(agentName) {
 
 4.1 文件定位
 路径：VCPChat/main.html
-大小：约74KB
+大小：约197KB（2692行）
 角色：主窗口HTML结构，所有UI的基础
 
 4.2 结构概览
@@ -516,4 +516,5 @@ Elements：检查DOM结构
 
 在preload.js中console.log会输出到渲染进程的DevTools Console
 
+核对记录(2026-09-02): 逐项核对VCPChat当前源码——四个入口文件均存在，但体积/行数已更新（main.js约87KB/1961行，renderer.js约58KB/1205行，main.html约197KB/2692行，已改正文中数字）。重大变化：根级preload.js已弃用为2行shim（console.warn+require('./preloads/utility')），预加载层重构为preloads/（utility.js约40KB、chat.js约39KB、desktop.js、docx.js、loom.js、loom-page.js及shared/apiFactory.js、shared/catalog.js、shared/roles.js），主窗口preload经modules/services/preloadPaths.js按PRELOAD_ROLES.CHAT解析；第二章"IPC通道白名单/electronAPI暴露"为历史实现，现按角色API目录（shared/catalog）生成并保留electronAPI兼容层（preloads/chat.js）。main.js中createWindow（约第685行）webPreferences仍为contextIsolation:true、nodeIntegration:false，但已无sandbox字段；文档代码摘录中的行号（第15/23-43/223/388/58-120/22-44/52行）已漂移（核心模块导入现位于第55-57行，仍为modules/fileManager、Groupmodules/groupchat、modules/ipc/windowHandlers）。renderer.js中window.vcpState全局对象已不存在（现经window.chatAPI||window.electronAPI与模块化状态管理）。单实例锁、托盘、全局快捷键、VCPDistributedServer子进程等行为断言仍与main.js相符。
 Tag: VCPChat核心文件, main.js, preload.js, renderer.js, Electron主进程, 渲染进程, IPC通信, 安全架构, 代码剖析, 开发指南

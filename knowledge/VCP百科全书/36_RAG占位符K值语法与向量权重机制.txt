@@ -36,4 +36,6 @@ K倍率位置无要求，以下三种写法等价：[[Nova日记本::0.5::Time::
 
 信源出处：Plugin/RAGDiaryPlugin/RAGDiaryPlugin.js，第430-483行（_calculateDynamicParams），第1553-1555行（_extractKMultiplier），第1897-1915行（_processRAGPlaceholder中的K计算），第1819-1823行（refreshRagBlock中的0.5:0.35:0.15向量权重）。
 
+核对记录(2026-09-02): 除下述一点外，本文机制均与现行源码一致并已逐项复核——_calculateDynamicParams的k_base阈值（>100字符=6、>30=4、AI回复unique token>100取max6、>40取max4）、kAdjustment=Math.round(L*3+Math.log1p(R)*2)、finalK钳制[3,10]、":数字"倍率提取（首匹配，位置无关）、Rerank时kForSearch=Math.max(1,round(finalK×RerankMultiplier默认2.0)+dedupBuffer)、refreshRagBlock的0.5:0.35:0.15加权（rag_params.json的refreshWeights）、《《》》阈值门控混合模式、{{日记本}}直接引入（DirectDiaryTextProcessor）、单次注入生命周期。失效点：第四点所述聚合检索"Softmax按各日记本余弦相似度归一化分配K配额（含温度参数）"已被移除——现行聚合检索为"虚拟联合索引"：totalK=Math.max(1,Math.round(dynamicK×kMultiplier))作为唯一全局K，多个子日记本合并为一条检索与统一后处理管线，信息可自然集中于任一成员索引，不再按日记本分配配额；管道符语法[[A|B::1.2::Time]]仍有效。依据：Plugin/RAGDiaryPlugin/RAGDiaryPlugin.js第822-875行、第159-163行、第2472-2546行、第2615-2620行、第2781-2797行、第2328-2331行。
+
 Tag: RAG占位符语法，K值控制，动态K计算，kMultiplier，向量加权合并，0.5权重，Rerank扩展召回，聚合检索，Softmax K分配，EPA指标，VCPToolBox源码解析

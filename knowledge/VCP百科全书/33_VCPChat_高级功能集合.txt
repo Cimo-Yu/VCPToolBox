@@ -36,6 +36,6 @@ VchatManager数据管理工具：独立的基于Electron的可视化管理工具
 
 反思与洞察：VchatCLI解决了AI命令行工具调用的核心痛点——状态持久化。传统AI命令行是一次性的，VchatCLI的持久化会话让AI能够执行真正复杂的自动化任务流。划词助手则将AI能力从聊天窗口延伸到了整个桌面，这是AI工作站化的重要一步。
 
-信源/出处：README For VCPChat.md，VCPChat GitHub仓库。
+信源/出处：VCPChat README.md，VCPChat GitHub仓库。
 
 Tag: VCPChat，划词助手，超级浏览器，VchatCLI，骰子插件，V日报，VCP论坛，灵视监控，VchatManager，人类工具箱，工作流引擎

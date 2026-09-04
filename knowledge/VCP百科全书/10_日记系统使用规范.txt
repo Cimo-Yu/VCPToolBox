@@ -1,4 +1,4 @@
-﻿今日系统学习了VCP日记系统的完整使用规范与方法论，整理如下。
+今日系统学习了VCP日记系统的完整使用规范与方法论，整理如下。
 
 核心概念：VCP日记系统（DailyNote）是Agent的长期记忆载体，通过向量RAG系统将日记内容索引化，使Agent能够在未来的对话中精准检索和召回相关记忆，实现真正的持久化学习与成长。
 
@@ -7,16 +7,15 @@
 关键原理与逻辑：
 
 日记创建的VCP工具调用格式：
-<<<[TOOL_REQUEST_EXP]>>>
+<<<[TOOL_REQUEST]>>>
 maid:「始」[日记本名]Agent名「末」,
 tool_name:「始」DailyNote「末」,
 command:「始」create「末」,
 Date:「始」2026-02-28「末」,
-Content:「始」时间：[HH:MM]。时段：晚上。
-日记正文内容...
+Content:「始」[HH:MM] 日记正文内容...
 Tag: 标签1，标签2，标签3「末」,
 archery:「始」no_reply「末」
-<<<[END_TOOL_REQUEST_EXP]>>>
+<<<[END_TOOL_REQUEST]>>>
 
 maid字段支持[]语法指定日记写入特定索引，例如[Nova的知识]Nova将日记写入Nova的知识日记本，无前缀则写入Agent对应的默认日记本。分类日记是好习惯。
 
@@ -28,7 +27,7 @@ maid字段支持[]语法指定日记写入特定索引，例如[Nova的知识]No
 
 Tag字段规范：Tag行是Content参数中必须输入的且必须在末尾的行，参与RAG系统的工作。Tag用于对信息的扩充和标准化打标，包括日记结构化标签、逻辑校准标签、信息链条标签、额外关联补充、日记事件脉络等。
 
-时间规范：Content参数开头的时间格式为[HH:MM]，时段按写日记的当时时间归类（上午、中午、下午、晚上、凌晨）。时间必须从用户消息末尾的当前时间提取，严禁臆造或猜测。
+时间规范：Content参数以[HH:MM]开头。时间必须从用户消息末尾的当前时间提取，严禁臆造或猜测。
 
 日记写入时机：日记应该放在回复的末尾，在完成所有交互和思考后统一记录。不要在对话中途或消息开头穿插日记。每日原则上只主动记录一篇日记，若有重大事件需追加第二篇，必须先请示主人。
 
@@ -40,6 +39,8 @@ Tag字段规范：Tag行是Content参数中必须输入的且必须在末尾的�
 
 反思与洞察：日记系统的核心价值在于将Agent的每次学习和经历转化为可检索的结构化知识节点，通过RAG系统在未来的对话中自动激活相关记忆。Tag字段是连接不同日记条目的语义桥梁，精心设计的Tag可以让RAG系统在检索时建立跨日记的知识关联，形成真正的知识图谱。
 
-信源/出处：TVStxt/Dailynote.txt，routes/dailyNotesRoutes.js，Plugin/DailyNoteWrite/，Plugin/DailyNoteManager/。
+信源/出处：TVStxt/Dailynote.txt，routes/dailyNotesRoutes.js，Plugin/DailyNote/，Plugin/DailyNoteManager/。
+
+核对记录(2026-09-02): 依据 Plugin/DailyNote/plugin-manifest.json与dailynote.js（create的maid支持[文件夹]署名格式、update的target不少于15字符且一次调用只改一处匹配后break、独立Tag字段覆盖Content尾行）、modules/vcpLoop/toolCallParser.js（archery字段支持no_reply静默不回灌；块标记仅解析<<<[TOOL_REQUEST]>>>，不存在TOOL_REQUEST_EXP变体）、TVStxt/Dailynote.txt（Content以[HH:MM]开头、时间取自用户消息末尾、Tag为必需尾行、一事一记、知识类日记结构）核对，主体一致；修正：示例协议标记TOOL_REQUEST_EXP更正为现行TOOL_REQUEST、Content示例对齐[HH:MM]开头写法、移除现行提示词体系已不存在的"时段归类"规则、信源中已不存在的Plugin/DailyNoteWrite/更正为现役实现Plugin/DailyNote/（hybridservice常驻队列服务）。
 
 Tag: VCP日记系统，DailyNote，长期记忆，RAG索引，知识类日记，日记结构，Tag标签，一事一记，向量化，记忆检索，Agent学习

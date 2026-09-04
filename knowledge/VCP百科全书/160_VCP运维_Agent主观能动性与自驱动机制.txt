@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP运维——Agent主观能动性与自驱动机制
 
 一、核心定义
@@ -42,5 +42,6 @@ VCP中的Agent不止是“被动问答机”，而是具备计划、唤醒、通
 - 风险：过度自循环、误触高危工具、跨Agent噪声传播
 - 治理：权限分级、审批门、速率限制、黑白名单、异常熔断
 
+核对记录(2026-09-02): 据 VCP.md、docs/vcp白皮书V3.md 与插件目录核对：AgentAssistant（hybridservice，timely_contact 未来电话/task_delegation 异步委托/inject_tools 临时工具组）、FlowInvite 总线（前端实现为 VCPChat Flowlockmodules 心流锁心跳，nextheartbeat 调度）、跨 Agent 唤醒、FileOperator UpdateHistory 流式内容修正、VCPTimeLine 全局时间感知（hybridservice）均现行有效；任务基建现以 VCPTaskAssistant（hybridservice 任务派发中心：定时/一次性/论坛巡航任务）与 ScheduleManager（synchronous）为准；当前仓库未发现五子棋/象棋插件与“积分”机制实体；学术订阅（Arxiv/CrossRef/NCBIDatasets/PaperReader）与梦系统（AgentDream）插件存在但为 .block 禁用态；运维控制项 MaxVCPLoop、webSocketPush 目标白名单、toolApprovalConfig.json 人工审批与 UserAuth 动态验证码均有效。
 关联节点：AgentAssistant, FlowLock/FlowInvite, WebSocket推送, 审批机制, 任务版
 Tag: Agent主观能动性, 自驱动机制, 时间线规划, 心跳总线, 跨Agent唤醒, 流式编辑, 全局时间感知, 运维治理, 权限分级, 审批机制

@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] 插件说明——自动化与系统控制插件组
 
 一、插件组定位
@@ -10,7 +10,7 @@
 - ScheduleManager / VCPAlarm：跨周期任务与提醒
 - ScreenPilot：视觉+键鼠自动化（桌面RPA）
 - WaitingForUrReply：长链路任务挂起与控制权交接
-- TencentCOSBackup：云端备份与灾备传输
+- ChatTencentcos：腾讯云COS云端文件上传/下载与备份传输
 
 三、高危能力治理
 - 壳命令与系统写操作必须鉴权/审批
@@ -25,6 +25,8 @@
 - 批处理前先做dry-run（预检）
 - 对关键文件改动保留回滚点
 - 异常链路使用WaitingForUrReply挂起等待确认
+
+核对记录(2026-09-02): TencentCOSBackup 在 VCPToolBox\Plugin 与 VCPChat\VCPDistributedServer\Plugin 下均不存在，已替换为实际存在的 ChatTencentcos（VCPChat\VCPDistributedServer\Plugin\ChatTencentcos，manifest：腾讯云COS聊天插件，命令 upload_file/download_file）；FileOperator（分布式节点，name=FileOperator）与 ServerFileOperator（主仓 Plugin\FileOperator，name=ServerFileOperator）经 manifest 核对均存在。
 
 关联节点：FileOperator, PowerShellExecutor, ScheduleManager, ScreenPilot, 审计日志
 Tag: 自动化插件, 系统控制, FileOperator, Shell执行, PowerShellExecutor, ScheduleManager, RPA, 审批鉴权, 运维自动化, 灾备备份

@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——DailyHot（原子切片）
 
 一、插件身份
@@ -17,11 +17,11 @@
 四、配置重点
 - 优先核对插件目录内的 plugin-manifest.json(.block) 与 config.env.example 必填项。
 - 外部API类插件重点检查：密钥、端点、超时、代理与速率限制。
-- 关键配置参数:
-  * BILIBILI_API_KEY: B站API密钥
-  * DOUYIN_API_KEY: 抖音API密钥
-  * WEIBO_API_KEY: 微博API密钥
-  * UPDATE_INTERVAL: 更新间隔(秒)
+- 关键机制参数（源码事实）:
+  * manifest 无 configSchema，插件目录无 config.env.example，源码不读取任何 API 密钥。
+  * 数据源为 `dist/routes/*.js` 内置路由模块（bilibili、weibo、36kr 等约60+源），启动时自动发现并并发抓取。
+  * 结果写入缓存 `dailyhot_cache.md`，抓取失败时降级读取缓存，并输出 vcp_dynamic_fold 折叠结构。
+  * 刷新周期：manifest `refreshIntervalCron = 0 */4 * * *`（每4小时）。
 
 五、排障建议
 - 插件无响应：先检查 manifest 启用状态、入口脚本、运行时依赖。

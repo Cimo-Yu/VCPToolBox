@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——Randomness（原子切片）
 
 一、插件身份
@@ -52,5 +52,7 @@ tool_name:「始」Randomness「末」,
 command:「始」drawTarot「末」,
 count:「始」3「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): Randomness 插件源码缺失——主仓 D:\vcp\VCPToolBox\Plugin\ 与分布式节点 D:\vcp\VCPChat\VCPDistributedServer\Plugin\ 均无同名或 *Random* 变体目录（glob 无结果）；manifest 内容级搜索仅命中 TarotDivination/ArtistMatcher/MediaRenderer，均为无关插件。上文命令与参数未核证，请勿引用；塔罗类需求现由 TarotDivination（draw_single_card 等）承接。
 
 Tag: Randomness, synchronous, 同步调用, 多媒体, createDeck, createCustomDeck, drawFromDeck, resetDeck, destroyDeck, multi-command

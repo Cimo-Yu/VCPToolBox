@@ -1,4 +1,4 @@
-﻿今日系统学习了VCP分布式架构的设计原理与工作机制，整理如下。
+今日系统学习了VCP分布式架构的设计原理与工作机制，整理如下。
 
 核心概念：VCP分布式架构将原有的单体应用升级为由主服务器和多个分布式节点组成的星型网络，通过WebSocket实现跨机器的插件注册、工具调用和文件传输。
 
@@ -12,16 +12,18 @@ AI调用工具的智能路由：AI在响应中嵌入TOOL_REQUEST指令，PluginM
 
 断开连接与注销：如果分布式节点与主服务器的WebSocket连接断开，WebSocketServer会通知PluginManager，PluginManager会自动注销所有属于该断开节点的云端插件。
 
-超栈追踪分布式文件解析（VCPFileAPI v4.0）：这是VCP分布式网络中的革命性功能。当插件需要访问来自远程节点的file://路径时，系统首先尝试在主服务器本地读取；如果本地文件不存在（ENOENT错误），插件返回特定错误结构（code: FILE_NOT_FOUND_LOCALLY，fileUrl字段）；主服务器捕获此错误后，根据发起请求的IP追溯源头分布式服务器，通过内部WebSocket协议向源服务器发送internal_request_file请求；源服务器读取本地文件并以Base64编码返回；主服务器将file://路径替换为Data URI后重新调用插件。整个过程对插件完全透明。
+超栈追踪分布式文件解析（VCPFileAPI v4.0）：这是VCP分布式网络中的革命性功能。现行版本中该机制已由插件管理器透明接管：插件收到参数前，主服务在执行本地插件时会预先扫描调用参数中的file://URL（PluginManager.processToolCall）；若文件在主服务器本地存在则原样传入，本地不存在时先查.file_cache缓存，未命中则根据发起请求的IP追溯源头分布式服务器，通过内部WebSocket消息internal_request_file向源服务器请求，源服务器读取本地文件并以Base64编码返回，主服务器将其缓存后把参数替换为指向本地缓存的file://URL再执行插件。插件无需捕获ENOENT或返回FILE_NOT_FOUND_LOCALLY错误结构，整个过程对插件完全透明。
 
-多文件场景：当插件需要处理多个file://URL时，必须在错误结构中额外附加failedParameter字段，精确指明是哪个参数的文件未找到，主服务器据此进行精准的参数替换和重试。
+多文件场景：主服务会扫描并解析全部参数中的file://URL（包括嵌入在长字符串内的），逐个完成跨节点拉取与替换，插件无需在错误结构中附加failedParameter字段。
 
-部署配置：分布式节点配置需要设置Main_Server_URL（主服务器WebSocket地址，如ws://主服务器IP:8088）、VCP_Key（与主服务器完全一致的密钥）、ServerName（节点识别名称）。目前分布式节点仅支持synchronous类型的stdio插件。
+部署配置：分布式节点配置需要设置Main_Server_URL（主服务器WebSocket地址，如ws://主服务器IP:6015）、VCP_Key（与主服务器完全一致的密钥）、ServerName（节点识别名称）。节点连接路径为/vcp-distributed-server/VCP_Key=<密钥>。节点端插件管理器已支持多种插件类型（synchronous stdio、static、service/hybridservice的direct协议、asynchronous等均有对应执行分支），不再局限于synchronous stdio。
 
-可能遇到的问题：节点连接失败通常是VCP_Key不匹配或网络防火墙阻断了WebSocket端口。云端插件调用超时通常是节点网络延迟过高或插件执行时间超过timeout配置。文件传输失败通常是源节点的FileOperator插件未正确实现FILE_NOT_FOUND_LOCALLY错误协议。
+可能遇到的问题：节点连接失败通常是VCP_Key不匹配或网络防火墙阻断了WebSocket端口。云端插件调用超时通常是节点网络延迟过高或插件执行时间超过timeout配置。跨节点文件拉取失败通常是请求来源IP无法匹配到任何已连接的分布式节点，或源节点上对应文件不存在。
 
 反思与洞察：VCP分布式架构的核心价值在于将算力异构化——不同的计算任务可以路由到最适合的硬件上执行，而对AI和用户完全透明。这是构建真正意义上的AI基础设施的关键一步。
 
-信源/出处：VCPToolBox主体README.md第6节，WebSocketServer.js，FileFetcherServer.js，dailynote/VCP开发/同步异步插件开发手册.md第4.4节。
+信源/出处：docs/DISTRIBUTED_ARCHITECTURE.md，WebSocketServer.js，FileFetcherServer.js，docs/VCP同步异步插件开发手册.md第4.4节。
+
+核对记录(2026-09-02): 依据 Plugin.js（processToolCall预扫描file://参数、registerDistributedTools加[云端]前缀、unregisterAllDistributedTools注销）、FileFetcherServer.js（resolveFileUrl本地探测→.file_cache缓存→internal_request_file跨节点Base64拉取）、VCPChat/VCPDistributedServer/VCPDistributedServer.js与Plugin.js（连接路径/vcp-distributed-server/VCP_Key=、加载全部插件类型含hybridservice direct/asynchronous/static）、docs/VCP同步异步插件开发手册.md第4.4节（插件无需再实现旧版FILE_NOT_FOUND_LOCALLY超栈追踪协议，改为插件执行前透明预处理）、config.env.example（PORT默认6015）修正：超栈追踪现行机制、多文件场景、节点插件类型支持、示例端口与信源路径。
 
 Tag: VCP分布式架构，星型网络，WebSocket，云端插件，超栈追踪，分布式文件解析，VCPFileAPI，智能路由，节点注册，跨机器协作

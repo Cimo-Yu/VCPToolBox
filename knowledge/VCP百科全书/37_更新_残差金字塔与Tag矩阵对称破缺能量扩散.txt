@@ -24,4 +24,6 @@
 
 信源出处：ResidualPyramid.js全文393行，EPAModule.js，Plugin/RAGDiaryPlugin/RAGDiaryPlugin.js第2079-2097行applyTagBoost调用链。
 
+核对记录(2026-09-02): ResidualPyramid.js现行395行，本文核心数学机制均与源码一致并已逐项复核——Modified Gram-Schmidt正交投影、最多3层迭代、minEnergyRatio=0.1能量截断、每层记录energyExplained/residualEnergyRatio/basisCoefficients、握手四指标（directionCoherence=平均差向量方向模、patternStrength=差向量两两余弦均值、noveltySignal=directionCoherence、noiseSignal=(1-coherence)×(1-pairwiseSim)）及5个综合指标（coverage=totalExplainedEnergy、novelty=残差比×0.7+方向一致性×0.3、coherence=patternStrength、tagMemoActivation=coverage×coherence×(1-noiseSignal)、expansionSignal=novelty）；Rust加速经tagIndex的computeOrthogonalProjection/computeHandshakes接口，失败静默回退JS。两处调用链描述需修正：applyTagBoost现为KnowledgeBaseManager.applyTagBoostAsync → TagMemoEngine.applyTagBoost（第1014-1046行）内部调用残差金字塔，RAGDiaryPlugin侧经vectorDBManager.applyTagBoostAsync触达；ResultDeduplicator现行实现为语义去重（rag_params.json的resultDeduplication阈值体系），未见"利用正交投影残差能量选优"的逻辑。依据：ResidualPyramid.js、TagMemoEngine.js、KnowledgeBaseManager.js第1023-1148行、ResultDeduplicator.js。
+
 Tag: RAG，残差金字塔，Gram-Schmidt，正交投影，能量谱分析，Tag矩阵，对称破缺，向量子空间，语义残差，Rust加速，tagMemoActivation，握手分析

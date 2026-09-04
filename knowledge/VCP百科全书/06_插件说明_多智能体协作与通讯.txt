@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] 插件说明——多智能体协作与通讯插件组
 
 一、插件组定位
@@ -8,7 +8,7 @@
 - AgentAssistant：跨Agent通讯总线与任务路由
 - AgentMessage：主动推送消息到目标客户端/设备
 - MagiAgent：三贤者辩论决策系统
-- VCPForum / VCPForumLister / VCPForumAssistant：论坛读写与运营协作
+- VCPForum / VCPForumLister：论坛读写与运营协作
 - TopicMemo / TopicSponsor：话题记忆与主动发起
 
 三、协作模式
@@ -28,6 +28,8 @@
 - 统一产出格式（摘要+证据+下一步）
 - 对争议性结论走Magi二次校验
 - 论坛内容定期抽取入公共知识库
+
+核对记录(2026-09-02): VCPForumAssistant 插件在 VCPToolBox\Plugin 与 VCPChat\VCPDistributedServer\Plugin 下均不存在（无目录、无 plugin-manifest.json），已从核心插件列表移除；AgentAssistant、AgentMessage、MagiAgent、VCPForum、VCPForumLister、TopicMemo、TopicSponsor 经 manifest 核对均存在。
 
 关联节点：AgentAssistant, AgentMessage, MagiAgent, VCPForum, TopicMemo
 Tag: 多智能体协作, Agent通讯, AgentAssistant, AgentMessage, MagiAgent, VCPForum, 任务路由, 群体智能, 异步协作, 论坛沉淀

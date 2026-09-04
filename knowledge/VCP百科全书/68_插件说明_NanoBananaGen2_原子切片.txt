@@ -1,16 +1,16 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——NanoBananaGen2（原子切片）
 
 一、插件身份
-- name: NanoBananaGenOR
-- displayName: Gemini 3 NanoBanana 图像生成 (官方)
+- name: NanoBananaGen2
+- displayName: NanoBanana 图像生成 (自定义渠道)
 - pluginType: synchronous
-- command: NanoBananaGenerateImage, NanoBananaEditImage, NanoBananaComposeImage
-- 调用时使用工具名 NanoBananaGenOR
+- command: generate, edit, compose
+- 调用时使用工具名 NanoBananaGen2
 
 二、核心能力
-- 使用 Vercel 接口调用 Google Gemini 3 pro Image Preview 模型进行高级的图像生成和编辑。支持代理和多密钥随机选择。
-- 提供可调用命令：NanoBananaGenerateImage、NanoBananaEditImage、NanoBananaComposeImage。
+- 通过 OpenAI Chat Completions 兼容接口调用 Gemini/NanoBanana 图像生成模型（默认模型 gemini-3-pro-image）进行高级的图像生成和编辑。支持自定义 API 地址、多渠道绑定轮询（URL+KEY+多模型）、单渠道多模型随机、1K/2K/4K 尺寸选择与代理。
+- 提供可调用命令：generate、edit、compose。
 
 三、占位符与注入点
 - systemPromptPlaceholders: 无
@@ -27,24 +27,28 @@
 
 1. generate - 生成图像
 <<<[TOOL_REQUEST]>>>
-tool_name:「始」NanoBananaGenOR「末」,
-command:「始」NanoBananaGenerateImage「末」,
+tool_name:「始」NanoBananaGen2「末」,
+command:「始」generate「末」,
 prompt:「始」描述你想要生成的图像「末」
 <<<[END_TOOL_REQUEST]>>>
 
 2. edit - 编辑图像
 <<<[TOOL_REQUEST]>>>
-tool_name:「始」NanoBananaGenOR「末」,
-command:「始」NanoBananaEditImage「末」,
-image:「始」base64_image_data「末」,
+tool_name:「始」NanoBananaGen2「末」,
+command:「始」edit「末」,
+image_url:「始」https://example.com/photo.jpg「末」,
 prompt:「始」编辑指令「末」
 <<<[END_TOOL_REQUEST]>>>
 
 3. compose - 合成图像
 <<<[TOOL_REQUEST]>>>
-tool_name:「始」NanoBananaGenOR「末」,
-command:「始」NanoBananaComposeImage「末」,
-images:「始」[image1, image2]「末」
+tool_name:「始」NanoBananaGen2「末」,
+command:「始」compose「末」,
+prompt:「始」Use background from first image and character from second image「末」,
+image_url_1:「始」https://example.com/background.jpg「末」,
+image_url_2:「始」https://example.com/character.png「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: NanoBananaGenOR, synchronous, 同步调用, 多媒体, NanoBananaGenerateImage, NanoBananaEditImage, NanoBananaComposeImage
+核对记录(2026-09-02): 依据 Plugin\NanoBananaGen2\plugin-manifest.json 与 NanoBananaGen.mjs 修正——实际 name/displayName 为 NanoBananaGen2/「NanoBanana 图像生成 (自定义渠道)」，实际命令为 generate/edit/compose（源码对 command 关键词模糊归一化），编辑/合成参数为 image_url、image_url_1/2/3、image_size(1K/2K/4K)；原 NanoBananaGenOR 与「Vercel/Gemini 3 官方接口」表述已废弃。
+
+Tag: NanoBananaGen2, synchronous, 同步调用, 多媒体, generate, edit, compose

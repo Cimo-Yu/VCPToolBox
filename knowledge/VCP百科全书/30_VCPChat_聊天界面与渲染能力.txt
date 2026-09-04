@@ -32,12 +32,14 @@ AI气泡交互按钮：AI输出的DIV内容中可以动态渲染可交互的butt
 1. Pyodide首次加载需要网络连接，等待加载完成后再点击运行。离线环境需要本地部署Pyodide。
 2. 检查代码块的语言标记是否正确，Three.js代码必须包含THREE对象的使用。
 3. 更新VCPChat到最新版本以获得完整的Anime.js支持。
-4. 复杂渲染问题可以通过右键气泡选择"重新渲染"来解决。
+4. 复杂渲染问题可以通过编辑历史记录触发差分重渲染来解决。
 
 关联节点：VCPChat总览与安装部署（基础环境）、VCPChat_Canvas协同与心流锁（Canvas渲染集成）、VCPChat_高级功能集合（超级浏览器渲染）。
 
 反思与洞察：VCPChat的渲染能力是其最大的差异化优势。21种渲染器的流式差分实现，解决了业界长期存在的"AI输出复杂内容时渲染竞态"问题。这种能力让AI真正从"文字生成器"进化为"内容创作者"。
 
-信源/出处：README For VCPChat.md，VCPChat GitHub仓库。
+信源/出处：VCPChat README.md，VCPChat GitHub仓库。
+
+核对记录(2026-09-02): VCPChat源码modules/renderer/messageContextMenu.js气泡右键菜单无"重新渲染"项，据README差分渲染机制改为编辑历史记录触发重渲染的保守表述。
 
 Tag: VCPChat，渲染引擎，21种渲染器，流式差分渲染，Markdown，HTML，Python执行，Three.js，Anime.js，Mermaid，LaTeX，气泡主题，交互按钮，多媒体

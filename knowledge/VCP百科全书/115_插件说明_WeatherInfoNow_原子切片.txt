@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——WeatherInfoNow（原子切片）
 
 一、插件身份
@@ -29,5 +29,7 @@
 "当前天气：{{VCPWeatherInfoNow}}"
 
 该占位符会自动注入简短的实时天气信息，从 WeatherReporter 的缓存中提取。
+
+核对记录(2026-09-02): 该插件当前为禁用态，契约文件为 Plugin\WeatherInfoNow\plugin-manifest.json.block；已按该manifest与weather-info-now.js核对一致（static、占位符{{VCPWeatherInfoNow}}、cron 0 * * * *，读取 ../WeatherReporter/weather_cache.json 提取简报）。
 
 Tag: WeatherInfoNow, static, 静态注入, VCPWeatherInfoNow

@@ -1,15 +1,15 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——SemanticGroupEditor（原子切片）
 
 一、插件身份
 - name: SemanticGroupEditor
 - displayName: 语义组编辑器
 - pluginType: synchronous
-- command: QueryGroups, UpdateGroups
+- command: QueryGroups, UpdateGroups, SetWeight
 
 二、核心能力
-- 一个用于查询和更新RAG知识库中语义词元组的插件。
-- 提供可调用命令：QueryGroups、UpdateGroups。
+- 一个用于查询、更新和设置RAG知识库中语义词元组权重的插件。
+- 提供可调用命令：QueryGroups、UpdateGroups、SetWeight；所有命令支持串语法批量操作。
 
 三、占位符与注入点
 - systemPromptPlaceholders: 无
@@ -27,15 +27,23 @@
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」SemanticGroupEditor「末」,
 command:「始」QueryGroups「末」,
-query:「始」authentication「末」
+groupname:「始」绘画与视觉创作「末」
 <<<[END_TOOL_REQUEST]>>>
 
 更新语义组:
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」SemanticGroupEditor「末」,
 command:「始」UpdateGroups「末」,
-group_id:「始」group_123「末」,
-updates:「始」{"keywords": ["login", "signin"]}「末」
+groupname:「始」科幻概念「末」,
+groupwords:「始」戴森球,曲率引擎,赛博朋克「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: SemanticGroupEditor, synchronous, 同步调用, QueryGroups, UpdateGroups
+设置语义组权重:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」SemanticGroupEditor「末」,
+command:「始」SetWeight「末」,
+groupname:「始」绘画与视觉创作「末」,
+weight:「始」1.5「末」
+<<<[END_TOOL_REQUEST]>>>
+
+Tag: SemanticGroupEditor, synchronous, 同步调用, QueryGroups, UpdateGroups, SetWeight

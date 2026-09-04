@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] Notemodules - 笔记模块
 
 一、模块基本信息
@@ -46,24 +46,23 @@ Notemodules是VCPChat的笔记模块，提供本地和网络笔记管理功能�
    - 文件夹树形显示
 
 四、主要文件结构
-- notes.js：核心逻辑（60KB）
+- notes.js：核心逻辑（96KB）
 - notes.html：UI布局
 - notes.css：样式定义
 
 五、关键API接口
-1. 笔记操作：
-   - createNote(title, type)：创建笔记
-   - saveNote(noteId, content)：保存笔记
-   - deleteNote(noteId)：删除笔记
-   - updateNoteTitle(noteId, title)：更新标题
+1. 笔记与文件夹操作（经 Electron API）：
+   - readNotesTree()：读取笔记树
+   - writeTxtNote(noteData)：写入/保存笔记（新建与保存共用）
+   - createNoteFolder({parentPath, folderName})：创建文件夹
+   - renameItem({oldPath, newName, newContentBody, ext})：重命名/更新标题
+   - deleteItem(path)：删除笔记/文件夹
+   - copyNoteContent(path)：复制笔记内容
 
-2. 文件夹操作：
-   - createFolder(folderName)：创建文件夹
-   - deleteFolder(folderId)：删除文件夹
-   - moveNote(noteId, folderId)：移动笔记
-
-3. 搜索：
-   - searchNotes(query)：搜索笔记
+2. 网络笔记：
+   - scanNetworkNotes()：扫描网络笔记
+   - getCachedNetworkNotes()：读取网络笔记缓存
+   - onNetworkNotesScanned(callback)：网络笔记扫描完成回调
 
 六、使用场景
 1. 快速记录：记录临时想法和笔记

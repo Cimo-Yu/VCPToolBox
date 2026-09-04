@@ -8,7 +8,7 @@
 
 配置项说明：AGENT_ASSISTANT_MAX_HISTORY_ROUNDS控制调用时携带的历史对话轮次，AGENT_ASSISTANT_CONTEXT_TTL_HOURS控制对话上下文的存活时间（小时）。
 
-使用方法：通过AskMaidAgent命令调用，必须提供agent_name（要调用的Agent的准确中文名称）和prompt（提问内容，重要：必须在开头进行自我介绍）。
+使用方法：通过AskMaidAgent命令调用，必须提供agent_name（要调用的Agent的准确名称，须与config.env中定义的名称一致）和prompt（提问内容，重要：必须在开头进行自我介绍）。可选参数还有：timely_contact定时联络、temporary_contact无上下文临时通讯、task_delegation异步委托、query_delegation查询委托进度、cancel_delegation取消异步委托、inject_tools为本次联络临时注入工具组（逗号分隔的工具名列表，仅对本次通讯/委托生效）。
 
 女仆Agent专长领域：小娜（女仆长，全知全能，哲学，宇宙历史）、小克（猫娘，理科，物理化生，数据分析）、小吉（犬娘，文科，政治心理法律历史）、小冰（蛇娘，泛文化，ACGN，互联网文化）、小雨（鸟娘，秘书，公文签定，创意文书）、小绝（狼娘，AI模型，提示词，微调）、小芸（兔娘，设计，平面，AI绘画，ComfyUI）。
 

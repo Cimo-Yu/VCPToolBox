@@ -1,8 +1,8 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——VCPEverything（原子切片）
 
 一、插件身份
-- name: ServerSearchController
+- name: LocalSearchController（目录名 VCPEverything）
 - displayName: 本地文件秒搜 (Everything)
 - pluginType: synchronous
 - command: search
@@ -26,24 +26,25 @@
 
 1. 基础搜索
 <<<[TOOL_REQUEST]>>>
-tool_name:「始」ServerSearchController「末」,
+tool_name:「始」LocalSearchController「末」,
 command:「始」search「末」,
 query:「始」*.txt「末」
 <<<[END_TOOL_REQUEST]>>>
 
 2. 高级搜索（带路径限制）
 <<<[TOOL_REQUEST]>>>
-tool_name:「始」ServerSearchController「末」,
+tool_name:「始」LocalSearchController「末」,
 command:「始」search「末」,
-query:「始」*.pdf「末」,
-path:「始」C:\Documents「末」
+query:「始」path:C:\Documents *.pdf「末」
 <<<[END_TOOL_REQUEST]>>>
 
 3. 搜索最近修改的文件
 <<<[TOOL_REQUEST]>>>
-tool_name:「始」ServerSearchController「末」,
+tool_name:「始」LocalSearchController「末」,
 command:「始」search「末」,
 query:「始」dm:today「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: VCPEverything, ServerSearchController, synchronous, 同步调用, 检索, 信息获取, 系统工具, search
+核对记录(2026-09-02): manifest 注册名为 LocalSearchController（目录 VCPEverything），文中旧名 ServerSearchController 已更正；HTTP 服务器模式以主入口源码 local-search-controller.js 与插件 readme 为准（manifest 描述中的 es.exe/EVERYTHING_ES_PATH 与源码不符），且接口仅接受 query/maxResults 参数，原 path 独立参数示例已并入 Everything 查询语法。源码：VCPChat\VCPDistributedServer\Plugin\VCPEverything\
+
+Tag: VCPEverything, LocalSearchController, synchronous, 同步调用, 检索, 信息获取, 系统工具, search

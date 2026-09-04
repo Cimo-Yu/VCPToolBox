@@ -1032,6 +1032,17 @@ class PluginManager extends EventEmitter {
                             if (this.debugMode) console.log(`[PluginManager] Injected TDBKnowledgeManager into LightMemo.`);
                         }
                     }
+                    // --- TDBnote 冷知识库写入插件：注入 TDBKnowledgeManager 用于主动入库 ---
+                    // TDBnote 落盘 knowledge/<library>/ 后调用 upsertFile() 触发 TriviumDB 入库，
+                    // 必须与 server.js 持有的同一个 TDBKnowledge 单例协同，避免子进程重复实例化 watcher。
+                    if (manifest.name === 'TDBnote') {
+                        if (this.tdbKnowledgeManager) {
+                            dependencies.tdbKnowledgeManager = this.tdbKnowledgeManager;
+                            if (this.debugMode) console.log(`[PluginManager] 🧊 Injected TDBKnowledgeManager into TDBnote.`);
+                        } else {
+                            console.warn(`[PluginManager] TDBnote loaded without TDBKnowledgeManager; files will be written but indexing will be deferred.`);
+                        }
+                    }
                     // --- 注入结束 ---
 
                     await module.initialize(initialConfig, dependencies);

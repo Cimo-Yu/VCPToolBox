@@ -13,6 +13,16 @@ rerank:「始」true「末」, //(可选)是否开启重排，使用0.6之类的
 tag_boost:「始」0.6「末」, //（可选）是否开启VCP浪潮拓扑RAG算法，可输入0.6+来启用浪潮V8测地线向量检测系统(非KNN)
 search_all_knowledge_bases:「始」false「末」, //是否搜索其它人的日记知识库。
 
+【🧊 冷知识库（TDBKnowledge）检索】用于检索 knowledge/ 目录下由 TriviumDB 索引的大规模百科/手册/私有资料库（低频变动知识），采用 BM25稀疏召回+向量稠密召回+图扩散 的混合检索，不经过日记/浪潮流程。两种触发方式（任一即可）：
+- 在 query 中使用 [知识库] 语法搜索全部冷知识库；或使用 [知识库:库名1,库名2] 指定具体库（库名即 knowledge/ 下的一级目录名）。
+- 或显式提供 knowledge_base:「始」库名1,库名2「末」 参数。
+冷知识库检索同样支持 k 与 rerank 参数；maid/folder/tag_boost/BM25/时间范围对冷知识库无效（会被忽略）。
+冷知识库调用示例:
+tool_name:「始」LightMemo「末」,
+query:「始」[知识库:VCP知识] VCP的元思考系统是如何工作的「末」,
+k:「始」5「末」,
+rerank:「始」rrf0.7「末」
+
 [===vcp_fold:0.65===]
 
 ## 2. 深度回忆插件 (DeepMemo)

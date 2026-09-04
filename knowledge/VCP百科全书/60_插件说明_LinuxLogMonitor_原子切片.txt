@@ -1,10 +1,10 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——LinuxLogMonitor（原子切片）
 
 一、插件身份
 - name: `LinuxLogMonitor`
 - displayName: `Linux 日志监控器`
-- pluginType: `asynchronous`
+- pluginType: `hybridservice`
 - 定位：事件驱动日志监控 + 异常检测 + Agent回调
 
 二、核心命令
@@ -35,5 +35,7 @@ command:「始」start「末」,
 hostId:「始」DE-server「末」,
 logPath:「始」/var/log/syslog「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): 依据 Plugin/LinuxLogMonitor/plugin-manifest.json.block（现为禁用态，v1.3.0）：pluginType为hybridservice而非asynchronous；命令start/stop/status/add_rule/list_rules/searchLog/lastErrors/logStats、规则类型regex/keyword/threshold、去重模式permanent/time-window/disabled、与LinuxShellExecutor共享SSHManager均与manifest一致。
 
 Tag: LinuxLogMonitor, 日志监控, 异常检测, add_rule, searchLog, lastErrors, logStats, SSH tail, 回调通知, 去重策略, 运维观测

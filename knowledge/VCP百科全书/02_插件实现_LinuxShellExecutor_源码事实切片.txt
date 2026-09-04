@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件实现——LinuxShellExecutor（源码事实切片）
 
 一、源码锚点
@@ -11,11 +11,11 @@
 - execute() 中 hostId 为必填；缺失时返回 discovery 资产列表引导。
 - hostId 不存在时不抛硬错，返回 status=discovery + 可用资产。
 - isLongRunning=true 时转后台任务：启动 monitorManager，返回 taskId/pid/logPath。
-- 对 tail -f / journalctl -f 提示改用 LinuxLogMonitor 进行流式监控。
+- tail -f / journalctl -f 会被自动识别为日志跟随指令，直接转入 LinuxLogMonitor 监控（返回 status=background）。
 
 三、安全与放行机制
-- 安全层按等级启停（standard/high/maximum）。
-- 默认走白名单校验；提供授权码时可触发 bypassWhitelist 逃逸路径。
+- 安全层按等级启停（basic/standard/high/maximum 四级，仅 maximum 启用 audit 审计）。
+- 默认走白名单校验；灰名单与未知命令凭管理员验证码（requireAdmin 与 authCode 匹配）授权执行，bypassWhitelist 逃逸路径已废弃。
 - 远程执行依赖共享 SSHManager，本地执行走 sandbox/直接执行分支。
 
 四、调用示例（源码对齐）
@@ -26,4 +26,5 @@ hostId:「始」local「末」,
 isLongRunning:「始」true「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: LinuxShellExecutor, LinuxShellExecutor.js, hostId必填, discovery, isLongRunning, taskId, whitelist, ASTAnalyzer, sandbox, 同步调用
+核对记录(2026-09-02): 已对照 Plugin/LinuxShellExecutor/plugin-manifest.json 与 LinuxShellExecutor.js——execute() 注释明确 bypassWhitelist 已废弃，现行机制为 requireAdmin/authCode 授权码（灰名单验证与未知命令逃逸分支）；安全层实为 basic/standard/high/maximum 四级；tail/journalctl 跟随指令经 _classifyLogFollowCommand 自动转入 LinuxLogMonitor。
+Tag: LinuxShellExecutor, LinuxShellExecutor.js, hostId必填, discovery, isLongRunning, taskId, whitelist, ASTAnalyzer, sandbox, requireAdmin授权码, hybridservice

@@ -1,15 +1,15 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——DeepWikiVCP（原子切片）
 
 一、插件身份
 - name: DeepWikiVCP
-- displayName: DeepWiki 抓取器
+- displayName: DeepWiki仓库文档检索
 - pluginType: synchronous
-- command: deepwiki_fetch
+- command: wiki_structure / wiki_content / wiki_ask
 
 二、核心能力
-- 一个同步插件，用于抓取 deepwiki.com 的内容并将其转换为 Markdown 格式。
-- 提供可调用命令：deepwiki_fetch。
+- 一个同步插件，通过 DeepWiki 官方 MCP API 获取任意 GitHub 公开仓库的 AI 生成文档（目录结构、完整内容、AI 智能问答、Deep Research 深度研究、多仓库联合查询）。
+- 提供可调用命令：wiki_structure（文档目录）、wiki_content（完整文档，超长自动截断）、wiki_ask（AI问答，支持 deep_research 与最多10仓库联合查询）。
 
 三、占位符与注入点
 - systemPromptPlaceholders: 无
@@ -25,7 +25,10 @@
 六、调用示例
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」DeepWikiVCP「末」,
+command:「始」wiki_structure「末」,
 url:「始」vuejs/vue「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: DeepWikiVCP, synchronous, 同步调用, deepwiki_fetch
+核对记录(2026-09-02): 依据 Plugin\DeepWikiVCP\plugin-manifest.json（v2.1.0）与 DeepWikiVCP.js 重写——旧命令 deepwiki_fetch 已不存在，现为 wiki_structure/wiki_content/wiki_ask 三命令，改走 DeepWiki 官方 MCP API；源码中省略 command 时默认按 wiki_structure 处理。
+
+Tag: DeepWikiVCP, synchronous, 同步调用, wiki_structure, wiki_content, wiki_ask

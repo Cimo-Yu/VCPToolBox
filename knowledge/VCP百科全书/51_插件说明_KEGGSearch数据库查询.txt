@@ -78,4 +78,6 @@ target_organisms:「始」["mmu", "rno"]「末」
 
 信源/出处：Plugin/KEGGSearch/plugin-manifest.json（181行），Plugin/KEGGSearch/KEGGSearch.mjs。
 
+核对记录(2026-09-02): 源码缺失——主仓 D:\vcp\VCPToolBox\Plugin\（92个插件目录）与分布式节点 D:\vcp\VCPChat\VCPDistributedServer\Plugin\ 均无 KEGGSearch，glob D:\vcp **\*KEGG* 仅命中知识库文件；30个命令、超时时间、占位符等断言均无法核实，现存文本仅作历史记录。
+
 Tag: KEGGSearch，KEGG，生物信息学，通路数据库，基因查询，化合物检索，药物相互作用，疾病数据库，酶分类，跨物种同源，标识符转换，生物数据

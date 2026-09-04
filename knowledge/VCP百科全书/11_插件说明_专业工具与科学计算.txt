@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] 插件说明——专业工具与科学计算插件组
 
 一、插件组定位
@@ -7,8 +7,8 @@
 二、核心插件
 - SciCalculator：确定性数学内核（大数、微积分、符号推导）
 - PaperReader：长文档/PDF结构化解析与导航
-- ProjectAnalyst：大型代码库异步扫描与架构报告
-- NCBIDatasets / KEGGSearch / PubMedSearch：生命科学专业检索
+- DeepWikiVCP：GitHub仓库AI文档获取与架构理解
+- NCBIDatasets：生命科学专业检索（基因组、基因与物种信息）
 - CodeSearcher（含Rust加速变体）：项目级代码语义定位
 
 三、适用场景
@@ -27,5 +27,7 @@
 - 文献结论区分“事实”与“作者观点”
 - 项目建议按“低风险→高收益”排序执行
 
-关联节点：SciCalculator, PaperReader, ProjectAnalyst, NCBI, KEGG, PubMed
-Tag: 专业工具插件, 科学计算, SciCalculator, PaperReader, ProjectAnalyst, 生信检索, NCBI, KEGG, PubMed, 代码分析, 确定性计算
+核对记录(2026-09-02): ProjectAnalyst、KEGGSearch、PubMedSearch 在 VCPToolBox\Plugin 与 VCPChat\VCPDistributedServer\Plugin 下均不存在，已替换为实际存在的 DeepWikiVCP（GitHub仓库AI文档），生信检索统一收敛到 NCBIDatasets（manifest：NCBI Datasets v2 API，检索基因组/基因/物种信息，当前为禁用态）；SciCalculator、PaperReader、CodeSearcher 经 manifest 核对均存在。
+
+关联节点：SciCalculator, PaperReader, DeepWikiVCP, NCBIDatasets
+Tag: 专业工具插件, 科学计算, SciCalculator, PaperReader, DeepWikiVCP, NCBIDatasets, 生信检索, 代码分析, 确定性计算

@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP记忆系统——Magi三贤者辩论系统与AgentDream梦系统
 
 一、Magi三贤者系统
@@ -10,10 +10,10 @@
 3. 卡斯帕(CASPER)：公正平衡的化身，负责权衡理性与感性，做出最终综合裁决。代表女性思维。
 
 工作机制：
-- 通过MagiAgent插件触发三贤者会议
-- 同一问题同时送给三个独立的AI实例
-- 每个实例带有不同的角色提示词（理性/感性/平衡）
-- 三者输出经过对比整合后返回最终决策
+- 通过MagiAgent插件触发三贤者会议（现行命令：start_meeting / query_meeting，hybridservice/direct）
+- 会议按轮次推进（rounds，默认5轮），每轮三个独立AI实例（各自角色提示词）依次发言、互相可见
+- 讨论结束后由独立总结模型（Magi_Summarize_Model）对比整合三方输出，返回最终决策（Magi会议报告）
+- 支持异步：提交后返回会议ID，结果经 {{VCP_ASYNC_RESULT::MagiAgent::会议ID}} 占位符回填
 - 多视角辩论降低单一LLM幻觉，提升逻辑严密性
 
 适用场景：
@@ -23,6 +23,7 @@
 - 重大技术方案选型和风险评估
 
 二、AgentDream梦系统
+现状：AgentDream 当前以 `plugin-manifest.json.block` 形式分发，默认关闭、按需启用（代码完整保留：AgentDream.js + DreamWaveEngine.js）。
 AgentDream为AI Agent构建了独立于日常对话的"梦境空间"，赋予AI真正的内省与自我进化能力。
 
 核心能力：
@@ -39,7 +40,7 @@ AgentDream为AI Agent构建了独立于日常对话的"梦境空间"，赋予AI�
 4. 梦境叙事生成：AI以意识流风格将联想到的记忆片段串联成连贯叙事
 5. 感悟提炼：从梦境叙事中提取新的认知、洞察和跨领域关联
 6. 记忆重构提案：AI提出记忆合并/删除/补充的建议
-7. 管理员审批：人类审批重构提案
+7. 管理员审批：人类审批重构提案（梦中操作先记录为"待审批"日志；审批执行接口为二期面板预留，当前返回 not_implemented）
 8. 持久化：审批通过的感悟和重构操作落库
 
 梦系统的价值：
@@ -49,24 +50,27 @@ AgentDream为AI Agent构建了独立于日常对话的"梦境空间"，赋予AI�
 - Agent个性化和"灵魂深度"的关键来源
 
 三、DeepMemo深度回忆插件
-基于Rust核心的聊天历史检索系统，采用Tantivy全文检索+Reranker双阶段架构。
+基于Rust核心的聊天历史检索系统，采用Tantivy全文检索+Reranker双阶段架构。注意：DeepMemo 不由主仓 Plugin/ 目录承载，由 VCPChat/分布式工具节点提供（VCPDistributedServer 的 direct 模块插件），用于检索 VCPChat 历史聊天数据库。
 - Tantivy：Rust实现的全文检索引擎（类似Elasticsearch）
 - Reranker：二阶段重排序，提升召回精度
 - 支持跨角色的多轮历史记忆精准召回
 - 服务于当前决策逻辑的历史上下文定位
 
 四、LightMemo轻量回忆插件
-基于BM25+RAG+Rerank的知识库检索系统。
-- BM25：经典信息检索算法，基于词频的快速召回
-- RAG：向量语义检索扩展
-- Rerank：二阶段重排序精化
-- 特点：低延迟精确关键词匹配，适合快速定位
+主仓现行的主动检索插件，热日记与TDB冷知识库统一入口。
+- rivermemo（默认）：RiverMemo Topology V3 固定生产管线（纯拓扑统一动力学）
+- tagmemo：TagMemo V9.1 向量增强（tag_boost 支持 + 后缀开启势能场）
+- knn：纯向量/BM25混合检索；另有 BM25 召回分支与 Rerank（纯精排或 RRF 融合）二阶段重排
+- 特点：低延迟主动检索，支持 maid/folder 作用域过滤与时间范围语法
 
-五、MeshMemo多维条件聚合查询
-支持多维条件的复杂记忆聚合查询，适合需要同时满足多个约束的记忆检索场景。
+五、MeshMemo多维条件聚合查询（已移除）
+MeshMemo 已不再作为独立插件存在。其多条件过滤和多范围搜索能力已并入 LightMemo 等现行检索入口（docs/VCP记忆管理系统.md §7.4）；旧配置应迁移为 LightMemo 的 maid/folder/时间范围/全库搜索参数或日记占位符聚合检索。
 
-六、AIMemo终极模式
-AI军团并发遍历亿Token级记忆库。适合海量数据场景的暴力搜索模式。
+六、AIMemo记忆聚合模式
+AIMemo 不是独立插件，而是 RAG 修饰符 `::AIMemo` / `::AIMemo+`（由 RAGDiaryPlugin/AIMemoHandler.js 实现），需系统提示词中的 `[[AIMemo=True]]` 许可开关，未授权时回退标准RAG。
+- `::AIMemo`：LLM 通读整本日记内容（必要时分批），适合中小型日记本
+- `::AIMemo+`：先执行RAG后缀管线，再把约5×K候选交给模型总结，适合大型日记本或聚合检索
 
 关联节点：MagiAgent插件, AgentDream.md, DeepMemo, LightMemo, MeshMemo, Tantivy, Reranker
+核对记录(2026-09-02): MagiAgent 活跃（hybridservice/direct，Plugin/MagiAgent/，三贤者 MELCHIOR/麦基西德、BALTHASAR/巴尔塔萨、CASPER/卡斯帕不变），实际流程为默认5轮多角色依次发言+独立总结模型（Magi_Summarize_Model）整合，非单轮三方并行后简单合并。AgentDream 现为 plugin-manifest.json.block 禁用态（默认关闭、代码完整、按需启用，docs/VCP记忆管理系统.md §11）；触发窗口由 DREAM_TIME_WINDOW_START/END（默认凌晨1-8点）、DREAM_FREQUENCY_HOURS、DREAM_PROBABILITY 配置；记忆种子来自近/中期记忆树（DreamWaveEngine），经VCPInfo广播（AGENT_DREAM_*事件），梦中操作记录待审批、审批执行为二期面板预留（AgentDream.js 返回 not_implemented）。DeepMemo 由 VCPChat/分布式节点提供（主仓 Plugin/DeepMemo 无 manifest）；LightMemo 现默认 rivermemo 内核（Topology V3），可选 tagmemo(V9.1)/knn；MeshMemo 独立插件已移除、能力并入 LightMemo；AIMemo 为 RAG 修饰符（::AIMemo/::AIMemo+，需 [[AIMemo=True]] 许可），非独立插件。
 Tag: Magi三贤者, AgentDream梦系统, 内省进化, 记忆回溯, 意识流叙事, 自主记忆重构, DeepMemo, LightMemo, MeshMemo, AIMemo, Tantivy, BM25, Reranker, 管理员审批, 认知闭环

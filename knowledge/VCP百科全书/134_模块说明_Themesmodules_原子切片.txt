@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] Themesmodules - 主题模块
 
 一、模块基本信息
@@ -44,14 +44,14 @@ Themesmodules是VCPChat的主题管理模块，提供主题选择、预览、应
 - themes-module.css：样式定义
 
 五、关键API接口
-1. window.electronAPI.getThemes()
+1. api（window.utilityAPI || window.electronAPI）.getThemes()
    - 获取主题列表
    - 返回：主题数组
 
-2. window.electronAPI.applyTheme(themeName)
+2. api.applyTheme(themeName)
    - 应用主题
 
-3. window.electronAPI.getWallpaperThumbnail(path)
+3. api.getWallpaperThumbnail(path)
    - 获取壁纸缩略图
 
 4. 主题数据结构：

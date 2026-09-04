@@ -1,18 +1,18 @@
-[2026-03-03] - Agent-A
+[2026-09-02] - Agent-A
 [VCP百科全书] Flowlock - 心流锁控制器
 
 一、插件基本信息
 1. 插件名称：Flowlock / 心流锁控制器
-2. 插件类型：同步插件 (synchronous)
-3. 版本号：2.3.0
-4. 所属模块：VCPDistributedServer/Plugin
+2. 插件类型：原为同步插件 (synchronous)，现已改为VCPChat前端模块，不再是插件
+3. 版本号：原插件版本2.3.0已随旧分布式插件移除，现无独立版本号
+4. 所属模块：VCPChat/Flowlockmodules（原VCPDistributedServer/Plugin/Flowlock目录已删除）
 5. 功能一句话总结：允许AI控制心流锁功能，支持启动停止、提示词设置、输入框管理
 
 二、功能定位
-Flowlock是一个心流锁控制插件，允许AI像人类用户一样控制心流锁功能。心流锁是一个UI组件，用于启动自动续写循环，帮助用户进入创意写作的"心流"状态。插件支持启动/停止心流锁、设置提示词、管理输入框内容、查询状态等操作。适用于需要自动续写、创意写作辅助、长文本生成等场景。
+Flowlock是VCPChat前端的心流锁模块（Flowlockmodules），允许AI像人类用户一样控制心流锁功能。AI在最终回复中用[[Flowlock::Start]]、[[Flowlock::Stop]]、[[Flowlock::NextHeartbeat::秒数]]、[[Flowlock::NextPrompt]]等内嵌协议标记控制自主循环；下述9个插件命令作为兼容入口保留，经前端Flowlock命令通道供外部系统或人工工具直接控制。心流锁是一个UI组件，用于启动自动续写循环，帮助用户进入创意写作的"心流"状态。模块支持启动/停止心流锁、设置提示词、管理输入框内容、查询状态等操作。适用于需要自动续写、创意写作辅助、长文本生成等场景。
 
 三、配置参数
-本插件无config.env配置文件，所有参数通过命令行参数传递。
+本模块无config.env配置文件，续写延迟等参数来自VCPChat设置（如flowlockContinueDelay，默认5秒），命令参数通过Flowlock命令通道传入。
 
 四、调用命令列表
 
@@ -35,6 +35,7 @@ Flowlock是一个心流锁控制插件，允许AI像人类用户一样控制心�
    功能描述：停止当前正在运行的心流锁，UI发光效果消失，自动续写循环停止
    参数列表：
    - command (string, 必需): 固定为「始」stop「末」
+   - agentId (string, 可选): 要停止的Agent ID，缺省时停止当前选中的Agent
    完整调用格式：
    <<<[TOOL_REQUEST]>>>
    tool_name:「始」Flowlock「末」,
@@ -43,7 +44,7 @@ Flowlock是一个心流锁控制插件，允许AI像人类用户一样控制心�
    返回值说明：返回停止成功确认
 
 3. promptee - 设置提示词
-   功能描述：设置下一次自动续写时使用的提示词，提示词追加到输入框现有内容后面
+   功能描述：为指定Agent设置下一次自动续写（心跳）使用的提示词，覆盖默认心跳提示词（需该Agent已有活跃Session）
    参数列表：
    - command (string, 必需): 固定为「始」promptee「末」
    - prompt (string, 必需): 要设置的提示词内容
@@ -55,8 +56,8 @@ Flowlock是一个心流锁控制插件，允许AI像人类用户一样控制心�
    <<<[END_TOOL_REQUEST]>>>
    返回值说明：返回提示词设置成功确认
 
-4. prompter - 指定外部数据源
-   功能描述：指定外部数据源，从该源获取内容作为下一次续写的提示词
+4. prompter - 标注外部数据源
+   功能描述：在输入框末尾追加来源标记（如「始」[来自: external_api_endpoint]「末」）以标注数据来源，当前实现不自动拉取外部内容
    参数列表：
    - command (string, 必需): 固定为「始」prompter「末」
    - promptSource (string, 必需): 数据源的标识或路径
@@ -118,8 +119,8 @@ Flowlock是一个心流锁控制插件，允许AI像人类用户一样控制心�
    <<<[END_TOOL_REQUEST]>>>
    返回值说明：返回JSON格式的响应
    {
-     "status": "success",
-     "message": "输入框当前内容为: \"文本内容\"",
+     "command": "get",
+     "success": true,
      "content": "文本内容"
    }
 
@@ -134,9 +135,9 @@ Flowlock是一个心流锁控制插件，允许AI像人类用户一样控制心�
    <<<[END_TOOL_REQUEST]>>>
    返回值说明：返回JSON格式的状态信息
    {
-     "status": "success",
-     "message": "心流锁已启用 (Agent: agent_id, Topic: topic_id, 处理中: 否)",
-     "flowlockStatus": {
+     "command": "status",
+     "success": true,
+     "status": {
        "isActive": true,
        "isProcessing": false,
        "agentId": "agent_id",
@@ -192,12 +193,12 @@ command:「始」stop「末」
 1. 心流锁启动：
    - 必须同时提供agentId和topicId才能启动
    - 启动后UI会显示发光效果，表示心流锁已激活
-   - 同一时间只能有一个心流锁处于活跃状态
+   - 每个Agent同一时间只有一个心流锁Session，多个Agent可各自并发运行；对同一Agent重复start会先停止旧Session
 
 2. 提示词管理：
-   - promptee设置的提示词会追加到输入框现有内容后面
-   - 如需完全替换，先使用clear清空，再使用promptee设置
-   - prompter用于从外部数据源获取提示词，需要数据源支持
+   - promptee为活跃Session设置下一轮心跳提示词，覆盖默认提示词
+   - prompter当前只在输入框末尾追加来源标记，不自动拉取外部内容
+   - clear只清空输入框内容，不影响已设置的下一轮心跳提示词
 
 3. 输入框操作：
    - edit命令只替换第一个匹配项
@@ -217,5 +218,7 @@ command:「始」stop「末」
 七、关联插件
 - FileOperator：文件操作，可用于保存续写结果
 - DailyNote：日记管理，可用于记录创意写作过程
+
+核对记录(2026-09-02): 原VCPChat/VCPDistributedServer/Plugin/Flowlock分布式插件已删除（两仓glob无变体），心流锁现实现为VCPChat前端模块Flowlockmodules（flowlock.js/flowlock-protocol.js/flowlock-integration.js，见VCPChat/Flowlockmodules/README.md），AI经[[Flowlock::Start]]等内嵌协议标记控制自主循环；本文所列start/stop/promptee/prompter/clear/remove/edit/get/status九命令经前端Flowlock命令通道保留（VCPChat/modules/renderer/mainChatFlowlockOwner.js），promptee/prompter语义、status/get响应格式与多Session约束已按现源码修正。
 
 Tag: 心流锁, 自动续写, 创意写作, 提示词管理, 输入框控制, 写作辅助

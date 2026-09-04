@@ -8,11 +8,11 @@
 
 安装步骤：
 第一步，克隆仓库：git clone https://github.com/lioensky/VCPChat.git，然后cd VCPChat。
-第二步，安装Node.js依赖：npm install。
+第二步，安装Node.js依赖：npm install，随后执行npx electron-rebuild -f --only better-sqlite3,node-pty,sharp重建原生模块。
 第三步，安装Python依赖（用于音频引擎）：pip install -r requirements.txt。
 第四步，下载壁纸包（避免元素窗口异常）：从GitHub Releases页面下载。
 第五步，下载音频解码包：从GitHub Releases的解码器core标签页下载。
-第六步，启动应用：npm start。也可使用run_silent.vbs实现无控制台窗口的静默启动。
+第六步，启动应用：npm start。也可使用启动Vchat.vbs实现无控制台窗口的静默启动。
 
 连接VCP后端配置：启动VCPChat后，进入全局设置，配置以下关键参数：
 服务器地址：http://你的服务器IP:6015/v1/chat/completions（HTTPS则对应https://）。
@@ -37,6 +37,6 @@
 
 反思与洞察：VCPChat的安装有几个容易被忽略的步骤：壁纸包、音频解码包、设置用户名。这三项是新用户最常遇到问题的地方，需要在引导文档中重点强调。
 
-信源/出处：README For VCPChat.md，VCPChat GitHub仓库。
+信源/出处：VCPChat README.md，VCPChat GitHub仓库。
 
 Tag: VCPChat，安装部署，Electron，连接配置，服务器地址，用户名设置，壁纸包，音频解码包，快速上手

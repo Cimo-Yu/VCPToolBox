@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——ArxivDailyPapers（原子切片）
 
 一、插件身份
@@ -18,7 +18,7 @@
 - 优先核对插件目录内的 plugin-manifest.json(.block) 与 config.env.example 必填项。
 - 外部API类插件重点检查：密钥、端点、超时、代理与速率限制。
 - 关键配置参数:
-  * ARXIV_SEARCH_TERMS: 搜索词(默认: "Large Language Models" OR "Retrieval Augmented Generation")
+  * ARXIV_SEARCH_TERMS: 搜索词(默认: all:("Large Language Models" OR "Retrieval Augmented Generation"))
   * ARXIV_MAX_RESULTS: 最大结果数(默认: 100)
   * ARXIV_DAYS_RANGE: 查询天数范围(默认: 1)
   * ARXIV_DEBUG_MODE: 调试模式(默认: false)
@@ -29,5 +29,7 @@
 
 六、调用示例
 触发示例：在系统提示词中引用该插件占位符，等待周期刷新后自动注入。
+
+核对记录(2026-09-02): 插件事实已与 Plugin\ArxivDailyPapers\plugin-manifest.json.block 逐项核对一致（static、占位符{{ArxivDailyPapersData}}、每30分钟刷新、四个 ARXIV_* 配置项及默认值）；该插件当前为禁用态（.json.block）。
 
 Tag: ArxivDailyPapers, static, 静态注入, 检索, 信息获取, ArxivDailyPapersData

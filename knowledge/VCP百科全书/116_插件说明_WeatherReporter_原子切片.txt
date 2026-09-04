@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——WeatherReporter（原子切片）
 
 一、插件身份
@@ -15,7 +15,7 @@
 三、配置重点
 - 根配置：`VarCity`、`WeatherKey`、`WeatherUrl`
 - 插件配置：`forecastDays`、`hourlyForecastInterval`、`hourlyForecastCount`
-- 刷新频率由manifest cron控制（README说明默认8小时）
+- 刷新频率由manifest cron控制（refreshIntervalCron: "0 */6 * * *"，即每6小时；README中"默认8小时"说法已过时）
 
 四、工程注意
 - 城市缓存与天气缓存要保持同步，避免脏数据回放。

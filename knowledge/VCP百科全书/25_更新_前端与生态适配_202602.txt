@@ -30,4 +30,6 @@ Grok 1.0模型适配：新增了对xAI公司Grok 1.0模型的适配支持，包�
 
 信源/出处：VCPToolBox 2.19至今更新记录，约60个提交的ChangeLog。
 
+核对记录(2026-09-02): OpenWebUI油猴脚本现存于OpenWebUISub/目录（HTML自动渲染脚本已迭代至v0.5.5，openwebui_html_auto_render.md记录v0.4.0起改为Action按钮触发渲染）；管理面板占位符查看器现存于AdminPanel-Vue/src/views/PlaceholderViewer/（对应2026-02-21提交128cd02，面板已重构为AdminPanel-Vue）；LightMemo现行manifest仅SearchRAG/TagMemoAB两命令，音乐检索以query内嵌[音乐检索]标记触发（Plugin/LightMemo/LightMemo.js，命中后跳过BM25关键词阶段）。"Grok 1.0模型适配"在现行主仓源码与更新日志中均无对应记录：routes/无Grok专用逻辑，Grok现按OpenAI兼容端点接入（config.env.example含GrokModel/SarModel2=grok-3-beta示例），历史上游兼容针对grok-4的think字段。
+
 Tag: OpenWebUI，HTML气泡渲染，LightMemo，语义音乐检索，管理面板，占位符查看器，Grok，模型适配，前端优化，生态扩展

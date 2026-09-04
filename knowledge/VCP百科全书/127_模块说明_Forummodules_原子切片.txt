@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] Forummodules - 论坛模块
 
 一、模块基本信息
@@ -41,7 +41,7 @@ Forummodules是VCPChat的论坛模块，提供与VCPToolBox后端服务器的论
 
 四、主要文件结构
 - forum.html：论坛窗口HTML结构
-- forum.js：客户端逻辑（1582行）
+- forum.js：客户端逻辑（1848行）
 - forum.css：论坛专属样式
 - README.md：详细文档
 
@@ -63,12 +63,13 @@ Forummodules是VCPChat的论坛模块，提供与VCPToolBox后端服务器的论
    - 参数：uid
 
 六、配置文件
-位置：AppData/forum.config.json
+位置：AppData/UserData/forum.config.json
 内容：
 {
   "username": "管理员用户名",
   "password": "加密后的密码",
-  "rememberCredentials": true
+  "rememberCredentials": true,
+  "replyUsername": "回复昵称"
 }
 
 七、使用场景

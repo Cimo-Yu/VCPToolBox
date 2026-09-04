@@ -1,15 +1,15 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——GeminiImageGen（原子切片）
 
 一、插件身份
 - name: GeminiImageGen
 - displayName: Gemini 图像生成与编辑
 - pluginType: synchronous
-- command: GeminiGenerateImage, GeminiEditImage
+- command: generate（生成）, edit（编辑）——manifest 标识符为 GeminiGenerateImage / GeminiEditImage，实际传参为 generate / edit
 
 二、核心能力
 - 使用 Google Gemini Flash Preview 模型进行高级的图像生成和编辑。
-- 提供可调用命令：GeminiGenerateImage、GeminiEditImage。
+- 提供可调用命令：generate（文生图）、edit（图生图/编辑，支持 image_url 及 image_url_1~3 多图）。
 
 三、占位符与注入点
 - systemPromptPlaceholders: 无
@@ -25,7 +25,10 @@
 六、调用示例
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」GeminiImageGen「末」,
-command:「始」GeminiGenerateImage「末」
+command:「始」generate「末」,
+prompt:「始」(必需) 用于图片生成的详细英文提示词。「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: GeminiImageGen, synchronous, 同步调用, 多媒体, GeminiGenerateImage, GeminiEditImage
+核对记录(2026-09-02): 经源码核对（Plugin/GeminiImageGen/GeminiImageGen.mjs 的 command switch 与 plugin-manifest.json 内示例），实际命令值为 generate / edit；GeminiGenerateImage / GeminiEditImage 仅为 manifest commandIdentifier。
+
+Tag: GeminiImageGen, synchronous, 同步调用, 多媒体, generate, edit

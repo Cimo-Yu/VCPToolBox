@@ -1,9 +1,9 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] 插件说明——FileOperator（ServerFileOperator）使用规范
 
 一、插件身份与调用名
 - manifest 名称：`ServerFileOperator`
-- AI 调用名：`FileOperator`
+- AI 调用名：`ServerFileOperator`
 - 类型：`synchronous`（stdio）
 - 入口：`node FileOperator.js`
 
@@ -21,32 +21,32 @@
 四、调用示例（按manifest）
 读取文件：
 <<<[TOOL_REQUEST]>>>
-tool_name:「始」FileOperator「末」,
+tool_name:「始」ServerFileOperator「末」,
 command:「始」ReadFile「末」,
 filePath:「始」D:\\github\\VCP\\VCPToolBox-fork\\README.md「末」
 <<<[END_TOOL_REQUEST]>>>
 
 差异替换：
 <<<[TOOL_REQUEST]>>>
-tool_name:「始」FileOperator「末」,
+tool_name:「始」ServerFileOperator「末」,
 command:「始」ApplyDiff「末」,
 filePath:「始」D:\\github\\VCP\\VCPToolBox-fork\\dailynote\\demo.txt「末」,
-searchString:「始」旧文本「末」,
-replaceString:「始」新文本「末」
+target:「始」旧文本「末」,
+replace:「始」新文本「末」
 <<<[END_TOOL_REQUEST]>>>
 
 目录搜索：
 <<<[TOOL_REQUEST]>>>
-tool_name:「始」FileOperator「末」,
+tool_name:「始」ServerFileOperator「末」,
 command:「始」SearchFiles「末」,
 searchPath:「始」D:\\github\\VCP\\VCPToolBox-fork\\Plugin「末」,
 pattern:「始」plugin-manifest.json「末」
 <<<[END_TOOL_REQUEST]>>>
 
 五、常见错误与修复
-- 未找到插件：调用名错（应为`FileOperator`）或插件未加载
+- 未找到插件：调用名错（应为`ServerFileOperator`）或插件未加载
 - 路径拒绝：不在`ALLOWED_DIRECTORIES`内
-- ApplyDiff失败：`searchString`未命中原文
+- ApplyDiff失败：`target`未命中原文（旧参数名searchString/replaceString仍兼容）
 - DownloadFile失败：URL无效或目标目录不可写
 - UpdateHistory失败：`target/replace`参数类型错误（需字符串）
 
@@ -54,5 +54,7 @@ pattern:「始」plugin-manifest.json「末」
 主体词元：`FileOperator`, `ServerFileOperator`, `文件操作器`
 动作词元：`ReadFile`, `WriteFile`, `ApplyDiff`, `SearchFiles`, `DownloadFile`
 故障词元：`路径权限`, `未命中替换`, `参数类型错误`, `插件未加载`
+
+核对记录(2026-09-02): 依据 Plugin/FileOperator/plugin-manifest.json 与 Plugin.js 加载逻辑（工具按manifest.name注册与解析）核对，AI调用名应为`ServerFileOperator`；manifest调用示例中出现的tool_name「FileOperator」是分布式同名插件的旧写法。ApplyDiff/UpdateHistory现推荐target/replace参数（旧名searchString/replaceString保持兼容）。
 
 Tag: FileOperator, ServerFileOperator, 文件操作, ReadFile, WriteFile, ApplyDiff, SearchFiles, DownloadFile, 路径白名单, ALLOWED_DIRECTORIES, 参数校验, 差异替换失败, 插件调用规范

@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——ProjectAnalyst（原子切片）
 
 一、插件身份
@@ -44,4 +44,5 @@ command:「始」QueryProgress「末」,
 analysis_id:「始」analysis-123「末」
 <<<[END_TOOL_REQUEST]>>>
 
+核对记录(2026-09-02): 源码缺失——主仓 D:\vcp\VCPToolBox\Plugin\ 与分布式 D:\vcp\VCPChat\VCPDistributedServer\Plugin\ 均无 ProjectAnalyst 目录；glob Plugin/*Project*/* 与 **/*ProjectAnalyst* 在两仓无插件命中（仅 node_modules 无关结果），两仓全部 plugin-manifest(.block) 中亦无该插件名。本文断言无法证实，保留原状备查。
 Tag: ProjectAnalyst, synchronous, 同步调用, 多媒体, AnalyzeProject, QueryAnalysis, QueryProgress

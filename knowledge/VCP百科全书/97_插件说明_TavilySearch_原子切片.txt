@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——TavilySearch（原子切片）
 
 一、插件身份
@@ -30,15 +30,15 @@ command:「始」TavilySearch「末」,
 query:「始」machine learning latest research「末」
 <<<[END_TOOL_REQUEST]>>>
 
-高级搜索（包含原始内容和图片）:
+高级搜索（包含原始内容）:
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」TavilySearch「末」,
 command:「始」TavilySearch「末」,
 query:「始」artificial intelligence trends「末」,
 topic:「始」general「末」,
 max_results:「始」10「末」,
-include_raw_content:「始」true「末」,
-include_images:「始」true「末」
+include_raw_content:「始」markdown「末」,
+search_depth:「始」advanced「末」
 <<<[END_TOOL_REQUEST]>>>
 
 Tag: TavilySearch, synchronous, 同步调用, 检索, 信息获取

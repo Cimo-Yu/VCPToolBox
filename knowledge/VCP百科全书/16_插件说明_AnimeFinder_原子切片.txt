@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——AnimeFinder（原子切片）
 
 一、插件身份
@@ -28,5 +28,7 @@ tool_name:「始」AnimeFinder「末」,
 command:「始」findAnimeByUrl「末」,
 imageUrl:「始」https://images.plurk.com/32B15UXxymfSMwKGTObY5e.jpg「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): 插件事实已与 Plugin\AnimeFinder\plugin-manifest.json.block 逐项核对一致（displayName 以图找番、synchronous、命令 findAnimeByUrl、imageUrl 参数支持 http/https/file 协议）；该插件当前为禁用态（.json.block）。
 
 Tag: AnimeFinder, synchronous, 同步调用, findAnimeByUrl

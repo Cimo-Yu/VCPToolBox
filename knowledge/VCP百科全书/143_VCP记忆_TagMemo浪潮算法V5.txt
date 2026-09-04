@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP记忆系统——TagMemo浪潮算法V5深度技术文档
 
 一、核心哲学
@@ -7,15 +7,15 @@
 核心命题：向量是单程票（多对一映射不可逆，丢失措辞/语序/逻辑链条）、投影碰撞是常态（不相关概念可能投影到相同位置）、知识不等于记忆（知识是图书馆主题聚类，记忆是日记时序链条+因果网络）。TagMemo本质：不是优化向量检索，是构建思维的版本控制系统（Git for Thoughts）。
 
 二、四大核心模块
-1. EPA模块（Embedding Projection Analysis）：逻辑深度(L)投影熵值、世界观门控、跨域共振(R)
-2. 残差金字塔(Residual Pyramid)：Gram-Schmidt正交化投影，多级剥离直至90%能量解释
+1. EPA模块（Embedding Projection Analysis）：逻辑深度(L)投影熵值、世界观门控、跨域共振(R)（现行 EPAModule.js，Rust侧含SVD加权PCA基底）
+2. 残差金字塔(Residual Pyramid)：Gram-Schmidt正交化投影，多级剥离直至90%能量解释（现行 ResidualPyramid.js）
 3. 知识库管理器(KnowledgeBaseManager)：核心标签虚拟补全+权重豁免、共现矩阵关联词拉回、去重阈值0.88
-4. 偏振语义舵(PSR)：犹豫度检测+辩证对冲+逻辑分段(V5)
-5. ResultDeduplicator(V4新增)：SVD主题建模+残差选择去重
+4. 偏振语义舵(PSR)：犹豫度检测+辩证对冲+逻辑分段(V5)（该模块命名已退役，V9.1由EPA/世界观门控与Spike路由承接其职能）
+5. ResultDeduplicator(V4新增)：现行为硬去重（chunkId/规范化正文）+语义余弦近重复去重（阈值0.92/0.97），"SVD主题建模"阶段已退役
 
 三、V5突破：霰弹枪查询+相控阵雷达去重
-霰弹枪查询：将拆解后的语义片段像霰弹一样打向知识库，实现饱和式打捞
-相控阵去重：通过SVD巡航提取潜在主题，利用残差选择保留最大新信息量
+霰弹枪查询：将拆解后的语义片段像霰弹一样打向知识库，实现饱和式打捞（现行 rag_params.json 保留 shotgunDecayFactor=0.8、shotgunHistorySegmentLimit=3）
+相控阵去重：通过SVD巡航提取潜在主题，利用残差选择保留最大新信息量（现行由 ResultDeduplicator 语义去重承接，见第二节注）
 
 四、动态Beta公式
 beta = sigma(L * log(1+R) - S * noise_penalty)
@@ -37,10 +37,12 @@ EPA调整：kAdj = round(L*3 + log(R)*2)，最终K = clamp(k_base+kAdj, 3, 10)
 K值乘数：手动写:1.5时，最终召回数 = round(dynamicK * 1.5)
 
 八、调参指南（rag_params.json实时调整无需重启）
-前端意图感知层：noise_penalty(0.05)语义宽度惩罚、tagWeightRange([0.05,0.45])标签能量比例、tagTruncationBase(0.6)保留前百分比
+前端意图感知层：noise_penalty(0.05)语义宽度惩罚、tagWeightRange([0.2,0.65])标签能量比例（原文0.05-0.45为旧值）、tagTruncationBase(0.6)保留前百分比
 后端语义引擎层：activationMultiplier([0.5,1.5])残差新颖特征、dynamicBoostRange([0.3,2.0])EPA二次修正、coreBoostRange([1.20,1.40])核心标签加权、deduplicationThreshold(0.88)去重阈值、techTagThreshold(0.08)技术噪音过滤
+（另有 resultDeduplication.semanticThreshold 0.92 / finalSemanticThreshold 0.97 用于结果级语义去重。）
 
 九、演化路径
-V1时间打捞→V2共现矩阵→V3 SVD残差金字塔→V4偏振语义舵→V5霰弹枪+相控阵
+V1时间打捞→V2共现矩阵→V3 SVD残差金字塔→V4偏振语义舵→V5霰弹枪+相控阵→V8测地线重排→V9.1单轨生产（现行，含V9.2曲线读出校准）→V10 alpha（TagMemoV10Engine，RiverMemo Topology V3 统一动力学伴生派生资产）
 
+核对记录(2026-09-02): 浪潮算法生产引擎现为 TagMemoEngine.js（V9.1单轨，对外版本标识 v9，曲线读出V9.2校准，docs/TagMemo_Wave_Algorithm_Deep_Dive.md），另存 TagMemoV10Engine.js（VERSION='v10_alpha'，ALGORITHM_VERSION='v10.alpha.1'）承载 RiverMemo Topology V3 的统一动力学派生资产；rag_params.json 的 tagMemoVersioning.activeVersion='v9'，仅支持 v9。算法实质延续：EPA/残差金字塔/动态Beta（RAGDiaryPlugin.js:845 β=σ(L·log(1+R)−S·noise_penalty)）/动态K（基础3/4/6 + kAdj=round(L·3+log1p(R)·2)，clamp 3-10，乘数:1.5语法）/核心标签补全/共现拉回/去重0.88/霰弹枪查询均现行有效；PSR"偏振语义舵"与"相控阵"模块命名已不在代码中，ResultDeduplicator 改为硬去重+语义去重(0.92/0.97)。正文V5时代描述保留为历史演化记录，参数以 rag_params.json 现值为准。
 Tag: TagMemo浪潮算法, V5, EPA模块, 残差金字塔, 偏振语义舵, 霰弹枪查询, 相控阵去重, 动态Beta, 核心标签, 语义引力, 向量重塑, RAG检索, K值计算, rag_params, 调参指南

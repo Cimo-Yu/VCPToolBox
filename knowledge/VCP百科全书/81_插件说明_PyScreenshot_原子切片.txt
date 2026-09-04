@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——PyScreenshot（原子切片）
 
 一、插件身份
@@ -27,4 +27,5 @@ tool_name:「始」PyScreenshot「末」,
 command:「始」TakeScreenshot「末」
 <<<[END_TOOL_REQUEST]>>>
 
+核对记录(2026-09-02): 源码缺失——主仓与分布式 Plugin\ 均无 PyScreenshot 目录；glob Plugin/*Screenshot*/* 与 **/*Screenshot* 在两仓无插件命中（VCPChat 仅命中 node_modules）。本文断言无法证实，保留原状备查。
 Tag: PyScreenshot, TakeScreenshot, full_analysis, direct_to_ai, capture_only, 屏幕截图, 视觉分析, 隐私模式, 本地保存, 多模态输入

@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——IMAPIndex（原子切片）
 
 一、插件身份
@@ -31,5 +31,7 @@
 `{{IMAPIndex}}`
 
 说明：该插件为 static 类型，通常由定时刷新触发，不走常规 TOOL_REQUEST 调用。
+
+核对记录(2026-09-02): 源码缺失——主仓Plugin\与VCPChat\VCPDistributedServer\Plugin\均无*IMAP*目录（glob变体*IMAP*/*Mail*仅命中VCPClawMail），仅docs/FILE_INVENTORY.md:273留存历史记录。
 
 Tag: IMAPIndex, 静态插件, 邮件索引, IMAP, 白名单拉取, EML转Markdown, vcp_index, refreshIntervalCron, plugin-manifest.json.block, 邮件RAG

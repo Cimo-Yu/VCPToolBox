@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——DailyNoteEditor（原子切片）
 
 一、插件身份
@@ -24,5 +24,7 @@
 
 六、调用示例
 触发示例：该目录为占位插件，待补充 manifest 后可生成标准调用示例。
+
+核对记录(2026-09-02): glob 全仓检索 VCPToolBox\Plugin\ 与 VCPChat\VCPDistributedServer\Plugin\（含 *DailyNote* 变体），均无 DailyNoteEditor 目录/manifest/源码；仅 Agent 提示词残留未定义占位符 {{VCPDailyNoteEditor}}（Plugin\Agent\Hornet.txt），docs\VCP记忆管理系统.md 将其列为历史称呼，日记编辑功能现由 DailyNote 的 update 命令承担。源码缺失，保留占位条目。
 
 Tag: DailyNoteEditor, placeholder, 目录占位, 记忆管理

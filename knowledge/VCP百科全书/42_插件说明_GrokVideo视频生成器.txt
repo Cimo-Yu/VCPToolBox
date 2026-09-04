@@ -55,4 +55,6 @@ video_url2:「始」第二个视频URL.mp4「末」
 
 信源/出处：Plugin/GrokVideo/plugin-manifest.json，Plugin/GrokVideo/video_handler.py。
 
+核对记录(2026-09-02): 经两仓核查未找到本插件——VCPToolBox\Plugin\ 与 VCPChat\VCPDistributedServer\Plugin\ 下均无GrokVideo/GrokVideoGen或任何*Grok*目录，Plugin/GrokVideo/plugin-manifest.json与video_handler.py（Grok版）不存在。主仓 Plugin\VideoGenerator\ 是另一插件（manifest name为Wan2.1VideoGen，基于SiliconFlow Wan2.1 API，pluginType为asynchronous，仅submit/query两命令的文生图生视频），并无视频续写/拼接功能，并非本插件更名或并入。本文按源码缺失保留，所载Grok命令、参数与配置不代表当前可用功能。
+
 Tag: GrokVideoGen，视频生成，Grok API，xAI，文生视频，图生视频，视频续写，视频拼接，多媒体创作，WebSocket推送

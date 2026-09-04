@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] RAGmodules - RAG观察者模块
 
 一、模块基本信息
@@ -41,8 +41,8 @@ RAGmodules是VCPChat的RAG观察者模块，提供实时监控和显示RAG检索
    - 连接状态显示
 
 四、主要文件结构
-- RAG_Observer.html：观察者界面（47KB）
-- rag-observer-config.js：配置和连接管理（8KB）
+- RAG_Observer.html：观察者界面（132KB）
+- rag-observer-config.js：配置和连接管理（14KB）
 
 五、关键API接口
 1. RAGObserverConfig类：

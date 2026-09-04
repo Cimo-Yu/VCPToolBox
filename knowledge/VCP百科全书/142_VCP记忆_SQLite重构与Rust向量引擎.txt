@@ -1,16 +1,17 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP记忆系统——SQLite重构与Rust底层数据抽象层
 
 一、核心变更
 VCP记忆系统从JSON文件存储迁移到SQLite数据库，保持100%向后兼容。整个底层数据抽象层完全使用Rust重写，性能巨幅提升数个数量级，彻底消除跨库通讯瓶颈和文件竞态风险。
 
-二、六张核心表
+二、六张核心表（历史设计）
 1. diaries：日记条目元信息（id, folder, filename, content_hash, created_at, updated_at）
 2. files：文件信息表
 3. chunks：知识块表（切片后的文本块+向量索引）
 4. diary_name_vectors：日记名称向量索引
 5. usage_stats：使用统计表（查询50x性能提升）
 6. failed_rebuilds：失败重建记录表
+（以上为旧 VectorDBManager 时代 SQLite 重构的表设计；现行 KnowledgeBaseManager 表结构见下文核对记录。）
 
 三、性能提升数据
 - 批量写入：10x提升
@@ -33,18 +34,15 @@ VCP记忆系统从JSON文件存储迁移到SQLite数据库，保持100%向后兼
 - 增量索引更新：支持在线添加/删除向量
 - 性能指标：10万Tag+1万Chunk召回0.7ms
 
-六、内存缓存架构（完全保留）
+六、内存缓存架构（旧VectorDBManager设计）
 - indices：向量索引缓存
 - chunkMaps：知识块映射缓存
 - lruCache：LRU最近最少使用缓存
 - searchCache：搜索结果缓存
-所有插件公共API不变，迁移对上层完全透明。
+所有插件公共API不变，迁移对上层完全透明。（现行 KnowledgeBaseManager 由 Rust Vexus 索引实例 + SQLite 异步恢复 + 写租约机制管理索引生命周期，不再沿用上述JS Map缓存架构。）
 
 七、Rust底层数据抽象层
-三大核心数据库的统一管理：
-- MemoChunk（记忆碎片）
-- Tag（标签向量）
-- KnowledgeChunk（知识块）
+现行形态：每个物理日记本独立 Vexus 向量索引 + 全局 Tag 向量索引 + SQLite 事实表（files/chunks/tags/file_tags），由 KnowledgeBaseManager 统一编排；历史版本曾以 MemoChunk（记忆碎片）、Tag（标签向量）、KnowledgeChunk（知识块）三大数据库描述该层。
 
 Rust重写带来的优势：
 - 告别竞态：彻底消除跨库通讯瓶颈
@@ -53,20 +51,25 @@ Rust重写带来的优势：
 - FFI桥接：通过Node.js原生模块(napi-rs)与JavaScript层通信
 
 八、rust-vexus-lite模块
-位于VCPToolBox-fork/rust-vexus-lite/目录，是VCP的Rust核心引擎。包含：
-- 向量索引管理（USearch封装）
-- SQLite数据库操作
-- 文本切片(TextChunker)引擎
+位于仓库根 rust-vexus-lite/ 目录（N-API 包名 vexus-lite，@napi-rs/cli 构建），是VCP的Rust核心引擎。包含：
+- 向量索引管理（USearch HNSW 封装，usearch crate 2.8）
+- SQLite数据库操作（rusqlite 异步索引恢复）
+- SVD基底（EPA加权PCA）与Gram-Schmidt正交化（残差金字塔数学核心）
 - Tag权重计算与管理
+- RiverMemo Topology V3 候选级并行计算（rayon）
 - 搜索缓存与LRU管理
+（文本切片 TextChunker 为仓库根的 JS 模块，不在 rust-vexus-lite 内。）
 
 九、三大自学习机制
 1. RAG寻道自学习：根据检索效果动态调整搜索参数
 2. Tag权重自学习：根据标签使用频率和效果动态调权
 3. 词元组捕网自学习：根据语义匹配结果优化词元组网络
+（现行对应物：TagMemo V9.1 全量自学习训练生成 EPA/pairwise 等派生资产（KnowledgeBaseManager.js:2078），RiverMemo agentConditioner 按Agent条件化场参数，词元组由 SemanticGroupEditor 管理；"三大自学习机制"命名已不见于代码。）
 
 十、流内RAG
 AI输出过程中实时刷新知识库，知识从静态快照变为活系统。AI在生成回复的同时，新的上下文信息实时索引，后续检索可以包含最新产生的知识。
+（现行实现为 DailyNote 单一FIFO队列写入 + KnowledgeBaseManager 防抖批处理索引；文件写入与索引更新之间存在短暂异步窗口，刚保存的内容不一定能被立即检索到。）
 
 关联节点：SQLite, USearch, Rust, HNSW, WAL模式, rust-vexus-lite, TextChunker
+核对记录(2026-09-02): 热记忆总控现以 KnowledgeBaseManager.js 为准（旧 VectorDBManager.js 已退役，docs/VCP记忆管理系统.md §15）；本篇"六张核心表/内存缓存四件套/性能倍数"描述的是旧 VectorDBManager SQLite 重构（docs/SQLITE_REFACTOR_SUMMARY.md，历史文档，现行文档不承诺固定性能倍数）。现行 SQLite schema 见 modules/knowledgeBase/schemaManager.js，核心表为 files、chunks、tags、file_tags、tag_index_baselines(+entries)、tag_intrinsic_residuals、tagmemo_artifacts、rivermemo_artifacts、v10_vector_metrics、v10_chunk_tag_geometry、v10_derived_asset_status、tag_intrinsic_residual_status、tag_pair_similarity(+status)、kv_store、migration_deleted_files/chunks 等18张，事实变化与派生失效由触发器保持同事务。Rust侧 rust-vexus-lite（usearch 2.8 + rusqlite bundled + napi-rs 2.16 + rayon）为 N-API 原生模块，KnowledgeBaseManager require('./rust-vexus-lite') 加载 VexusIndex；WAL 模式由 better-sqlite3/rusqlite 各连接启用（sqliteHealthManager 等）。USearch/HNSW/SIMD/mmap 特性描述仍有效，"10万Tag+1万Chunk召回0.7ms"为历史实测口径，不作为无条件承诺。
 Tag: SQLite重构, Rust数据层, USearch向量索引, HNSW算法, WAL并发, 性能提升, 内存缓存, rust-vexus-lite, 自学习机制, 流内RAG, SIMD加速, 零配置部署, ACID事务

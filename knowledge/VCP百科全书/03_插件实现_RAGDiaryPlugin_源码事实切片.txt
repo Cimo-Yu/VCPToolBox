@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件实现——RAGDiaryPlugin（源码事实切片）
 
 一、源码锚点
@@ -8,17 +8,18 @@
 - 关键增强: _calculateDynamicParams(), _truncateCoreTags(), _rerankDocuments()
 
 二、行为事实（代码级）
-- 支持查询缓存 queryResultCache（可开关、TTL、最大容量）。
+- 缓存统一由 CacheManager 管理（每实例可配 maxSize 与 TTL，带 LRU 淘汰），另设单轮请求级 requestCache（chunks/时间路径/全文档/相似度/tagBoost）。
 - TagMemo 路径会调用 applyTagBoost 感应 matchedTags，再做截断降噪。
-- Time-Aware 模式使用“语义路 + 时间路”平衡召回（代码注释为 60/40）。
+- Time-Aware 模式使用“语义路 + 时间路”双路召回（V5.4 默认 80/20，可用 ::Time0.1 / ::Time0.3 显式控制时间路比例）。
 - V4/V5 路径包含 historySegments 分段检索与 deduplicateResults 去重。
 
 三、排序与稳定性
 - rerank 配置齐全时调用外部 rerank；支持 token 截断与批次化。
-- 内置 rerank 熔断统计，连续失败会短期跳过 rerank。
+- 内置 rerank 熔断统计，1 分钟内失败批次满 5 次会短期跳过 rerank。
 - 最终排序优先 rerank_score，其次回退 score。
 
 四、触发示例（混合服务）
 触发示例：在系统提示词内放置 RAG 占位符，聊天流程进入 processMessages 后自动执行向量检索、TagBoost、去重与重排。
 
-Tag: RAGDiaryPlugin, RAGDiaryPlugin.js, processMessages, _processRAGPlaceholder, applyTagBoost, historySegments, deduplicateResults, rerank, 查询缓存, 混合服务
+核对记录(2026-09-02): 已对照 Plugin/RAGDiaryPlugin/plugin-manifest.json 与 RAGDiaryPlugin.js——queryResultCache 已不存在，现为 CacheManager 统一缓存（maxSize/TTL/LRU）+ 单轮 requestCache；Time 双路默认 80/20（V5.4，::Time 可显式控制），原 60/40 注释已失效；rerank 熔断为 1 分钟内失败批次≥5 次跳过。
+Tag: RAGDiaryPlugin, RAGDiaryPlugin.js, processMessages, _processRAGPlaceholder, applyTagBoost, historySegments, deduplicateResults, rerank, CacheManager, 混合服务

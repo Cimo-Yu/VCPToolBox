@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——MCPO（原子切片）
 
 一、插件身份
@@ -44,5 +44,7 @@ tool_name:「始」MCPO「末」,
 action:「始」manage_server「末」,
 server_action:「始」start「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): 源码缺失——glob 两仓 *MCP*/*MCPO* 仅命中本知识库文件与 node_modules，VCPToolBox\Plugin\ 与 VCPChat\VCPDistributedServer\Plugin\ 均无 MCPO 目录及 plugin-manifest，本文命令与行为暂无法证实，按存档保留。
 
 Tag: MCPO, synchronous, 同步调用, list_tools, call_tool, get_tool_info, manage_server, discover_tools, multi-command

@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——PowerShellExecutor（原子切片）
 
 一、插件身份
@@ -8,8 +8,9 @@
 - command: PowerShellExecutor
 
 二、核心能力
-- 一个允许AI执行PowerShell命令并返回其输出的插件。支持阻塞式和后台式执行。注意：后台式执行会打开一个新的PowerShell窗口，且不会将执行结果直接返回VCP，只会返回任务提交状态。
+- 一个允许AI执行PowerShell命令并返回其输出的插件。支持阻塞式和后台式执行并捕获输出结果（v1.1.0：PS7优先检测 + 路径感知智能安全检查 + BOM编码保护）。注意：后台式执行会打开一个用户可见的PowerShell窗口，输出经日志文件轮询采集后返回（最长约45秒），并非只返回任务提交状态。
 - 提供可调用命令：PowerShellExecutor。
+- 参数：command（必需，PowerShell内容，源码另支持command1、command2...串行）、executionType（blocking/background，默认blocking）、tool_password（可选，敏感指令需验证码授权）。
 
 三、占位符与注入点
 - systemPromptPlaceholders: 无
@@ -27,17 +28,16 @@
 1. blocking - 阻塞式执行
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」ServerPowerShellExecutor「末」,
-command:「始」PowerShellExecutor「末」,
-mode:「始」blocking「末」,
-script:「始」Get-Process「末」
+command:「始」Get-Process「末」,
+executionType:「始」blocking「末」
 <<<[END_TOOL_REQUEST]>>>
 
 2. background - 后台式执行
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」ServerPowerShellExecutor「末」,
-command:「始」PowerShellExecutor「末」,
-mode:「始」background「末」,
-script:「始」Start-Service ServiceName「末」
+command:「始」Start-Service ServiceName「末」,
+executionType:「始」background「末」
 <<<[END_TOOL_REQUEST]>>>
 
+核对记录(2026-09-02): 主仓插件实名为 ServerPowerShellExecutor（目录 D:\vcp\VCPToolBox\Plugin\PowerShellExecutor\，manifest name 字段），v1.1.0；参数为 command/executionType/tool_password（源码另支持 command1、command2... 串行），原 mode/script 参数不存在；后台式执行会打开可见窗口并采集输出返回，敏感指令需 tool_password 验证码授权。依据 plugin-manifest.json 与 PowerShellExecutor.js。
 Tag: PowerShellExecutor, ServerPowerShellExecutor, synchronous, 同步调用, 系统工具

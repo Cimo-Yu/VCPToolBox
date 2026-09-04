@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——CodeSearcher（原子切片）
 
 一、插件身份
@@ -9,7 +9,7 @@
 
 二、核心能力
 - 一个使用Rust编写的高性能代码搜索插件，可以在指定的工作区目录中进行快速、精准的代码内容搜索。
-- 提供可调用命令：SearchCode。
+- 提供可调用命令：SearchCode（is_regex 默认false，query按字面量匹配；需正则语法时必须显式传true；返回truncated=true表示命中数超过MAX_RESULTS已截断）。
 
 三、占位符与注入点
 - systemPromptPlaceholders: 无
@@ -26,6 +26,7 @@
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」ServerCodeSearcher「末」,
 query:「始」function\\s+processToolCall\\(「末」,
+is_regex:「始」true「末」,
 search_path:「始」modules「末」,
 case_sensitive:「始」false「末」,
 context_lines:「始」3「末」

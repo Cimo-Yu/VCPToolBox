@@ -12,9 +12,9 @@
     "updateIntervalMinutes": 360,
     "timelineDays": 4,
     "fallbackMessageCount": 30,
-    "model": "deepseek-v4-flash",
-    "maxContextTokens": 32000,
-    "maxOutputTokens": 2000
+    "model": "glm-5.3-flash",
+    "maxContextTokens": 16000,
+    "maxOutputTokens": 8000
   },
   "description": {
     "enabled": "OneRing 热开关。false 时插件直接透传 messages，不再读取 ONERING_ENABLED 环境开关。",

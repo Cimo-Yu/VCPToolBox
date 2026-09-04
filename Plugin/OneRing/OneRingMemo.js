@@ -13,7 +13,8 @@ const DEFAULT_CONFIG = Object.freeze({
     fallbackMessageCount: 30,
     model: '',
     maxContextTokens: 32000,
-    maxOutputTokens: 2000
+    maxOutputTokens: 2000,
+    summaryMaxChars: 400
 });
 
 let projectBasePath = '';
@@ -276,11 +277,87 @@ function splitByTokenBudget(text, tokenBudget) {
     return chunks.filter(Boolean);
 }
 
+async function callSummaryModelStream(port, key, payload) {
+    const { default: fetch } = await import('node-fetch');
+    // 双重超时：120s 无任何数据判定流停滞；600s 总上限兜底。防止上游半死流把
+    // 摘要任务永久挂死（generateMemo 无重试，卡死即整单失败）。
+    const STALL_MS = 120000;
+    const TOTAL_MS = 600000;
+    const controller = new AbortController();
+    let stallTimer = setTimeout(() => controller.abort(new Error(`流式摘要 ${STALL_MS / 1000}s 无数据，判定为流停滞`)), STALL_MS);
+    let totalTimer = setTimeout(() => controller.abort(new Error('流式摘要超过 600s 总上限')), TOTAL_MS);
+    const clearTimers = () => { clearTimeout(stallTimer); clearTimeout(totalTimer); };
+    let response;
+    try {
+        response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${key}`
+            },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`摘要模型返回 ${response.status}: ${errorText.slice(0, 500)}`);
+        }
+        // SSE 行可能被分包截断，留 buffer 拼完整行再 JSON.parse；只累积 delta.content，
+        // 推理模型的 reasoning_content 增量不是正文。
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullContent = '';
+        for await (const chunk of response.body) {
+            clearTimeout(stallTimer);
+            stallTimer = setTimeout(() => controller.abort(new Error(`流式摘要 ${STALL_MS / 1000}s 无数据，判定为流停滞`)), STALL_MS);
+            buffer += decoder.decode(chunk, { stream: true });
+            const lines = buffer.split(/\r?\n/);
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const dataStr = line.slice(6).trim();
+                if (!dataStr || dataStr === '[DONE]') continue;
+                try {
+                    const json = JSON.parse(dataStr);
+                    fullContent += json.choices?.[0]?.delta?.content || '';
+                } catch (e) { /* 单行解析失败不影响其余内容 */ }
+            }
+        }
+        return fullContent;
+    } finally {
+        clearTimers();
+    }
+}
+
 async function callSummaryModel(model, systemPrompt, input, memoConfig) {
     const port = runtimeConfig.PORT || process.env.PORT || 3000;
     const key = runtimeConfig.Key || process.env.Key || '';
     if (!key) throw new Error('服务器 Key 未配置，无法调用本机摘要模型');
     if (!model) throw new Error('OneRingMemo 摘要模型未配置');
+
+    const payload = {
+        model,
+        max_tokens: memoConfig.maxOutputTokens,
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: input }
+        ]
+    };
+
+    // 优先流式：上游网关对非流式请求普遍有 ~60s 空闲超时，大输入+推理模型必超
+    // （2026-09-01 MemoMaster 真实时间线 ~15k tokens 输入稳定 504）。流式分块持续
+    // 到达可绕开。空正文重试一次：推理模型偶发把输出预算全部用于思考（finish=length、
+    // 正文为 0 字），缩小分块后概率大减但非零。流式两连败再回退非流式一次。
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            const streamed = await callSummaryModelStream(port, key, { ...payload, stream: true });
+            if (streamed.trim()) return streamed.trim();
+            console.warn(`[OneRingMemo] 流式摘要第 ${attempt}/2 次返回空正文（推理吃满输出预算的典型症状）`);
+        } catch (streamError) {
+            console.warn(`[OneRingMemo] 流式摘要第 ${attempt}/2 次失败: ${streamError.message}`);
+        }
+    }
+    console.warn('[OneRingMemo] 流式两连败，回退非流式重试一次');
 
     const { default: fetch } = await import('node-fetch');
     const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
@@ -289,20 +366,13 @@ async function callSummaryModel(model, systemPrompt, input, memoConfig) {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${key}`
         },
-        body: JSON.stringify({
-            model,
-            stream: false,
-            max_tokens: memoConfig.maxOutputTokens,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: input }
-            ]
-        })
+        body: JSON.stringify({ ...payload, stream: false }),
+        signal: AbortSignal.timeout(300000)
     });
     const text = await response.text();
     if (!response.ok) throw new Error(`摘要模型返回 ${response.status}: ${text.slice(0, 500)}`);
-    const payload = JSON.parse(text);
-    const output = payload?.choices?.[0]?.message?.content;
+    const payloadJson = JSON.parse(text);
+    const output = payloadJson?.choices?.[0]?.message?.content;
     if (typeof output !== 'string' || !output.trim()) throw new Error('摘要模型未返回有效文本');
     return output.trim();
 }

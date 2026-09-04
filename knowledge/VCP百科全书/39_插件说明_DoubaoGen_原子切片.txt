@@ -1,25 +1,32 @@
-[2026-03-03] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] 插件说明——DoubaoGen（原子切片）修正版
 
 一、插件身份
 - manifest名称: `DoubaoGen`
 - AI调用名: `DoubaoGen`
-- displayName: `Doubao 风格图片生成器`
+- displayName: `火山引擎图像生成器`
 - pluginType: `synchronous`
 - protocol: `stdio`
 - 入口: `node DoubaoGen.js`
-- 版本: `0.1.0`
+- 版本: `2.0.0`
 
 二、配置参数（configSchema）
-- `VOLCENGINE_API_KEY`（字符串）：火山方舟 API密钥（必需）
+- `VOLCENGINE_API_KEY`（字符串）：火山引擎API密钥（必需，支持逗号分隔多个密钥，配额耗尽自动轮换重试）
+- `SEEDREAM_MODEL_ID`（字符串）：默认模型ID，默认`doubao-seedream-5-0-260128`（可用list_models命令查询可用模型）
+- `DEFAULT_WATERMARK`（布尔）：是否默认添加水印，默认`false`
+- `DEFAULT_RESPONSE_FORMAT`（字符串）：默认返回格式`url`或`b64_json`，默认`url`
+- `DebugMode`（布尔）：调试模式，默认`false`
 
 三、核心命令与参数
 
 commandIdentifier: `DoubaoGenerateImage`
+内部子命令（`command`参数，可选，默认generate）：`generate`文生图 / `edit`图生图 / `compose`多图融合 / `group`组图生成 / `list_models`查询可用模型
 
 必需参数：
 - `prompt`（字符串）：用于图片生成的详细【英文】提示词
-- `resolution`（字符串）：图片分辨率，可选值：
+
+可选参数：
+- `resolution`（字符串）：图片分辨率，默认`1024x1024`，常用可选值：
   - `1024x1024`（正方形）
   - `864x1152`（竖屏）
   - `1152x864`（横屏）
@@ -28,9 +35,8 @@ commandIdentifier: `DoubaoGenerateImage`
   - `832x1248`（竖屏）
   - `1248x832`（横屏）
   - `1512x648`（超宽屏）
-
-可选参数：
-- `seed`（整数）：随机种子，通常省略以使用随机种子
+  （无效值不会报错，自动回退为1024x1024）
+- `seed`（整数）：随机种子，通常省略或设为-1以使用随机种子
 
 四、调用示例
 
@@ -61,10 +67,10 @@ seed:「始」42「末」
 同时可附带图片的直接URL链接。
 
 七、常见错误与修复
-- `VOLCENGINE_API_KEY missing`：未配置API密钥
-- `Invalid resolution`：resolution值不在允许列表中
-- `prompt too long`：提示词超过长度限制
-- `API rate limit`：请求过于频繁，请稍后重试
+- `未配置 VOLCENGINE_API_KEY`：未在config.env中设置API密钥
+- 无效resolution：不会报错，自动回退默认值1024x1024并输出警告日志
+- `所有API密钥的配额都已用完`：密钥池中全部密钥配额耗尽（单个密钥配额耗尽时会自动切换下一把重试）
+- `未知命令`：command值不在generate/edit/compose/group/list_models范围内
 
 八、最佳实践
 - 使用详细的英文提示词获得更好效果
@@ -75,5 +81,7 @@ seed:「始」42「末」
 主体词元：DoubaoGen, Doubao, Seedream, 火山方舟, 图片生成
 动作词元：DoubaoGenerateImage, prompt, resolution, seed
 故障词元：API密钥缺失, 无效分辨率, 提示词过长, 速率限制
+
+核对记录(2026-09-02): 依据 Plugin/DoubaoGen/plugin-manifest.json(v2.0.0) 与 Plugin/DoubaoGen/DoubaoGen.js 核对更新——插件已从v0.1.0单命令版本大改为火山引擎图像生成器：displayName改为“火山引擎图像生成器”，新增command子命令generate/edit/compose/group/list_models与动态模型发现(SEEDREAM_MODEL_ID默认doubao-seedream-5-0-260128)、多密钥池轮换、DEFAULT_WATERMARK/DEFAULT_RESPONSE_FORMAT/DebugMode配置；无效resolution改为回退默认值而非报错。
 
 Tag: DoubaoGen, DoubaoGenerateImage, 图片生成, 火山方舟, Seedream, prompt, resolution, seed, API密钥, 修正版

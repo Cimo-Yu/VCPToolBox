@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] Flowlockmodules - 心流锁模块
 
 一、模块基本信息
@@ -28,10 +28,10 @@ Flowlockmodules是VCPChat的心流锁模块，实现Agent的自动续写功能�
    - 状态指示器
 
 4. 灵活控制：
-   - 右键菜单启动
-   - 中键快速启动/停止
-   - 快捷键Ctrl+G/Cmd+G停止
-   - Agent自主控制
+   - 右键菜单启动/停止
+   - 中键快速启动并立即续写/停止
+   - 快捷键Ctrl+G/Cmd+G启动并立即续写或停止
+   - Agent自主控制（内嵌协议）
 
 5. 自定义提示词：
    - 设置续写提示词
@@ -39,22 +39,23 @@ Flowlockmodules是VCPChat的心流锁模块，实现Agent的自动续写功能�
    - 动态调整续写行为
 
 四、主要文件结构
-- flowlock.js：核心逻辑（FlowlockManager类）
-- flowlock-integration.js：与主界面集成
+- flowlock.js：核心逻辑（FlowlockManager类，多Session架构，每个Agent一个Session）
+- flowlock-protocol.js：内嵌控制协议解析（[[Flowlock::Start/Stop/Complete/Fail/NextHeartbeat/NextPrompt]]）
+- flowlock-integration.js：与主界面集成（右键/中键/快捷键、流事件接入）
 - flowlock.css：发光效果样式
 - README.md：详细文档
 
 五、关键API接口
 1. FlowlockManager类：
-   - initialize(refs)：初始化管理器
-   - start(agentId, topicId, startImmediately)：启动心流锁
-   - stop()：停止心流锁
-   - setCustomPrompt(prompt)：设置自定义提示词
-   - setCustomPrompter(prompter)：设置外部提示词来源
+   - initialize(refs)：初始化管理器（注入electronAPI、uiHelper、globalSettingsRef、continueWritingForContext）
+   - start(agentId, topicId, options)：启动心流锁（options含startImmediately、prompt、delaySeconds，兼容旧布尔参数）
+   - stop(agentId)：停止指定Agent的心流锁
+   - setCustomPrompt(agentId, prompt)：设置下一次续写提示词
+   - setNextHeartbeat(agentId, seconds)：设置下一次心跳间隔
 
-2. window.electronAPI接口：
-   - onVCPStreamEvent(callback)：监听VCP流事件
-   - sendFlowlockStatus(status)：发送状态到主进程
+2. 控制协议：
+   - 内嵌协议：Agent在最终回复中独占一行输出[[Flowlock::Start]]、[[Flowlock::Stop]]、[[Flowlock::Complete]]、[[Flowlock::Fail]]、[[Flowlock::NextHeartbeat::秒数]]、[[Flowlock::NextPrompt]]内容[[/Flowlock::NextPrompt]]，由flowlock-protocol.js安全解析
+   - 插件兼容通道：start、stop、promptee、prompter、clear、remove、edit、get、status（运行状态真源始终是前端FlowlockManager的Session Map）
 
 六、使用场景
 1. 长篇内容创作：小说、技术文档、报告
@@ -62,7 +63,7 @@ Flowlockmodules是VCPChat的心流锁模块，实现Agent的自动续写功能�
 3. 教学辅导：知识讲解、练习题生成、答疑解惑
 4. 创意构思：头脑风暴、方案设计、策略规划
 
-七、Agent调用命令
+七、Agent调用命令（VCP插件兼容通道，tool_name=Flowlock经分布式服务器分发；Agent在回复内自主控制优先用[[Flowlock::Start]]等内嵌协议）
 1. 启动心流锁：
    <<<[TOOL_REQUEST]>>>
    tool_name:「始」Flowlock「末」,
@@ -96,4 +97,6 @@ Flowlockmodules是VCPChat的心流锁模块，实现Agent的自动续写功能�
 3. 上下文限制：注意Agent的上下文窗口限制
 4. 手动干预：可随时停止心流锁
 
-Tag: 心流锁, 自动续写, 创作流, 智能重试, 视觉反馈, Agent控制
+核对记录(2026-09-02): 依D:\vcp\VCPChat\Flowlockmodules\核实——flowlock.js/flowlock-integration.js/flowlock.css/README.md均在并新增flowlock-protocol.js；FlowlockManager已改多Session架构，start(agentId,topicId,options)、stop(agentId)、setCustomPrompt(agentId,prompt)，原文setCustomPrompter、onVCPStreamEvent、sendFlowlockStatus已不存在；Ctrl+G与中键为"启动并立即续写/停止"双向切换；内嵌协议[[Flowlock::Start/Stop/Complete/Fail/NextHeartbeat/NextPrompt]]见flowlock-protocol.js与README.md，TOOL_REQUEST工具名Flowlock在VCPDistributedServer.js证实。
+
+Tag: 心流锁, 自动续写, 创作流, 智能重试, 视觉反馈, Agent控制, 多Session

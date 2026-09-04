@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-C
+[2026-09-02] - Agent-C
 [VCP百科全书] ScreenPilot / 屏幕视觉与操控 - GUI自动化控制
 
 一、插件基本信息
@@ -10,7 +10,7 @@
 
 二、功能定位
 ScreenPilot是一个强大的Windows桌面GUI自动化控制插件，允许AI通过多种方式与桌面应用交互：
-- 屏幕截图：全屏或指定窗口截图，返回base64图像数据
+- 屏幕截图：全屏或指定窗口截图，返回base64图像数据；支持DirectX/OpenGL/Vulkan游戏智能截图（GDI黑屏自动fallback DXGI，capture_strategy.json记忆每进程最优方式），并可按进程名查找游戏窗口
 - OCR文本识别：检测截图中的文本位置和可点击坐标
 - 智能点击：通过文本内容(ClickText)或视觉描述(ClickVisual)自动定位并点击
 - UI元素检测：通过Windows UI Automation API获取窗口内可交互元素
@@ -44,6 +44,7 @@ VISION_API_KEY=
    参数:
    - windowTitle (string, 可选): 目标窗口标题关键词(模糊匹配)，不提供则全屏截图
    - hwnd (integer, 可选): 目标窗口HWND句柄，优先级高于windowTitle
+   - processName (string, 可选): 目标进程名(如YuanShen.exe)，按进程名查找游戏窗口(适用于启动器+游戏分离架构)，优先级低于hwnd和windowTitle
    - ocr (boolean, 可选, 默认false): 设为true时自动运行OCR检测所有文本区域
    - save (boolean, 可选, 默认false): 是否将截图保存为文件持久化存储
    - filename (string, 可选): 保存的文件名(不含路径)，不提供则自动以时间戳命名
@@ -118,6 +119,7 @@ VISION_API_KEY=
    - text (string, 必需): 要点击的文本内容，如'确定'、'Save'、'开始菜单'等
    - windowTitle (string, 可选): 目标窗口标题，不提供则全屏检测
    - hwnd (integer, 可选): 目标窗口HWND
+   - processName (string, 可选): 目标进程名(如YuanShen.exe)，按进程名查找游戏窗口
    - matchMode (string, 可选, 默认'fuzzy'): 文本匹配模式，fuzzy(去除空格标点后包含匹配)/contains(原始包含匹配)/exact(完全匹配)/startswith(前缀匹配)
    - index (integer, 可选, 默认1): 当有多个匹配时，点击第几个(从1开始)
    - button (string, 可选, 默认'left'): 鼠标按钮
@@ -144,6 +146,7 @@ VISION_API_KEY=
    - description (string, 必需): 要点击的视觉元素描述，如'红色技能图标'、'左上角的菜单按钮'、'玩家角色头像'等
    - windowTitle (string, 可选): 目标窗口标题
    - hwnd (integer, 可选): 目标窗口HWND
+   - processName (string, 可选): 目标进程名(如YuanShen.exe)，按进程名查找游戏窗口
    - color (string, 可选, 默认'纯红色(#FF0000)'): 涂色颜色，用于像素差异检测
    - button (string, 可选, 默认'left'): 鼠标按钮
    - clicks (integer, 可选, 默认1): 点击次数
@@ -279,7 +282,7 @@ enter:「始」true「末」
 4. 超时时间为180000毫秒(3分钟)，适合复杂操作
 5. 后台模式需要准确的hwnd或windowTitle，否则会自动降级到前台模式
 6. OCR识别准确率受截图清晰度影响，建议使用ScreenCapture配合ocr=true获取详细位置信息
-7. Python依赖：需要安装pyautogui、pywinauto、Pillow等库
+7. Python依赖：需要安装pyautogui、uiautomation、Pillow等库（见requirements.txt，另含pywin32、psutil、rapidocr-onnxruntime）
 
 七、关联插件
 - WindowSensor：可以获取窗口的HWND和实时状态，与ScreenPilot配合使用效果更佳

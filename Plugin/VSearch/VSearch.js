@@ -6,7 +6,11 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const { tavily } = require('@tavily/core');
 
 // --- 1. 初始化与配置加载 ---
-const configPath = path.resolve(__dirname, './config.env');
+// 插件自身配置路径允许用 VSEARCH_PLUGIN_CONFIG 覆盖：与下面的 VSEARCH_ROOT_CONFIG 同理，
+// 测试需要把插件目录里的 config.env 一并隔离，否则本机真实凭据会让"什么都没配"的断言失效。
+const configPath = process.env.VSEARCH_PLUGIN_CONFIG
+    ? path.resolve(process.env.VSEARCH_PLUGIN_CONFIG)
+    : path.resolve(__dirname, './config.env');
 // 根配置路径允许用 VSEARCH_ROOT_CONFIG 覆盖：测试需要拿一个空配置隔离本机真实凭据，
 // 否则"什么都没配"这类断言会被根目录里已有的 TavilyKey 带跑。生产环境不设此变量。
 const rootConfigPath = process.env.VSEARCH_ROOT_CONFIG
@@ -557,6 +561,101 @@ const callTavilySearch = async (query, tavilyKeyStr) => {
     return markdown;
 };
 
+// --- 3.5 二阶总结（Tavily / KimiSearch 共用） ---
+// 总结必须走流式：中转网关普遍有 ~60s 空闲超时，非流式大输入等完整生成期间网关直接 504
+// （2026-09-01 tokenrhythm.studio 实测：非流式 20k tokens 输入 60s 被掐，流式 10.9s 跑完）。
+// 流式失败（端点不支持 SSE/网络中断）再回退非流式重试一次，两连败才交给外层回退原始结果。
+// max_tokens 单独封顶：50000 的输出预算会让推理模型把思考拉得极长，总结根本用不满。
+const SUMMARY_MAX_TOKENS_CAP = 16384;
+const SUMMARY_STREAM_STALL_MS = 120000;
+
+const buildSummaryPayload = (model, topic, combinedResults, stream) => ({
+    model,
+    stream,
+    messages: [
+        {
+            role: 'system',
+            content: `你是一个顶级信息整合专家。你会收到一份关于多个关键词的原始搜索结果汇总。\n你的任务是结合【研究主题：${topic}】，将这些零散的信息提炼成一份高质量、结构化、具有深度洞察的研究报告。\n请保留重要的 URL 链接，并确保报告逻辑严密。`
+        },
+        { role: 'user', content: `原始搜索结果汇总如下：\n\n${combinedResults}` }
+    ],
+    max_tokens: Math.min(TOKENS, SUMMARY_MAX_TOKENS_CAP)
+});
+
+// 从 SSE 流里拼 choices[0].delta.content；reasoning_content（思考增量）不是正文，忽略。
+// SSE 行可能被 TCP 分包截断，必须留 buffer 拼完整行再 JSON.parse，否则丢内容。
+const consumeSummaryStream = (stream, resolve, reject) => {
+    let fullContent = '';
+    let buffer = '';
+    let stallTimer = null;
+    const clearStall = () => { if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; } };
+    const armStall = () => {
+        clearStall();
+        stallTimer = setTimeout(() => {
+            try { stream.destroy(); } catch (e) { }
+            reject(new Error(`流式总结 ${SUMMARY_STREAM_STALL_MS / 1000}s 无新数据，判定为流停滞`));
+        }, SUMMARY_STREAM_STALL_MS);
+    };
+
+    armStall();
+    stream.on('data', chunk => {
+        armStall();
+        buffer += chunk.toString();
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const dataStr = line.slice(6).trim();
+            if (!dataStr || dataStr === '[DONE]') continue;
+            try {
+                const json = JSON.parse(dataStr);
+                fullContent += json.choices?.[0]?.delta?.content || '';
+            } catch (e) { /* 单行解析失败不影响其余内容 */ }
+        }
+    });
+    stream.on('end', () => {
+        clearStall();
+        if (!fullContent.trim()) {
+            reject(new Error('流式总结返回空正文'));
+            return;
+        }
+        resolve(fullContent);
+    });
+    stream.on('error', err => {
+        clearStall();
+        reject(err);
+    });
+};
+
+const summarizeResults = async ({ modeLabel, topic, combinedResults, summaryKey, summaryUrl, summaryModel, timeoutMs }) => {
+    try {
+        log(`[${modeLabel}] 阶段2/2: 正在使用 ${summaryModel} 通过 ${summaryUrl} 进行全量总结（流式）...`);
+        const response = await axios.post(summaryUrl, buildSummaryPayload(summaryModel, topic, combinedResults, true), {
+            headers: { 'Authorization': `Bearer ${summaryKey}`, 'Content-Type': 'application/json' },
+            responseType: 'stream',
+            timeout: timeoutMs,
+            proxy: false
+        });
+        const content = await new Promise((resolve, reject) => consumeSummaryStream(response.data, resolve, reject));
+        log(`[${modeLabel}] 阶段2/2 完成: 总结成功`);
+        return content;
+    } catch (streamError) {
+        log(`[${modeLabel}] 流式总结失败: ${streamError.message}，回退非流式重试一次`);
+    }
+
+    const summaryResponse = await axios.post(summaryUrl, buildSummaryPayload(summaryModel, topic, combinedResults, false), {
+        headers: { 'Authorization': `Bearer ${summaryKey}`, 'Content-Type': 'application/json' },
+        timeout: timeoutMs,
+        proxy: false
+    });
+    const content = summaryResponse.data?.choices?.[0]?.message?.content || '';
+    if (!content.trim()) {
+        throw new Error('非流式总结返回空正文');
+    }
+    log(`[${modeLabel}] 阶段2/2 完成: 总结成功（非流式回退）`);
+    return content;
+};
+
 /**
  * Tavily 模式 (直接调用 Tavily SDK 并发搜索 + 单次整体总结)
  */
@@ -611,29 +710,8 @@ const callTavilyMode = async (topic, keywordList, tavilyKeyStr) => {
     }
 
     try {
-        log(`[Tavily] 阶段2/2: 正在使用 ${summaryModel} 通过 ${summaryUrl} 进行全量总结...`);
-        const summaryPayload = {
-            model: summaryModel,
-            messages: [
-                {
-                    role: 'system',
-                    content: `你是一个顶级信息整合专家。你会收到一份关于多个关键词的原始搜索结果汇总。\n你的任务是结合【研究主题：${topic}】，将这些零散的信息提炼成一份高质量、结构化、具有深度洞察的研究报告。\n请保留重要的 URL 链接，并确保报告逻辑严密。`
-                },
-                { role: 'user', content: `原始搜索结果汇总如下：\n\n${combinedResults}` }
-            ],
-            max_tokens: TOKENS
-        };
-
-        const summaryAxiosConfig = {
-            headers: { 'Authorization': `Bearer ${summaryKey}`, 'Content-Type': 'application/json' },
-            timeout: 180000,
-            proxy: false  // 显式禁用代理，避免环境变量残留干扰
-        };
-
-        const summaryResponse = await axios.post(summaryUrl, summaryPayload, summaryAxiosConfig);
-
-        log(`[Tavily] 阶段2/2 完成: 总结成功`);
-        return done(summaryResponse.data.choices[0].message.content);
+        const content = await summarizeResults({ modeLabel: 'Tavily', topic, combinedResults, summaryKey, summaryUrl, summaryModel, timeoutMs: 180000 });
+        return done(content);
     } catch (summaryError) {
         const statusCode = summaryError.response?.status || 'N/A';
         const errorDetail = summaryError.response?.data ? JSON.stringify(summaryError.response.data).substring(0, 500) : summaryError.message;
@@ -744,27 +822,8 @@ const callKimiSearchMode = async (topic, keywordList, apiKey, baseUrl, maxResult
     }
 
     try {
-        log(`[KimiSearch] 阶段2/2: 正在使用 ${summaryModel} 通过 ${summaryUrl} 进行全量总结...`);
-        const summaryPayload = {
-            model: summaryModel,
-            messages: [
-                {
-                    role: 'system',
-                    content: `你是一个顶级信息整合专家。你会收到一份关于多个关键词的原始搜索结果汇总。\n你的任务是结合【研究主题：${topic}】，将这些零散的信息提炼成一份高质量、结构化、具有深度洞察的研究报告。\n请保留重要的 URL 链接，并确保报告逻辑严密。`
-                },
-                { role: 'user', content: `原始搜索结果汇总如下：\n\n${combinedResults}` }
-            ],
-            max_tokens: TOKENS
-        };
-
-        const summaryResponse = await axios.post(summaryUrl, summaryPayload, {
-            headers: { 'Authorization': `Bearer ${summaryKey}`, 'Content-Type': 'application/json' },
-            timeout: 300000,
-            proxy: false
-        });
-
-        log(`[KimiSearch] 阶段2/2 完成: 总结成功`);
-        return done(summaryResponse.data.choices[0].message.content);
+        const content = await summarizeResults({ modeLabel: 'KimiSearch', topic, combinedResults, summaryKey, summaryUrl, summaryModel, timeoutMs: 300000 });
+        return done(content);
     } catch (summaryError) {
         const statusCode = summaryError.response?.status || 'N/A';
         const errorDetail = summaryError.response?.data ? JSON.stringify(summaryError.response.data).substring(0, 500) : summaryError.message;

@@ -4,9 +4,9 @@
 
 简明释义：不需要手动编辑配置文件或执行命令行，AdminPanel提供了图形化界面来完成VCP的所有日常运维操作，包括修改配置、查看日志、管理日记、调整RAG参数、编辑Agent文件等。
 
-关键原理：AdminPanel是纯静态文件（HTML/CSS/JS），由Node.js后端直接托管，所有操作通过 /admin_api 接口与后端通信。登录鉴权通过Cookie机制维持会话，未登录时所有 /admin_api 请求返回401并跳转登录页。
+关键原理：AdminPanel的所有操作通过 /admin_api 接口与后端通信，未登录时所有 /admin_api 请求返回401并跳转登录页。
 
-访问方式：浏览器访问 http://服务器IP:端口/AdminPanel，输入在config.env中配置的管理员密码登录。
+访问方式：浏览器访问 http://服务器IP:端口/AdminPanel，输入在config.env中配置的AdminUsername与AdminPassword登录。
 
 完整功能分区一览：
 
@@ -63,5 +63,7 @@ RAG调参（RAG Tuning）：可视化调整TagMemo浪潮算法的核心参数，
 反思与洞察：AdminPanel是VCP从"开发者工具"走向"可运营产品"的关键组件。可视化的RAG调参和占位符查看器大幅降低了调试门槛。对于日常运维来说，90%的操作都可以通过AdminPanel完成，无需接触底层文件。
 
 信源/出处：AdminPanel/AGENTS.md、docs/ADMINPANEL_DEVELOPMENT.md（VCPToolBox 6.4+）。
+
+核对记录(2026-09-02): AdminPanel已重构为Vue应用——前端源码移至AdminPanel-Vue/，构建产物dist由独立后台进程adminServer.js托管并自动监听主端口+1，访问主端口的/AdminPanel会被302重定向过去；登录鉴权现采用HTTP Basic Auth（Authorization头优先，admin_auth Cookie作回退），账号密码对应config.env的AdminUsername/AdminPassword，原文"纯静态文件由主后端直接托管+Cookie会话"的表述已过时。上文各功能分区在现面板中均有对应模块（另新增主题编辑器、语义模型路由器、插件商店、工具调用记录等页面）；梦系统管理页面存在但AgentDream插件仍处于下线状态。旧AdminPanel/静态目录已不存在，docs/ADMINPANEL_DEVELOPMENT.md为历史文档。依据：adminServer.js、server.js第837-846行、AdminPanel-Vue/、routes/adminPanelRoutes.js。
 
 Tag: AdminPanel，管理面板，配置管理，RAG调参，日记管理器，占位符查看器，Agent编辑器，日程管理，工具列表，系统监控，运维工具

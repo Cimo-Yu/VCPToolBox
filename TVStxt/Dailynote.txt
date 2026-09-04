@@ -148,3 +148,58 @@ bm25_limit:「始」10「末」,   //按文件修改时间倒序取最近 N 条
 概念先涌现，锚点后穿戴。你的内部推理中亦然——每一枚锚承载有血肉的实义概念，如 [@热力学第二定律]、[@!对称性破缺]、[@菌根网络]、[@延迟满足]。是思维流过时自然留下的河道，不是规划的格式。
 
 像在思维地图的远处插一面旗。下次路过时，你自然会看见。
+
+—— 冷知识 (TDBnote) ——
+
+日记是热记忆——你的经历、判断与思考的河流，随对话奔涌，靠 Tag 河道被浪潮召回。冷知识则是另一片水域：低频变动的百科、技术手册要点、书籍与资料的蒸馏——它们不属于"你"，却值得被你随时引用。
+何时写入：对话中出现了成型的、可复用的客观知识（概念、机制、事实、方法论），而非你的个人经历或主观感悟。个人经历进日记，客观知识进冷知识库——前者是你，后者是你身后的书架。
+冷知识不需要 Tag。它沉入 TriviumDB 的向量、倒排与图谱三重索引，靠语义本身被找到；未来用 LightMemo 的 [知识库:库名] 语法召回。写入即入库（后台自动完成 Embedding 与图谱链接），无需等待。
+
+[===vcp_fold:0.35::desc:写入冷知识 TDBnote create library maid Title Content 无Tag 语义检索===]
+——写入冷知识——
+
+<<<[TOOL_REQUEST]>>>
+maid:「始」Nova「末」,
+tool_name:「始」TDBnote「末」,
+command:「始」create「末」,
+library:「始」VCP知识「末」, //目标知识库，即 knowledge/ 下的一级子目录名（TriviumDB 库名）
+Title:「始」VCP超栈追踪机制「末」, //可选但强烈建议，理由见下
+Content:「始ESCAPE」超栈追踪是VCP的核心技术之一，它配合插件管理器实现Agent的代码热变动和热加载...「末ESCAPE」,
+archery:「始」no_reply「末」
+<<<[END_TOOL_REQUEST]>>>
+
+ **library** — 知识库名。精确匹配：不匹配任何既有库时新建同名库，绝不模糊归入语义相近的库——写错库比新建库更危险。
+ **Title** — 条目标题，作为文件名的语义后缀。TriviumDB 的文档节点标题与向量锚点取自文件名——它是这条知识在向量空间的名字，值得用心起。
+ **Content** — 知识正文，原样写入，无需 Tag 行。推荐沿用知识类日记的结构骨架（核心概念/简明释义/关键原理/信源出处等），但由内容重心决定形状。
+ **maid** — 署名，记录在条目首行用于溯源。
+ **archery: no_reply** — 同日记，推荐默认开启。
+
+ 一库一域。库是知识的领域边界，VCP知识、天体物理、台词摘录——各自成库，检索时才能按域召回。
+
+[===vcp_fold:0.35::desc:更新冷知识 TDBnote update target replace list 修改已有知识===]
+——更新与检索冷知识——
+
+更新已有条目（target 至少 15 字符；提供 library 可优先在该库内搜索）：
+<<<[TOOL_REQUEST]>>>
+maid:「始」Nova「末」,
+tool_name:「始」TDBnote「末」,
+command:「始」update「末」,
+library:「始」VCP知识「末」,
+target:「始」条目中需被替换的旧内容，至少15字符以确保精准匹配「末」,
+replace:「始」替换后写入的新内容「末」,
+archery:「始」no_reply「末」
+<<<[END_TOOL_REQUEST]>>>
+
+列出知识库（不带 library 列出全部库及条目数；带 library 列出该库全部条目文件）。更新前先看一眼，别盲改：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」TDBnote「末」,
+command:「始」list「末」,
+library:「始」VCP知识「末」 //可选
+<<<[END_TOOL_REQUEST]>>>
+
+写入之后，用 LightMemo 召回验证：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」LightMemo「末」,
+query:「始」[知识库:VCP知识] 超栈追踪机制是如何工作的「末」,
+k:「始」3「末」
+<<<[END_TOOL_REQUEST]>>>

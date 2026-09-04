@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] 插件说明——信息检索与网络操作插件组
 
 一、插件组定位
@@ -10,7 +10,7 @@
 - 特点：多关键词并发、主题引导、低延迟、高质量整合
 - 适合：研究型问题与多源证据聚合
 
-2. TavilySearch / SerpSearch / GoogleSearch
+2. TavilySearch / AnySearch / BrowserSearch
 - 定位：通用联网检索补充层
 - 适合：实时事实、新闻、基础检索
 
@@ -33,5 +33,7 @@
 - 需要溯源时开启URL保留
 - 低置信内容标注“待核验”，避免污染知识库
 
+核对记录(2026-09-02): SerpSearch、GoogleSearch 插件在 VCPToolBox\Plugin 与 VCPChat\VCPDistributedServer\Plugin 下均不存在（无目录、无 plugin-manifest.json），已替换为实际存在的 AnySearch（实时搜索插件）、BrowserSearch（持久化浏览器搜索）；VSearch、TavilySearch、UrlFetch、ChromeBridge、FlashDeepSearch、VCPEverything、CodeSearcher 经 manifest 核对均存在。
+
 关联节点：VSearch, UrlFetch, ChromeBridge, FlashDeepSearch, VCPEverything
-Tag: 信息检索插件, 网络操作, VSearch, TavilySearch, SerpSearch, UrlFetch, ChromeBridge, FlashDeepSearch, 语义搜索, 多源聚合, 证据溯源
+Tag: 信息检索插件, 网络操作, VSearch, TavilySearch, AnySearch, UrlFetch, ChromeBridge, FlashDeepSearch, 语义搜索, 多源聚合, 证据溯源

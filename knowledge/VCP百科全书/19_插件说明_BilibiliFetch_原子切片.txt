@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——BilibiliFetch（原子切片）
 
 一、插件身份
@@ -10,6 +10,7 @@
 - `BilibiliFetch`：视频信息/字幕/弹幕/评论/快照
 - `BilibiliSearch`：关键词搜索视频或UP主
 - `GetUpVideos`：获取UP主投稿列表
+- `BilibiliSaveSubtitle`：提取视频原始CC字幕并以脚本形式保存到知识库字幕目录（可用`BILIBILI_SUBTITLE_SAVE_DIR`覆盖）
 
 三、增强点
 - 支持b23短链解析与分P识别。

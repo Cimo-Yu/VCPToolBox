@@ -50,6 +50,6 @@ TTS安装配置步骤：
 
 反思与洞察：VCPChat的音频引擎达到了Hi-Fi级别，这在AI聊天客户端中极为罕见。双语混合朗读引擎是一个非常实用的功能，特别适合语言学习场景。TTS的安装配置步骤较多，需要详细的引导文档。
 
-信源/出处：README For VCPChat.md，VCPChat GitHub仓库。
+信源/出处：VCPChat README.md，VCPChat GitHub仓库。
 
 Tag: VCPChat，音频引擎，WASAPI，DSD，Hi-Fi，TTS，GPT-SoVITS，语音朗读，双语混合，音乐播放器，歌词引擎，语音输入，Rust音频

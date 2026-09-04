@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——ZImageGen2（原子切片）
 
 一、插件身份
@@ -36,7 +36,9 @@ tool_name:「始」ZImageGen2「末」,
 command:「始」ZImageGenerate「末」,
 prompt:「始」a beautiful landscape painting with mountains and rivers「末」,
 negative_prompt:「始」blurry, low quality「末」,
-cfg_scale:「始」7.5「末」
+cfg:「始」7.5「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): 该插件当前为禁用态，契约文件为 Plugin\ZImageGen2\plugin-manifest.json.block；已按manifest(v1.1.0)与ZImageGen.mjs核对：参数为prompt/negative_prompt/resolution/steps(默认28)/cfg(默认4)/cfg_normalization/showbase64/seed，无cfg_scale参数，示例已修正。
 
 Tag: ZImageGen2, synchronous, 同步调用, 多媒体, ZImageGenerate

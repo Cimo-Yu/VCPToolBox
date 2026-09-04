@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——QwenImageGen（原子切片）
 
 一、插件身份
@@ -28,14 +28,14 @@
 tool_name:「始」QwenImageGen「末」,
 command:「始」GenerateImage「末」,
 prompt:「始」a beautiful landscape with mountains and rivers「末」,
-size:「始」1024x1024「末」
+image_size:「始」1328x1328「末」
 <<<[END_TOOL_REQUEST]>>>
 
 编辑图像:
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」QwenImageGen「末」,
 command:「始」EditImage「末」,
-image_url:「始」https://example.com/image.jpg「末」,
+image:「始」https://example.com/image.jpg「末」,
 prompt:「始」change the sky to sunset colors「末」
 <<<[END_TOOL_REQUEST]>>>
 

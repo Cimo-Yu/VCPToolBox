@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP架构——分布式星型网络拓扑与超栈追踪文件系统
 
 一、分布式架构概述
@@ -11,11 +11,11 @@ VCP的分布式架构将单体应用升级为"主服务器"和多个"分布式�
 - WebSocketServer.js：通信骨架
 - 配置系统、变量替换引擎、记忆系统、Web管理面板
 
-分布式节点（VCPDistributedServer）：
+分布式节点（VCPDistributedServer，现随 VCPChat 仓库分发）：
 - 独立部署在任意机器上
 - 加载其本地Plugin目录下的插件
-- 通过WebSocket连接到主服务器
-- 目前支持synchronous类型的stdio插件
+- 通过WebSocket连接到主服务器（URL形如 /vcp-distributed-server/VCP_Key=<key>）
+- 现支持synchronous（stdio）与hybridservice（direct）两类插件
 
 三、核心交互流程
 
@@ -47,12 +47,14 @@ AI调用工具（智能路由）：
 
 核心问题：分布式节点上的插件生成的文件（如图片），其本地路径对主服务器不可达。
 
-五阶段解决方案：
+现行实现要点：主服务在执行本地插件前，由 PluginManager.processToolCall 预扫描调用参数中的 file://URL；本地存在则原样传入，本地不存在时先查 .file_cache 缓存，未命中才按来源IP向源节点取回并替换为指向本地缓存的 file://URL 再执行。插件无需捕获 ENOENT 或返回 FILE_NOT_FOUND_LOCALLY 错误结构，全程透明。
+
+五阶段解决方案（历史版本按"插件报错→重试"触发，机制链一致）：
 1. 本地优先：首先尝试在主服务器本地读取文件
 2. 来源追溯（IP追踪）：如果本地不存在，利用POST请求来源IP识别出发起请求的分布式节点
 3. 实时文件请求：FileFetcherServer通过WebSocket向源节点发送internal_request_file请求
 4. 远程执行与返回：源节点读取本地文件，Base64编码后通过WebSocket返回
-5. 无缝重试：主服务器将file://路径替换为Base64 Data URI，透明地重新调用插件
+5. 无缝重试：主服务器将file://路径替换为指向本地缓存的URL，透明地重新调用插件（现行版本为执行前预替换，无错误重试循环）
 
 优势：
 - 极致鲁棒性：彻底摆脱HTTP图床或文件镜像的脆弱方案
@@ -62,7 +64,7 @@ AI调用工具（智能路由）：
 五、分布式节点部署步骤
 1. 复制VCPDistributedServer文件夹到目标机器
 2. npm install安装依赖
-3. 配置config.env：Main_Server_URL（主服务器WebSocket地址）、VCP_Key（与主服务器一致）、ServerName
+3. 配置config.env：Main_Server_URL（主服务器地址，节点据此以WebSocket连接 /vcp-distributed-server/VCP_Key=<key>）、VCP_Key（与主服务器一致）、ServerName（另有 DIST_SERVER_PORT 配置节点本地端口）
 4. 在Plugin目录下放置要运行的VCP插件
 5. node VCPDistributedServer.js启动
 
@@ -78,4 +80,5 @@ AI调用工具（智能路由）：
 - 多Agent协作共享：Base64数据智能共享，动态转译为fileurl
 
 关联节点：WebSocketServer.js, FileFetcherServer.js, VCPDistributedServer, 星型拓扑, 智能路由
+核对记录(2026-09-02): 星型拓扑核心链路不变——WebSocketServer.js 的 register_tools 注册（:731）、execute_tool 下发（:944）、executeDistributedTool 执行（:918）；云端插件注册时由 Plugin.js 加 [云端] 前缀（displayName），断开自动注销；isDistributed 标志贯穿 Plugin.js。FileFetcherServer.js 的 fetchFile(fileUrl, requestIp) 与 internal_request_file 内部消息现行有效。变更点：①超栈追踪现行实现为执行前由 PluginManager.processToolCall 预扫描参数 file://URL + .file_cache 缓存 + URL替换（插件零感知，无 FILE_NOT_FOUND_LOCALLY 报错重试循环）；②分布式节点现位于 VCPChat 仓库 VCPDistributedServer/，支持 synchronous(stdio) 与 hybridservice(direct) 两类插件，连接认证走 /vcp-distributed-server/VCP_Key=<key> URL；③VCPFileAPI 版本口径 v4.0（docs/ARCHITECTURE.md §7.3）不变。
 Tag: 分布式架构, 星型网络拓扑, 超栈追踪, VCPFileAPI, WebSocket, 云端插件, 智能路由, Base64直通车, 跨模态转译, IP追踪, FileFetcherServer, 分布式节点部署

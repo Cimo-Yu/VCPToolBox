@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——Wan2.1VideoGen（原子切片）
 
 一、插件身份
@@ -17,7 +17,7 @@
 - 返回 `messageForAI` 引导Agent对用户解释当前状态。
 
 四、配置重点
-- `Wan_API_Key`
+- `SILICONFLOW_API_KEY`
 - `Image2VideoModelName`
 - `Text2VideoModelName`
 
@@ -32,7 +32,7 @@ tool_name:「始」Wan2.1VideoGen「末」,
 command:「始」submit「末」,
 mode:「始」t2v「末」,
 prompt:「始」a cyberpunk street in rainy night, cinematic motion「末」,
-resolution:「始」720p「末」
+resolution:「始」1280x720「末」
 <<<[END_TOOL_REQUEST]>>>
 
 查询任务：

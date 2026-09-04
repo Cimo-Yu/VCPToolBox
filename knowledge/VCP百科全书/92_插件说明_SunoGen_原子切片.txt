@@ -1,4 +1,4 @@
-[2026-03-03] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] 插件说明——SunoGen（原子切片）修正版
 
 一、插件身份
@@ -90,4 +90,5 @@ continue_clip_id:「始」your_previous_clip_id「末」
 动作词元：generate_song, prompt, tags, title, gpt_description_prompt, mv, make_instrumental, continue_at
 故障词元：缺少参数, API密钥无效, 超时, 网络错误
 
+核对记录(2026-09-02): 源码缺失——glob/关键词检索未在 D:\vcp\VCPToolBox\Plugin 与 D:\vcp\VCPChat\VCPDistributedServer\Plugin 发现 SunoGen 或 *Suno*/*Music* 变体目录及 plugin-manifest.json（仅 docs\ChangeLog.md、docs\FILE_INVENTORY.md 等历史文档提及），本文命令与参数无法对源码核实，保留原文备查，请勿据此臆造调用。
 Tag: SunoGen, generate_song, 音乐生成, 自定义歌词, 灵感创作, 继续生成, prompt, tags, title, gpt_description_prompt, mv, 修正版

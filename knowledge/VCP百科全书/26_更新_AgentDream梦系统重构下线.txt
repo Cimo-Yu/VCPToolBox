@@ -11,7 +11,7 @@
 可能遇到的问题：
 1. 系统提示词中包含梦系统触发指令，AI尝试调用时无响应或报错。
 2. 用户期望AI能自主整理记忆，但梦系统下线后该功能暂时不可用。
-3. 旧版dreamtool.txt配置文件中的参数在重构后可能需要重新配置。
+3. 旧版dreampost.txt提示词模板与config.env（DREAM_*参数）中的配置在重构后可能需要重新配置。
 
 可能的解决办法：
 1. 暂时从系统提示词中移除梦系统相关的触发指令，避免AI反复尝试调用不存在的功能。
@@ -23,5 +23,7 @@
 反思与洞察：梦系统是VCP最具创意的功能之一，体现了"让AI拥有自主内在生活"的设计哲学。选择重构而非修补，说明开发者对系统架构的长期健康度有清醒认识。重构期间的功能缺失是短期代价，换来的是与新版RAG架构的深度整合。
 
 信源/出处：VCPToolBox 2.19至今更新记录，约60个提交的ChangeLog；Plugin/AgentDream/plugin-manifest.json.block文件状态确认。
+
+核对记录(2026-09-02): 复核仍为禁用态：Plugin/AgentDream/plugin-manifest.json.block存在，系统不加载，梦触发指令与定时配置持续失效。block态manifest声明hybridservice、定时/概率类配置DREAM_FREQUENCY_HOURS、DREAM_TIME_WINDOW_START/END、DREAM_PROBABILITY、DREAM_SEED_COUNT_MIN/MAX、DREAM_RECALL_K、DREAM_AGENT_LIST等，命令为DiaryMerge/DiaryDelete/DreamInsight（梦操作记录为JSON索引供管理员审批，支持串语法批量）；目录内现有dreampost.txt（梦提示词模板）、DreamWaveEngine.js与config.env.example，无dreamtool.txt。
 
 Tag: AgentDream，梦系统，重构下线，自主记忆整合，REM睡眠模拟，插件block，暂时不可用，架构重构

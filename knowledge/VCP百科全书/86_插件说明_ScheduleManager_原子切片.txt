@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——ScheduleManager（原子切片）
 
 一、插件身份
@@ -27,9 +27,8 @@
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」ScheduleManager「末」,
 command:「始」AddSchedule「末」,
-title:「始」会议「末」,
 time:「始」2026-03-03 14:00「末」,
-description:「始」项目讨论会议「末」
+content:「始」项目讨论会议「末」
 <<<[END_TOOL_REQUEST]>>>
 
 列出日程:
@@ -42,7 +41,7 @@ command:「始」ListSchedules「末」
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」ScheduleManager「末」,
 command:「始」DeleteSchedule「末」,
-schedule_id:「始」schedule_123「末」
+id:「始」schedule_123「末」
 <<<[END_TOOL_REQUEST]>>>
 
 Tag: ScheduleManager, synchronous, 同步调用, 记忆管理, AddSchedule, DeleteSchedule, ListSchedules

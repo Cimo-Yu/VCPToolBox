@@ -1,4 +1,4 @@
-﻿今日系统学习了VCP异步插件的完整开发规范，整理如下。
+今日系统学习了VCP异步插件的完整开发规范，整理如下。
 
 核心概念：VCP异步插件将长耗时任务分解为两个阶段——任务提交（同步阶段，立即返回占位符）和结果回调（异步阶段，任务完成后通过HTTP POST回调主服务器），适用于视频生成、音乐生成、长时间数据分析等耗时任务。
 
@@ -20,14 +20,16 @@ plugin-manifest.json关键配置：pluginType必须设置为asynchronous；descr
 
 占位符替换机制：主服务器收到回调后，将结果保存到VCPAsyncResults目录下的JSON文件中，并发送WebSocket通知。在未来的对话中，系统提示词里的{{VCP_ASYNC_RESULT::...}}会被自动替换成已保存的最终结果。
 
-使用方法：以SunoMusicGen为例，调用submit命令提交音乐生成任务，系统返回占位符，AI将占位符原文包含在回复中告知用户等待，30秒至5分钟后音乐生成完成，占位符自动替换为包含音频链接、封面图片、本地存储路径的完整结果。也可以使用query命令手动查询任务状态。
+使用方法：以Wan2.1VideoGen（插件目录Plugin/VideoGenerator/）为例，调用submit命令提交文生视频或图生视频任务，系统返回占位符，AI将占位符原文包含在回复中告知用户等待，数分钟后视频生成完成，占位符自动替换为包含视频链接的完整结果。也可以使用query命令手动查询任务状态。
 
-可能遇到的问题：占位符未被替换通常是因为回调请求失败（网络问题或CALLBACK_BASE_URL配置错误）；任务超时通常是MAX_POLLING_ATTEMPTS设置过小或外部API响应慢；API密钥错误会导致任务提交失败，检查config.env中的API Key配置；文件下载失败通常是磁盘空间不足或目标目录无写入权限。
+可能遇到的问题：占位符未被替换通常是因为回调请求失败（网络问题或CALLBACK_BASE_URL配置错误）；任务超时通常是插件自身的轮询次数上限设置过小或外部API响应慢；API密钥错误会导致任务提交失败，检查config.env中的API Key配置；文件下载失败通常是磁盘空间不足或目标目录无写入权限。
 
-可能的解决办法：检查VCPAsyncResults目录下是否有对应任务ID的JSON文件（有则说明回调成功）；手动调用query命令查询任务状态；增大MAX_POLLING_ATTEMPTS和POLLING_INTERVAL_MS的值；对于SunoMusicGen等支持多API Key的插件，配置多个Key用逗号分隔可以有效规避429/430频率限制错误。
+可能的解决办法：检查VCPAsyncResults目录下是否有对应任务ID的JSON文件（有则说明回调成功）；手动调用query命令查询任务状态；增大插件配置中的轮询次数上限与轮询间隔值。
 
 反思与洞察：异步插件的占位符机制是VCP的一个精妙设计——它将异步任务的等待过程对用户透明化，用户看到的是一个会自动更新的动态内容，而不是一个需要手动刷新的状态页面。这种设计使得AI可以自然地处理任何耗时任务，而不会打断对话流程。
 
-信源/出处：dailynote/VCP开发/同步异步插件开发手册.md第5节，Plugin/SunoMusicGen/README.md，Plugin/SunoMusicGen/SunoMusicGen.mjs为参考实现。
+信源/出处：dailynote/VCP开发/VCP同步异步插件开发手册.md第5节，Plugin/VideoGenerator/（Wan2.1VideoGen，video_handler.py与plugin-manifest.json）为参考实现。
 
-Tag: VCP异步插件，两阶段执行，占位符机制，HTTP回调，VCP_ASYNC_RESULT，后台轮询，WebSocket推送，SunoMusicGen，视频生成，音乐生成，异步任务管理
+核对记录(2026-09-02): 依据 Plugin.js（executePlugin为asynchronous注入CALLBACK_BASE_URL与PLUGIN_NAME_FOR_CALLBACK，Plugin.js:1597-1601）、server.js（/plugin-callback/:pluginName/:taskId路由保存VCPAsyncResults/<插件名>-<任务ID>.json）、modules/messageProcessor.js（兼容2-4层花括号的VCP_ASYNC_RESULT占位符替换）、docs/VCP同步异步插件开发手册.md第5节（两阶段模式、回调status为Succeed/Failed、webSocketPush可选）核对，机制描述全部一致；原示例插件SunoMusicGen已从Plugin/目录移除（仅存于旧知识条目），参考实现与示例替换为手册钦定的VideoGenerator（Wan2.1VideoGen），插件专属配置项名随之泛化。
+
+Tag: VCP异步插件，两阶段执行，占位符机制，HTTP回调，VCP_ASYNC_RESULT，后台轮询，WebSocket推送，Wan2.1VideoGen，视频生成，音乐生成，异步任务管理

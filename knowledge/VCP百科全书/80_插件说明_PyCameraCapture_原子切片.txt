@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——PyCameraCapture（原子切片）
 
 一、插件身份
@@ -40,4 +40,5 @@ output_path:「始」/path/to/image.jpg「末」,
 resolution:「始」1920x1080「末」
 <<<[END_TOOL_REQUEST]>>>
 
+核对记录(2026-09-02): 源码缺失——主仓与分布式 Plugin\ 均无 PyCameraCapture 目录；glob Plugin/*Camera*/*、Plugin/*Capture*/*、**/*Camera* 在两仓无插件命中（VCPChat 仅命中 node_modules 三方库）。本文断言无法证实，保留原状备查。
 Tag: PyCameraCapture, synchronous, 同步调用, 多媒体, CaptureImage

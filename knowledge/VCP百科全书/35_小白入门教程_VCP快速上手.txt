@@ -15,11 +15,11 @@
 在VCPToolBox根目录找到config.env.example文件，复制一份并重命名为config.env（去掉.example后缀）。
 用文本编辑器打开config.env，填入以下关键参数：
 
-API_KEY：你的AI模型API密钥，例如sk-xxxxxxxxxxxxxxxx。
+API_Key：你的AI模型API密钥，例如sk-xxxxxxxxxxxxxxxx。
 API_URL：你的AI模型API地址，例如https://api.openai.com/v1（或其他兼容OpenAI格式的服务商地址）。
-MODEL：你要使用的模型名称，例如gpt-4o或claude-3-5-sonnet-20241022。
-ADMIN_PASSWORD：管理面板的登录密码，自己设置一个。
-PORT：服务器端口，默认6005，一般不需要修改。
+MODEL：现行config.env.example中已无此固定键，模型名在VCPChat的Agent设置（或每次请求的model字段）中指定即可。
+AdminUsername / AdminPassword：管理面板的登录账号与密码，自己设置一个。
+PORT：服务器端口，默认6015，一般不需要修改。
 
 第三步：配置插件（按需）
 
@@ -36,7 +36,7 @@ VCPToolBox的插件也采用同样的example机制。如果你想使用某个插
 第五步：验证后端是否正常运行
 
 打开浏览器访问：http://localhost:6015/AdminPanel（如果是远程服务器则替换localhost为服务器IP）。
-输入你在config.env中设置的ADMIN_PASSWORD登录。
+输入你在config.env中设置的AdminUsername与AdminPassword登录。
 如果能看到管理面板界面，说明后端配置成功。
 
 第六步：安装VCPChat前端
@@ -70,7 +70,7 @@ VCPChat启动后，点击右上角的设置图标，进入全局设置。
 
 常见新手问题汇总：
 问题1：config.env填好了但系统不生效——确认文件名是config.env而不是config.env.example，且文件在正确的目录下。
-问题2：AdminPanel登录失败——确认ADMIN_PASSWORD填写正确，注意区分大小写，且没有多余的空格。
+问题2：AdminPanel登录失败——确认AdminPassword填写正确，注意区分大小写，且没有多余的空格。
 问题3：VCPChat连接后端失败——确认VCPToolBox后端正在运行，服务器地址格式正确（末尾必须是/v1/chat/completions）。
 问题4：AI回复正常但工具调用不工作——检查对应插件的config.env是否已配置，以及插件目录下是否有plugin-manifest.json（而不是plugin-manifest.json.block）。
 问题5：VCPChat界面元素显示异常——下载并安装壁纸包。
@@ -80,5 +80,7 @@ VCPChat启动后，点击右上角的设置图标，进入全局设置。
 反思与洞察：VCP的example机制是一个很好的配置管理实践，避免了用户误提交含有真实密钥的配置文件到Git仓库。对于新用户来说，最容易卡住的地方是：忘记去掉.example后缀、服务器地址格式错误、忘记设置用户名。这三个点需要在引导文档中重点标注。
 
 信源/出处：VCPToolBox README.md、README For VCPChat.md、AdminPanel使用指南、实际部署经验总结。
+
+核对记录(2026-09-02): 依现行AGENTS.md，安装依赖后还需构建Rust向量引擎（cd rust-vexus-lite && npm run build，标记为必需步骤），本教程原文缺失该步；管理面板现由独立进程adminServer.js自动监听主端口+1（如主服务6015则面板为6016），访问http://localhost:6015/AdminPanel会被重定向到端口+1，第五步用法仍可用，直达地址应为端口+1。配置键已核对为API_Key（注意大小写）、API_URL、AdminUsername/AdminPassword、PORT=6015，config.env.example无MODEL键。VCPChat安装步骤（npm install、pip install -r requirements.txt、npm start=electron .）与现行VCPChat仓库一致。依据：AGENTS.md常用命令、README.md上手章节与第210行、config.env.example、server.js第651-653行、VCPChat/package.json。
 
 Tag: 小白教程，快速上手，config.env，example配置，Agent映射，VCPChat连接，插件配置，新手指南，部署教程，常见问题

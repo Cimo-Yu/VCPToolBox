@@ -1,4 +1,4 @@
-[2026-03-03] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] 插件说明——知识管理与记忆增强插件组 修正版
 
 一、插件组定位
@@ -6,16 +6,14 @@
 
 二、核心插件
 1. DailyNote（统一日记插件）：创建/编辑日记
-2. DailyNoteWrite：日记写入专用
-3. DailyNoteEditor：日记编辑
-4. DailyNoteManager：日记批处理（推荐高级Agent使用）
-5. DeepMemo：历史会话高精度检索（Rust引擎）
-6. LightMemo：低延迟关键词检索
-7. MeshMemo：多维条件过滤网状搜索
-8. SemanticGroupEditor：维护词元组（语义组）概念网络
-9. ThoughtClusterManager：管理思维簇
-10. AgentDream：离线梦境回溯与记忆重构
-11. RAGDiaryPlugin：RAG日记本检索器（向量注入）
+2. DailyNoteManager：日记批处理（推荐高级Agent使用）
+3. DailyNoteSearcher：日记/知识库搜索器（Rust引擎）
+4. DeepMemo：历史会话高精度检索（Rust引擎）
+5. LightMemo：低延迟关键词检索
+6. SemanticGroupEditor：维护词元组（语义组）概念网络
+7. ThoughtClusterManager：管理思维簇
+8. AgentDream：离线梦境回溯与记忆重构（当前为禁用态）
+9. RAGDiaryPlugin：RAG日记本检索器（向量注入）
 
 三、调用方式（修正后示例）
 
@@ -38,17 +36,19 @@ query:「始」TagMemo 动态K值 计算链路「末」
 SemanticGroupEditor 更新词元组：
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」SemanticGroupEditor「末」,
-command:「始」UpsertGroup「末」,
-groupName:「始」插件开发「末」,
-tags:「始」manifest, invocationCommands, stdio, callback「末」
+command:「始」UpdateGroups「末」,
+groupname:「始」插件开发「末」,
+groupwords:「始」manifest, invocationCommands, stdio, callback「末」
 <<<[END_TOOL_REQUEST]>>>
 
 四、组合工作流（推荐）
-用户输入 → SemanticGroupEditor增强查询 → TagMemo检索 → DeepMemo/LightMemo/MeshMemo补充 → DailyNote沉淀新知识 → ThoughtClusterManager组织高阶推理 → AgentDream夜间重构。
+用户输入 → SemanticGroupEditor增强查询 → TagMemo检索 → DeepMemo/LightMemo补充 → DailyNote沉淀新知识 → ThoughtClusterManager组织高阶推理 → AgentDream夜间重构。
 
 五、注意事项
 - DailyNoteManager 是高权限插件，推荐仅由 Claude 4.5 Opus/Gemini 3 Pro/GPT 5 Ultra 等顶级模型驱动的 Agent 使用
 - 批处理操作建议先备份，避免误删重要日记
 - RAG质量高度依赖日记Tag规范与切片粒度
 
-Tag: 知识管理插件, 记忆增强, DailyNote, DeepMemo, LightMemo, MeshMemo, SemanticGroupEditor, ThoughtClusterManager, AgentDream, RAGDiaryPlugin, 词元组, 思维簇, 调用方式, 修正版
+核对记录(2026-09-02): DailyNoteWrite、DailyNoteEditor、MeshMemo 在 VCPToolBox\Plugin 与 VCPChat\VCPDistributedServer\Plugin 下均不存在，已从插件列表/工作流移除并补入实际存在的 DailyNoteSearcher（manifest display=日记/知识库搜索器 (Rust)）；AgentDream 的 plugin-manifest.json 为 .block 禁用态，已标注。DailyNote create（maid/Date/Content）、LightMemo（query）、SemanticGroupEditor UpdateGroups（groupname/groupwords）参数均按各 plugin-manifest.json 核正。
+
+Tag: 知识管理插件, 记忆增强, DailyNote, DeepMemo, LightMemo, SemanticGroupEditor, ThoughtClusterManager, AgentDream, RAGDiaryPlugin, 词元组, 思维簇, 调用方式, 修正版

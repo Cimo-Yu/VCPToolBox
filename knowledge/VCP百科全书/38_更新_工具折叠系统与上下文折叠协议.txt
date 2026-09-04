@@ -26,4 +26,6 @@
 
 信源出处：Plugin/ToolBoxFoldContact/toolbox-fold.js全文106行，Plugin/ToolBoxFoldContact/plugin-manifest.json，modules/messageProcessor.js第75-208行resolveDynamicFoldProtocol函数。
 
+核对记录(2026-09-02): ToolBoxFold系列5个静态插件（Contact/File/Media/Memo/Search）、{{VCPContactToolBox}}占位符、[===vcp_dynamic_fold_start===]/[===vcp_dynamic_fold_end===]包裹标记、fold_plugin_name/fold_description字段均已不存在于现行源码。现行折叠链路为：1) 静态插件（WeatherReporter、DailyHot、VCPForumLister等）直接输出vcp_dynamic_fold JSON对象，字段为vcp_dynamic_fold:true、dynamic_fold_strategy、plugin_description、fold_blocks[{threshold, description, content}]；2) toolbox体系由根目录toolbox_map.json映射、经modules/foldProtocol.js把文档按行分隔符[===vcp_fold:阈值::desc:描述===]切分成折叠块（原[===vcp_fold:阈值===]形式仍兼容）。resolveDynamicFoldProtocol现位于modules/messageProcessor.js第313行起：上下文向量由最后一条用户消息与最后一条AI消息按mainSearchWeights（0.7/0.3）加权合成（非ContextVectorManager实时向量），描述向量复用RAGDiaryPlugin.getSingleEmbeddingCached并优先走精确/模糊缓存；展开规则为相似度>=threshold（toolbox策略还支持按区块description逐一匹配），嵌入不可用或异常时回退返回最低阈值的基础块（而非展开全部）。依据：modules/foldProtocol.js、modules/messageProcessor.js第313-549行、modules/toolboxManager.js、Plugin/WeatherReporter/weather-reporter.js第530行。
+
 Tag: 工具折叠，vcp_dynamic_fold，静态插件，ToolBoxFold，上下文优化，Token管理，余弦相似度，动态裁剪，折叠阈值，语义匹配，按需加载

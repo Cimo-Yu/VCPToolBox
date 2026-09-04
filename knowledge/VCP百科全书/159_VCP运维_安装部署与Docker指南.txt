@@ -1,11 +1,11 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP运维——安装部署、Docker容器化与PM2生产环境指南
 
 一、环境要求
 - Node.js 20+
-- Python 3.11+
+- Python 3.10+（docs/OPERATIONS.md；Docker 镜像随 Alpine 提供）
 - 内存：4GB最低
-- 存储：2GB最低
+- 存储：20GB最低（docs/OPERATIONS.md）
 - 操作系统：Windows/Linux/macOS
 
 二、四种部署方式
@@ -19,15 +19,16 @@ cp config.env.example config.env
 node server.js
 
 方式二：Docker容器化
-docker-compose up --build -d
+docker pull lioensky/vcptoolbox:latest
+docker-compose up -d
 docker-compose logs -f
 docker-compose down
+（docker-compose.yml 默认使用官方镜像，build 行已注释；镜像内置 PM2 同时启动主服务与管理面板）
 
 方式三：PM2生产环境（推荐生产）
-npx pm2 start server.js --name vcp-toolbox
-npm run start:pm2    ← 启动
-npm run restart:pm2  ← 重启
-npm run stop:pm2     ← 停止
+pm2 start ecosystem.config.js   ← 依据根目录 ecosystem.config.js 同时启动 vcp-main(server.js) 与 vcp-admin(adminServer.js)
+pm2 status / pm2 logs / pm2 restart
+（原 npm run start:pm2 / restart:pm2 / stop:pm2 脚本已不存在；Docker 内为 pm2-runtime start ecosystem.config.js）
 
 方式四：Poetry虚拟环境（Python依赖隔离）
 poetry install
@@ -37,12 +38,12 @@ poetry run python -c "import numpy; print('OK')"
 API相关：
 - API_Key：后端AI服务API密钥
 - API_URL：后端AI服务API地址
-- PORT：VCP服务器监听端口（默认5890）
+- PORT：VCP服务器监听端口（config.env.example 默认6015）
 - Key：VCP服务器访问密钥
 
 管理面板：
-- AdminUsername：管理员用户名（默认admin）
-- AdminPassword：管理员密码（默认123456）
+- AdminUsername：管理员用户名（示例 admin）
+- AdminPassword：管理员密码（无默认值；未配置时面板返回503，须设置强密码）
 
 调试：
 - DebugMode：调试模式开关
@@ -60,7 +61,7 @@ API相关：
 
 四、前端连接配置
 将前端的API地址指向VCP服务器：
-http://localhost:5890/v1/chat/completions
+http://localhost:6015/v1/chat/completions
 使用config.env中的Key作为API密钥。
 
 支持的前端：
@@ -70,15 +71,15 @@ http://localhost:5890/v1/chat/completions
 - 任何支持OpenAI API格式的客户端
 
 五、管理面板访问
-地址：http://<服务器IP>:<端口>/AdminPanel
+地址：http://<服务器IP>:<PORT+1>/AdminPanel（由独立 adminServer.js 进程托管，监听主端口+1；访问主端口 /AdminPanel 会被重定向到该地址）
 认证：HTTP Basic Auth（AdminUsername/AdminPassword）
 功能：系统监控、全局配置、插件中心、知识库管理、Agent管理、变量编辑器、VCPTavern编辑器
 
 六、分布式节点部署
-1. 复制VCPDistributedServer文件夹到目标机器
+1. 获取VCPDistributedServer（VCPChat 仓内目录或独立仓库）
 2. npm install
-3. 配置config.env：Main_Server_URL（ws://主服务器IP:8088）、VCP_Key、ServerName
-4. Plugin目录下放置插件（仅支持synchronous+stdio类型）
+3. 配置config.env：Main_Server_URL（主服务器地址）、VCP_Key（与主服务器一致，注册时拼入 WebSocket 路径 /vcp-distributed-server/VCP_Key=<key>）、ServerName、DIST_SERVER_PORT（默认5974）
+4. Plugin目录下放置插件（支持 synchronous stdio 与 hybridservice direct 两类）
 5. node VCPDistributedServer.js
 
 七、安全提示
@@ -89,10 +90,11 @@ http://localhost:5890/v1/chat/completions
 - 插件级细粒度授权：可为任意插件的任意单个指令独立引入验证
 
 八、常用运维命令
-Windows启动脚本：start_server.bat / start_vcp_pm2.bat / restart_vcp_pm2.bat / stop_vcp_pm2.bat
-数据库维护：node rebuild_vector_indexes.js / node repair_database.js / node reset_vectordb.js
-Tag索引：node rebuild_tag_index_custom.js / node sync_missing_tags.js
-日记Tag批处理：node diary-tag-batch-processor.js
+Windows启动脚本：一键启动服务器start_server.bat / update.bat / 人工设置托管浏览器_有头模式.bat 等（原 start_vcp_pm2/restart_vcp_pm2/stop_vcp_pm2 已不存在）
+数据库维护：node scripts/rebuild_vector_indexes.js / node scripts/repair_database.js / node reset_vectordb.js（根目录）
+Tag索引：node scripts/rebuild_tag_index_custom.js / node scripts/sync_missing_tags.js
+日记Tag批处理：node scripts/diary-tag-batch-processor.js
 
+核对记录(2026-09-02): 据根目录 package.json、ecosystem.config.js、Dockerfile、docker-compose.yml、adminServer.js、config.env.example 与 docs/OPERATIONS.md 核对：安装四步（npm install / pip install / cp config.env / node server.js）不变；PORT 示例由 5890 改为 6015；管理面板为独立 adminServer.js 进程监听 PORT+1（主进程 /AdminPanel 仅重定向），AdminUsername/AdminPassword 无默认值，未配置返回 503；Docker 镜像两阶段构建 rust-vexus-lite 与 AdminPanel-Vue，EXPOSE 6015+6006，CMD 为 pm2-runtime 启动 ecosystem.config.js；PM2 npm scripts（start:pm2 等）已移除，改用 ecosystem.config.js；维护脚本现位于 scripts/ 子目录；分布式节点新增 hybridservice direct 插件支持。
 关联节点：config.env, Docker, PM2, AdminPanel, VCPDistributedServer, 安全机制
 Tag: VCP安装部署, Docker容器化, PM2生产环境, config.env配置, 管理面板, 分布式节点, 安全提示, 运维命令, 环境要求, 前端连接

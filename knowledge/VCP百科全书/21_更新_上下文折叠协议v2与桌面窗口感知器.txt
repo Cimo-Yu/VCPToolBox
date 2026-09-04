@@ -26,4 +26,6 @@
 
 信源/出处：VCPToolBox 2.19至今更新记录，约60个提交的ChangeLog。
 
+核对记录(2026-09-02): vcp_dynamic_fold协议现行成立（modules/foldProtocol.js统一解析，Plugin.js识别静态插件输出，modules/messageProcessor.js resolveDynamicFoldProtocol()按余弦相似度与fold_blocks.threshold分级展开），但折叠支持由插件输出的JSON或[===vcp_fold:...===]文本块触发，并非在plugin-manifest.json中声明；系统提示词可用[[VCPStaticFold::Auto/Lite/Full]]切换模式（Auto为语义判定），阈值由各插件输出自带，无全局"相关性阈值参数"。主仓另有messagePreprocessor插件ContextFoldingV2（"上下文语义折叠V2"，[[ContextFoldingV2]]激活），折叠对象是历史AI输出而非静态插件内容。桌面窗口感知器即WindowSensor：2026-02-21(518197a)引入主仓Plugin/WindowSensor，后随"迁移插件到前端"迁至VCPChat/VCPDistributedServer/Plugin/WindowSensor（静态插件，占位符{{WindowSensor_Node}}，每3分钟cron刷新，IgnoreApps忽略进程，输出vcp_dynamic_fold多级折叠含超时降级fallback）。
+
 Tag: 上下文折叠协议v2，vcp_dynamic_fold，桌面窗口感知器，Token优化，静态插件，按需加载，上下文管理，插件生态

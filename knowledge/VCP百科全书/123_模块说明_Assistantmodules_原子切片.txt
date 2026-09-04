@@ -1,8 +1,8 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] Assistantmodules - 划词助手模块
 
 一、模块基本信息
-1. 模块名称：Assistantmodules / 划词助手模块
+1. 模块名称：rust_assistant_engine（原Assistantmodules）/ 划词助手模块
 2. 模块类型：前端UI模块
 3. 版本号：1.0.0
 4. 所属项目：VCPChat
@@ -26,11 +26,11 @@ Assistantmodules是VCPChat的浮窗助手模块，为用户提供快速的文本
 6. 主题适配：支持亮色/暗色主题，自动适配系统主题
 7. 消息中断：支持中断正在进行的流式消息
 
-四、主要文件结构
-- assistant.html：UI布局（标题栏、消息区、输入框、按钮）
-- assistant.js：核心逻辑（消息处理、历史保存、事件监听）
-- assistant.css：样式定义（布局、主题、响应式）
-- assistant-bar.html/js：助手工具栏组件
+四、主要文件结构（现位于rust_assistant_engine/ui/，划词捕获引擎为同目录Rust工程）
+- ui/assistant.html：UI布局（标题栏、消息区、输入框、按钮）
+- ui/assistant.js：核心逻辑（消息处理、历史保存、事件监听）
+- ui/assistant.css：样式定义（布局、主题、响应式）
+- ui/assistant-bar.html/js：助手工具栏组件
 
 五、关键API接口
 1. window.electronAPI.onAssistantData(callback)
@@ -70,10 +70,12 @@ Assistantmodules是VCPChat的浮窗助手模块，为用户提供快速的文本
 
 八、注意事项
 1. 窗口关闭时自动保存聊天历史
-2. 支持Shift+Enter换行、Ctrl+Enter发送消息
+2. 支持Shift+Enter换行、Enter直接发送消息
 3. 图片点击可在新窗口预览
 4. 链接点击自动用外部浏览器打开
 5. 消息流式渲染支持KaTeX数学公式
 6. 支持Markdown格式消息
+
+核对记录(2026-09-02): VCPChat根下已无Assistantmodules目录，划词助手现由rust_assistant_engine实现（D:\vcp\VCPChat\rust_assistant_engine\，Rust划词捕获引擎+ui\assistant.html/js/css、assistant-bar.html/js）；onAssistantData（selectedText/action/agentId/theme）、createNewTopicForAgent、saveAgentTopicTitle、interruptVcpRequest及translate/summarize/explain/search/image/table六种action均在ui\assistant.js、assistant-bar.html中核实无误；发送快捷键实为Enter直接发送。
 
 Tag: 划词助手, 浮窗模块, 文本处理, AI交互, 消息渲染, 主题适配, Electron窗口, 聊天历史

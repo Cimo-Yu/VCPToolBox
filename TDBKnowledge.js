@@ -643,7 +643,7 @@ class TDBKnowledgeManager {
                             library,
                             source_path: relPath,
                             chunk_index: index,
-                            text_preview: text.slice(0, 500),
+                            text_preview: text.slice(0, 600),
                             checksum: chunkChecksum,
                             updated_at: now
                         });

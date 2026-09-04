@@ -1,12 +1,12 @@
 今日学习了VCPToolBox新增的ChromeBridge插件，这是一个混合型浏览器控制插件，既能让AI实时观察Chrome页面内容，又能执行浏览器控制命令（点击、输入、打开URL）。
 
-核心概念：ChromeBridge（Chrome浏览器桥接器）V2.0是VCP的浏览器控制枢纽，通过WebSocket与VCPChrome浏览器扩展通信，实现两种工作模式：Service模式下自动将当前Chrome活动标签页的Markdown化内容注入系统提示词，让AI"看到"网页；Direct模式下AI可以主动执行浏览器操作命令并获取操作后的新页面内容。
+核心概念：ChromeBridge（Chrome浏览器桥接器）V2.4是VCP的浏览器控制枢纽，通过WebSocket与VCPChrome浏览器扩展通信，实现两种工作模式：Service模式下自动将当前Chrome活动标签页的Markdown化内容注入系统提示词，让AI"看到"网页；Direct模式下AI可以主动执行浏览器操作命令并获取操作后的新页面内容。
 
-插件基本信息：插件名称ChromeBridge，版本2.0.0，类型hybridservice混合服务插件，超时时间30秒，入口文件ChromeBridge.js（Node.js，直接调用协议）。系统提示词占位符{{VCPChromePageInfo}}提供当前活动标签页的实时Markdown内容。支持WebSocket推送，目标客户端类型为ChromeObserver。
+插件基本信息：插件名称ChromeBridge，版本2.4.0，类型hybridservice混合服务插件，超时时间360秒，入口文件ChromeBridge.js（Node.js，直接调用协议）。系统提示词占位符{{VCPChromePageInfo}}提供当前活动标签页的实时Markdown内容。支持WebSocket推送，目标客户端类型为ChromeObserver。
 
 简明释义：ChromeBridge让AI拥有了"浏览器眼睛和手"。通过{{VCPChromePageInfo}}占位符，AI可以看到用户当前正在浏览的Chrome网页内容（Markdown格式，包含可交互的元素标识）。通过工具命令，AI可以帮用户在网页上输入文字、点击按钮或打开新链接，每次操作后还能看到更新后的页面内容。
 
-使用方法：在系统提示词中添加{{VCPChromePageInfo}}占位符即可让AI感知当前Chrome页面内容。需要浏览器操作时，AI可以调用以下三个命令：
+使用方法：在系统提示词中添加{{VCPChromePageInfo}}占位符即可让AI感知当前Chrome页面内容。需要浏览器操作时，AI可以调用以下常用命令：
 
 在输入框中输入文字：
 <<<[TOOL_REQUEST_EXP]>>>
@@ -32,7 +32,7 @@ url:「始」https://www.google.com「末」
 
 每次命令执行后都会等待页面刷新完成，然后返回新页面的Markdown化内容，AI可以看到操作结果。
 
-前置条件：需要在Chrome浏览器中安装VCPChrome扩展（位于VCPChrome/目录），扩展会通过WebSocket连接到VCP主服务器，作为ChromeObserver客户端注册。
+前置条件：需要有浏览器端连接——VCPChrome扩展（现位于Plugin/ChromeBridge/VCPChrome/目录）通过WebSocket连接到VCP主服务器，作为ChromeObserver客户端注册；也可用open_chrome命令启动VCP托管的managed Chrome。
 
 可能遇到的问题：
 1. {{VCPChromePageInfo}}显示为空——VCPChrome浏览器扩展未安装或未连接到VCP WebSocket服务器。确认扩展已安装并在Chrome中启用。
@@ -48,5 +48,7 @@ url:「始」https://www.google.com「末」
 关联节点：VCPChrome浏览器扩展（前置依赖）、WebSocket分布式架构（通信通道）、CapturePreprocessor截图预处理（同类视觉感知插件）、hybridservice混合服务插件类型。
 
 信源/出处：Plugin/ChromeBridge/plugin-manifest.json，Plugin/ChromeBridge/ChromeBridge.js，VCPChrome/目录。
+
+核对记录(2026-09-02): 依据 Plugin/ChromeBridge/plugin-manifest.json：版本2.0.0升至2.4.0，communication.timeout为360000ms；VCPChrome扩展现位于Plugin/ChromeBridge/VCPChrome/，另有open_chrome托管的managed Chrome与VCPBridge-Extension平台扩展；调用命令已扩展至40余个（scroll、capture_screenshot、extract_data等）。
 
 Tag: ChromeBridge，Chrome浏览器，浏览器控制，网页感知，WebSocket，点击输入，页面Markdown化，VCPChrome扩展，hybridservice

@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——SVCardFinder（原子切片）
 
 一、插件身份
@@ -38,4 +38,5 @@ card_type:「始」follower「末」,
 cost:「始」3「末」
 <<<[END_TOOL_REQUEST]>>>
 
+核对记录(2026-09-02): 源码缺失——glob 未在 D:\vcp\VCPToolBox\Plugin 与 D:\vcp\VCPChat\VCPDistributedServer\Plugin 发现 SVCardFinder 或 *SVCard* 变体目录，全部 plugin-manifest.json 中亦无 SVCard/影之诗 关键词，本文命令与参数无法核实，保留原文备查。
 Tag: SVCardFinder, synchronous, 同步调用, SearchCards

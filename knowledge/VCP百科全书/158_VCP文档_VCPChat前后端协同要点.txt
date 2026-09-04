@@ -1,28 +1,29 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] VCP文档——VCPChat前后端协同要点
 
 一、文档来源
-- 根目录 `README For VCPChat.md`
+- VCPChat 仓库根 `README.md`（原 `README For VCPChat.md` 文件名已不存在；现自我定位为“分布式 AI 原生全栈引擎”）
 
 二、定位
-- VCPChat不是“纯聊天壳”，而是VCPToolBox能力的可视化承载层。
+- VCPChat不是“纯聊天壳”，而是打通 AI-UI-App 边界的分布式全栈底层引擎，是VCPToolBox能力的可视化承载层。
 - 核心价值是把后端工具结果（文本/图片/音频/视频/结构化卡片）稳定渲染并可交互。
 
 三、关键协同机制
 - 工具调用协同：同步工具即时回包，异步工具通过回调/通知补全链路。
 - 多Agent协作：群聊与邀约机制让多个Agent共享同一任务上下文。
 - 记忆协同：跨端会话状态由后端统一保存，前端只做状态拉取与呈现。
-- 文件协同：通过VCPFileAPI/跨节点追踪完成多端文件调用与显示。
+- 文件协同：通过VCPFileAPI/跨节点追踪完成多端文件调用与显示（现为 v4.0 超栈追踪版，全 URL 跨服文件解析）。
 
 四、渲染与交互能力
 - 支持复杂渲染器与多媒体内容直出，减少“文本转述损耗”。
 - 支持工具气泡、任务状态、回调消息统一展示，便于调试和复盘。
-- 支持Canvas/协同工作区等高阶场景，适合持续任务而非一次问答。
+- 支持Canvas/协同工作区等高阶场景，适合持续任务而非一次问答；新增 VCP Scriptorium（人类与 Agent 共笔、PR 审批流）与 VCP Loom（Web 原生 Agent 应用系统）。
 
 五、部署与使用注意
 - 首次使用需完成用户名等基础配置，避免依赖功能报错。
 - 必须匹配后端版本与资源包（如壁纸/解码器）以保证显示完整性。
 - 排障优先看：连接状态、插件回调链、渲染器兼容、附件路径映射。
 
+核对记录(2026-09-02): 据 VCPChat 仓库根 README.md、modules/、Flowlockmodules/、Canvasmodules/、Groupmodules/、VCPDistributedServer/ 核对：同步工具即时回包、异步任务后端 WebSocket 推送补全、群聊邀约/自然随机/顺序发言三模式、跨端记忆由后端统一保存、VCPFileAPI 跨节点文件调用均现行有效；文档来源文件名已由 `README For VCPChat.md` 变更为 `README.md`；前端协同基建新增 Scriptorium 共笔与 Loom Web 应用系统；分布式节点插件现支持 synchronous(stdio) 与 hybridservice(direct) 两类。
 Tag: VCPChat, 前后端协同, 工具气泡, 异步回调, 多Agent群聊, VCPFileAPI, 跨端记忆, 多模态渲染, Canvas协同, 客户端部署
 

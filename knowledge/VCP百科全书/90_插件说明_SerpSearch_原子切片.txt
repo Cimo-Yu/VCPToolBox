@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——SerpSearch（原子切片）
 
 一、插件身份
@@ -50,5 +50,7 @@ tool_name:「始」SerpSearch「末」,
 command:「始」duckduckgo_search「末」,
 query:「始」privacy search「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): SerpSearch 插件源码缺失——主仓 D:\vcp\VCPToolBox\Plugin\ 与分布式节点 D:\vcp\VCPChat\VCPDistributedServer\Plugin\ 均无同名或 *Serp*/*Search* 变体目录，全部 manifest 内容级搜索亦无 SerpApi 插件（glob 依据）。上文命令与参数未核证，请勿引用；现有检索类插件为 VSearch、TavilySearch、AnySearch、BrowserSearch、FlashDeepSearch 等。
 
 Tag: SerpSearch, synchronous, 同步调用, 检索, 信息获取, bing_search, duckduckgo_search, google_scholar_search, google_search

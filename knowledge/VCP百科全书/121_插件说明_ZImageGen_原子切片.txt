@@ -1,15 +1,15 @@
-[2026-03-03] - Codex
-[VCP百科全书] 插件说明——ZImageGen（原子切片）
+[2026-09-02] - Codex
+[VCP百科全书] 插件说明——ZImageTurboGen（原子切片）
 
 一、插件身份
-- name: ZImageGen
-- displayName: Z-Image 文生图（阿里通义）
+- name: ZImageTurboGen
+- displayName: Z-Image-Turbo AI 绘图
 - pluginType: synchronous
-- command: ZImageGenerate
+- command: GenerateImage
 
 二、核心能力
-- 通过 Hugging Face Spaces API 使用阿里巴巴通义实验室的 Z-Image-Turbo 模型生成高质量图片。支持中英文提示词，8步推理，亚秒级延迟。
-- 提供可调用命令：ZImageGenerate。
+- 通过 Gitee 图像接口进行文生图、修图与多图合成（每日免费100点算力额度）。支持中英文提示词；文生图推理步数4-25（默认9），修图/合成默认4。
+- 提供可调用命令：GenerateImage。
 
 三、占位符与注入点
 - systemPromptPlaceholders: 无
@@ -25,16 +25,18 @@
 六、调用示例
 中文提示词:
 <<<[TOOL_REQUEST]>>>
-tool_name:「始」ZImageGen「末」,
-command:「始」ZImageGenerate「末」,
+tool_name:「始」ZImageTurboGen「末」,
+command:「始」generate「末」,
 prompt:「始」一个美丽的山水风景画「末」
 <<<[END_TOOL_REQUEST]>>>
 
 英文提示词:
 <<<[TOOL_REQUEST]>>>
-tool_name:「始」ZImageGen「末」,
-command:「始」ZImageGenerate「末」,
+tool_name:「始」ZImageTurboGen「末」,
+command:「始」generate「末」,
 prompt:「始」a beautiful landscape painting with mountains and rivers「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: ZImageGen, synchronous, 同步调用, 多媒体, ZImageGenerate
+核对记录(2026-09-02): 原ZImageGen（HuggingFace Spaces、ZImageGenerate）已随 commit a8d20f8d(2026-07-03) 移入VCP官方插件商店，本地无源码（glob *ZImage* 仅见 Plugin\ZImageGen2 与 Plugin\ZImageTurboGen）；本文已按本地现役 Plugin\ZImageTurboGen\plugin-manifest.json 改写（Gitee图像接口、GenerateImage、num_inference_steps默认9），旧命令ZImageGenerate已失效。
+
+Tag: ZImageTurboGen, synchronous, 同步调用, 多媒体, GenerateImage, Gitee图像接口, Z-Image-Turbo

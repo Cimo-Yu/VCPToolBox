@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP记忆系统——日记系统架构与四大记忆检索模式
 
 一、日记系统核心定位
@@ -15,7 +15,8 @@ Folder: 目标文件夹（可选）
 Content: 日记内容
 <<<DailyNoteEnd>>>
 
-写入后由DailyNoteWrite插件持久化存储到dailynote/对应文件夹中。
+（核对注：该输出标记协议已不在主仓代码中，现行写入方式为 DailyNote 插件的 create/update 工具调用，见下核对记录。）
+写入后由DailyNote插件（旧称DailyNoteWrite）持久化存储到dailynote/对应文件夹中。
 文件命名格式：YYYY-MM-DD-HH_MM_SS.txt
 日记格式规范：[日期] - 角色名 + 正文内容 + Tag: 关键词列表
 
@@ -30,7 +31,7 @@ Content: 日记内容
 模式二：TagMemo浪潮RAG检索（深度优先）
 语法：《《角色名日记本::Time::Group::TagMemo0.75》》
 机制：TagMemo浪潮算法语义检索，返回Top-K最相关条目
-参数：Time(时间加权)、Group(词元组增强)、TagMemo(浪潮算法+阈值)、Rerank(重排序)
+参数：Time(时间加权)、Group(词元组增强)、TagMemo(浪潮算法+权重，数字为权重非阈值)、Rerank(重排序)
 适用：快速问答、特定历史经验的决策辅助、精准信息定位
 
 模式三：元思考递归检索
@@ -39,8 +40,8 @@ Content: 日记内容
 适用：深度分析、结构化推理、多维度思考框架构建
 
 模式四：AI自主记忆管理
-工具：DailyNoteManager插件（更名为DailyNote统一插件）
-能力：整理格式化、去冗余精简、标签重整、知识体系构建、知识共享
+工具：DailyNote插件（写入：create/update）与DailyNoteManager插件（批量整理：list/organize/associate）
+能力：日记创建编辑、合并整理归档、关联日记发现；批量整理建议由专门记忆管理Agent操作并保留人工复核
 机制：AI主动调用管理插件对记忆库进行自优化
 
 四、向量化惯性通道理论
@@ -61,6 +62,7 @@ All记忆模式下AI表现显著优于传统RAG的理论解释：
 不同模型的记忆条目带来"基因库"多样性，在向量空间互补，形成"取长补短"的学习。整个AI群体通过共享记忆的学习和互动，集体知识水平持续提升，涌现出超越个体能力的智慧。
 
 七、日记文件夹结构
+（历史快照；现行部署以实际子目录为准，VCP百科全书现位于 knowledge/ 冷知识库）
 dailynote/
 ├── Nova/              ← Nova的私人日记本
 ├── Nova的知识/        ← Nova的知识库
@@ -75,7 +77,8 @@ dailynote/
 └── VCP百科全书/       ← 本百科全书
 
 八、DailyNote统一插件功能
-创建日记、编辑日记、删除日记、移动日记、批处理操作、标签管理、文件夹管理。支持串行和并发处理，是AI记忆管理的核心入口。
+DailyNote插件：创建日记（create）、更新日记（update），所有文件变更经单一FIFO串行队列执行，并与KnowledgeBaseManager的SQLite/Rust索引队列协调，避免多Agent并发写入竞争。批量整理能力由DailyNoteManager承接（list/organize/associate）。
 
 关联节点：TagMemo浪潮算法, VCP元思考, 向量化惯性通道, DailyNoteManager, 灵魂核心化
+核对记录(2026-09-02): 日记写入插件现名 DailyNote（hybridservice，常驻队列服务，create/update 指令，Plugin/DailyNote/dailynote.js），DailyNoteWrite 为历史称呼（docs/VCP记忆管理系统.md §3.1、§15）；文件命名 YYYY-MM-DD-HH_MM_SS[-后缀].txt 与 [日期] - 角色名 + 正文 + Tag: 格式仍有效（dailynote.js:673-701）。<<<DailyNoteStart>>>标记协议已在主仓代码中移除。四类占位符入口现行定义见 docs/VCP记忆管理系统.md §4（{{}}全文、<<>>门控全文、[[]]RAG片段、《《》》门控RAG片段，另含 ::RiverMemo 等修饰符）；《《::TagMemo0.75》》数字为权重。DailyNoteManager 现仅提供 list/organize/associate 三命令（§3.4）。dailynote/ 现存子目录与第七节快照不同（现为 Nova、公共的日常、前思维簇、逻辑推理簇、反思簇、结果辩证簇、陈词总结梳理簇、VCP开发、已整理等），VCP百科全书已迁至 knowledge/ 冷知识库（TDBKnowledgeManager 管理）。
 Tag: VCP日记系统, 记忆四模式, All记忆, TagMemo RAG, 元思考检索, 记忆自优化, 向量化惯性通道, Pro引导Flash, 跨模型协同, 灵魂核心化, DailyNote插件, 日记写入协议, 知识共享

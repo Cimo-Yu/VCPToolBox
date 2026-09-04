@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——ImageProcessor（原子切片）
 
 一、插件身份
@@ -8,19 +8,19 @@
 - protocol: `direct`
 
 二、核心能力
-- 在消息入模前识别Base64图像并提取描述文本。
+- 在消息入模前识别Base64多模态数据（图像/音频/视频）并提取描述文本。
 - 命中缓存则直接复用，未命中才调用多模态API。
-- 把图像替换为可读文本片段，降低主模型处理负担。
+- 把媒体数据替换为可读文本片段，降低主模型处理负担。
 
 三、关键配置
-- `API_URL`、`API_Key`、`ImageModel`、`ImagePrompt`
-- 并发限制：`ImageModelAsynchronousLimit`
-- 注入前缀：`ImageInsertPrompt`
+- `API_URL`、`API_Key`、`MultiModalModel`、`MultiModalPrompt`
+- 并发限制：`MultiModalModelAsynchronousLimit`
+- 注入前缀：`MediaInsertPrompt`
 
 四、缓存机制
-- 文件：`Plugin/ImageProcessor/image_cache.json`
-- 结构：以图像Base64为key，保存描述、id、timestamp。
-- 附带缓存维护工具（编辑、清理、重识别）。
+- 文件：`Plugin/ImageProcessor/multimodal_cache.sqlite`（SQLite，WAL模式）
+- 结构：multimodal_cache 表以媒体内容MD5哈希为key，保存base64、描述、mime_type、timestamp。
+- 附带缓存维护脚本（清理 purge_old_cache.js、重识别 reidentify_image.js）。
 
 五、风险点
 - 缓存膨胀会拖慢读取，需周期清理。
@@ -33,4 +33,6 @@
 
 说明：无需手动 TOOL_REQUEST，进入对话链后由预处理流程自动执行。
 
-Tag: ImageProcessor, messagePreprocessor, 图像预处理, Base64识别, 图像描述缓存, image_cache.json, 多模态API, ImagePrompt, 上下文压缩
+核对记录(2026-09-02): 缓存已由 image_cache.json 迁移为 SQLite（Plugin/ImageProcessor/image-processor.js initDatabase，better-sqlite3），配置项更名见 plugin-manifest.json configSchema（MultiModalModel/MultiModalPrompt/MultiModalModelAsynchronousLimit/MediaInsertPrompt），配置真源支持 modules/multiModalConfigStore.js 的 JSON 覆盖；原 image_cache_editor.html 已不在插件目录。
+
+Tag: ImageProcessor, messagePreprocessor, 图像预处理, Base64识别, 多模态描述缓存, multimodal_cache.sqlite, 多模态API, MultiModalPrompt, 上下文压缩

@@ -1,15 +1,15 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件实现——DailyNote（源码事实切片）
 
 一、源码锚点
 - manifest: Plugin/DailyNote/plugin-manifest.json
 - entry: Plugin/DailyNote/dailynote.js
-- 主分发: main() -> switch(command) -> create/update
+- 主分发: dispatchCommand() -> switch(normalizedCommand) -> create/update（direct 常驻服务经 processToolCall 入队，stdin 走 main()）
 - 关键函数: processTags(), handleCreateCommand(), handleUpdateCommand()
 
 二、行为事实（代码级）
 - create 支持参数兼容：maid/maidName/Maid/MAID、Date/dateString、Content/contentText。
-- Tag 处理优先级：独立 Tag 字段优先；否则检测 Content 末行 Tag:；两者都无则抛错。
+- Tag 处理优先级：独立 Tag 字段优先；否则检测 Content 末行 Tag:；都无时若 TagMaster 开启会先尝试 AI 生成，默认关闭下直接抛错。
 - maid 支持 [文件夹]名字 语法，创建时会拆分 folder 与 actualMaidName。
 - update 有安全门槛：target 长度必须 >= 15，否则直接拒绝。
 
@@ -28,4 +28,5 @@ Content:「始」记录一次源码切片审计。
 Tag: DailyNote, create, 源码事实「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: DailyNote, dailynote.js, create, update, processTags, Tag优先级, target最小长度15, 参数兼容, 同步调用, 记忆写入
+核对记录(2026-09-02): 已对照 Plugin/DailyNote/plugin-manifest.json 与 dailynote.js——主分发为 dispatchCommand()（hybridservice+direct 常驻服务经 processToolCall，main() 仅为 stdin 兼容入口）；Tag 处理含 TagMaster AI 生成支路（TagMaster 默认 false）。
+Tag: DailyNote, dailynote.js, create, update, processTags, Tag优先级, target最小长度15, 参数兼容, hybridservice, 记忆写入

@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——LightMemo（原子切片）
 
 一、插件身份
@@ -9,7 +9,7 @@
 
 二、核心能力
 - 一个允许AI主动搜索其RAG知识库（日记、知识库）的插件，作为DeepMemo（上下文搜索）的补充。
-- 提供可调用命令：SearchRAG。
+- 提供可调用命令：SearchRAG、TagMemoAB。
 
 三、占位符与注入点
 - systemPromptPlaceholders: 无
@@ -27,5 +27,7 @@
 tool_name:「始」LightMemo「末」,
 command:「始」SearchRAG「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): 依据 Plugin/LightMemo/plugin-manifest.json（v1.4.0）：SearchRAG现同时支持TDB冷知识库（TriviumDB）检索，并新增TagMemoAB生产构型A/B对比命令；name/displayName/pluginType与原记载一致。
 
 Tag: LightMemo, hybridservice, 混合服务, 检索, 信息获取, 记忆管理, SearchRAG

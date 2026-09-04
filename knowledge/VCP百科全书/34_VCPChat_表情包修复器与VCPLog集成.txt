@@ -35,6 +35,6 @@ VCPLog集成详解：
 
 反思与洞察：表情包URL修复器是一个非常实用的"容错"设计，它承认了AI模型在记忆URL时的不可靠性，并在前端层面优雅地解决了这个问题。这种"前端兜底"的思路值得借鉴。VCPLog的多通道通知机制则体现了对用户体验的深度考量——用户不应该被迫守在屏幕前等待耗时任务完成。
 
-信源/出处：README For VCPChat.md，VCPChat GitHub仓库。
+信源/出处：VCPChat README.md，VCPChat GitHub仓库。
 
 Tag: VCPChat，表情包修复器，URL修复，模糊匹配，VCPLog，WebSocket，异步通知，系统推送，图床密码，generated_lists，容错设计

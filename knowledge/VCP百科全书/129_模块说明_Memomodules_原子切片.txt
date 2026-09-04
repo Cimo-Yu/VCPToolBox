@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] Memomodules - 记忆管理中心模块
 
 一、模块基本信息
@@ -45,9 +45,12 @@ Memomodules是VCPChat的记忆管理中心，为Agent提供日记管理功能。
    - 实时主题切换
 
 四、主要文件结构
-- memo.js：核心逻辑（1005行）
+- memo.js：核心逻辑（1618行）
 - memo.html：UI布局
 - memo.css：样式定义
+- memo-graph.js：神经元云图（记忆联想网络）渲染与逻辑引擎
+- memo-workbench.js：日记工作台（多日记整合与参考阅读）
+- memory-river-console.html/js/css：记忆之河控制台
 
 五、关键API接口
 1. window.electronAPI.loadSettings()
@@ -62,12 +65,14 @@ Memomodules是VCPChat的记忆管理中心，为Agent提供日记管理功能。
 4. window.electronAPI.saveMemoConfig(config)
    - 保存Memo配置
 
-5. HTTP API（通过Basic Auth）：
-   - GET /admin_api/memo/folders - 获取文件夹列表
-   - GET /admin_api/memo/list - 获取日记列表
-   - POST /admin_api/memo/create - 创建日记
-   - PUT /admin_api/memo/update - 更新日记
-   - DELETE /admin_api/memo/delete - 删除日记
+5. HTTP API（通过Basic Auth，基址/admin_api/dailynotes）：
+   - GET /admin_api/dailynotes/folders - 获取文件夹列表
+   - GET /admin_api/dailynotes/folder/:folderName - 获取文件夹内日记列表
+   - GET /admin_api/dailynotes/note/:folder/:file - 获取日记内容
+   - POST /admin_api/dailynotes/note/:folder/:file - 创建/保存日记
+   - POST /admin_api/dailynotes/delete-batch - 批量删除日记
+   - POST /admin_api/dailynotes/move - 移动日记
+   - GET /admin_api/dailynotes/search?term=&folder= - 搜索日记（支持语义搜索）
 
 六、使用场景
 1. Agent日记记录：记录Agent的思考过程

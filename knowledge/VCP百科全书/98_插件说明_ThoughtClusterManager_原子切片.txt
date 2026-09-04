@@ -1,15 +1,15 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——ThoughtClusterManager（原子切片）
 
 一、插件身份
 - name: ThoughtClusterManager
 - displayName: 思维簇管理器
 - pluginType: synchronous
-- command: CreateClusterFile, EditClusterFile
+- command: CreateClusterFile, EditClusterFile, ListClusters
 
 二、核心能力
 - 一个用于创建和编辑AI自身思维链文件的插件，实现元自学习能力。
-- 提供可调用命令：CreateClusterFile、EditClusterFile。
+- 提供可调用命令：CreateClusterFile、EditClusterFile、ListClusters（查看簇内容，支持按簇名/链名查询）。
 
 三、占位符与注入点
 - systemPromptPlaceholders: 无
@@ -27,7 +27,7 @@
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」ThoughtClusterManager「末」,
 command:「始」CreateClusterFile「末」,
-filename:「始」learning_strategy.md「末」,
+clusterName:「始」学习策略簇「末」,
 content:「始」# 学习策略\n## 核心原则\n1. 循序渐进\n2. 实践为主「末」
 <<<[END_TOOL_REQUEST]>>>
 
@@ -35,8 +35,9 @@ content:「始」# 学习策略\n## 核心原则\n1. 循序渐进\n2. 实践为�
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」ThoughtClusterManager「末」,
 command:「始」EditClusterFile「末」,
-filename:「始」learning_strategy.md「末」,
-updates:「始」## 新增内容\n3. 反思总结「末」
+clusterName:「始」学习策略簇「末」,
+targetText:「始」这是需要被替换的旧思考内容，不少于15字「末」,
+replacementText:「始」## 新增内容\n3. 反思总结「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: ThoughtClusterManager, synchronous, 同步调用, CreateClusterFile, EditClusterFile
+Tag: ThoughtClusterManager, synchronous, 同步调用, CreateClusterFile, EditClusterFile, ListClusters

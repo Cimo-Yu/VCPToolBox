@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——WorkspaceInjector（原子切片）
 
 一、插件身份
@@ -30,5 +30,7 @@
 
 直接路径示例：
 `{{Workspace::D:\github\VCP\VCPToolBox-fork\Plugin::2}}`
+
+核对记录(2026-09-02): 两仓库均无WorkspaceInjector源码——glob *Workspace*/*Injector* 仅命中知识库文件与 modules\tagmemoV10\fieldWorkspace.js；git历史显示 commit e7306fd5(2026-06-26) 先禁用、a8d20f8d(2026-07-03) 随官方插件商店调整删除 Plugin\WorkspaceInjector\，本文事实与最后存在的manifest v1.2.0（messagePreprocessor、injector.js、WORKSPACE_ALIASES）一致，现需经官方插件商店获取，本地无法直接运行验证。
 
 Tag: WorkspaceInjector, Workspace占位符, 目录树注入, WORKSPACE_ALIASES, messagePreprocessor, 项目上下文, 深度限制, ignore规则, Token控制

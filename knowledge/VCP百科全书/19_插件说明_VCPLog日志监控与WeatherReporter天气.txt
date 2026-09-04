@@ -12,10 +12,10 @@ HTTPS/SSL环境格式：wss://域名/VCPlog/VCP_Key=密钥
 示例：服务器运行在localhost:5890且VCP_Key为123456时，连接地址为ws://localhost:5890/VCPlog/VCP_Key=123456
 
 服务器推送消息格式：
-连接确认消息：{"type": "connection_ack", "message": "VCPLog connection successful."}
-工具调用日志：{"type": "vcp_log", "data": {"tool_name": "工具名称", "status": "success或error", "content": "日志内容", "source": "来源标识"}}
+连接确认消息：{"type": "connection_ack", "message": "WebSocket connection successful for VCPLog."}
+工具调用日志：{"type": "vcp_log", "data": {"tool_name": "工具名称", "status": "success或error", "content": "日志内容", "source": "来源标识（可选）"}}
 
-source字段说明：stream_loop表示来自流式响应中的工具调用；stream_loop_error表示流式响应中工具调用的错误；stream_loop_not_found表示流式响应中工具未找到；non_stream_开头的对应非流式场景。
+source字段说明：source为可选的来源标识，当前源码中如task_scheduler_executor（定时任务执行）和task_scheduler_executor_error（定时任务执行出错）；旧版本的stream_loop/stream_loop_error/stream_loop_not_found/non_stream_*等流式与非流式来源分类已不存在。另：VCPLog客户端可通过?deviceName=上报稳定设备名，服务端支持按设备离线补发日志（vcpLogReplayManager）。
 
 日志文件路径：Plugin/VCPLog/log/VCPlog.txt，每条日志前带有时间戳，日志目录和文件在插件首次加载时自动创建。
 
@@ -63,5 +63,7 @@ VCPLog内置查看页面：Plugin/VCPLog/LogGet.html，可以直接在浏览器�
 关联节点：静态插件与折叠协议（WeatherReporter是折叠协议的典型实现）、通用变量占位符系统（{{VCPWeatherInfo}}占位符）、TagMemo浪潮算法（折叠协议的语义匹配底层）。
 
 信源/出处：Plugin/VCPLog/plugin-manifest.json，Plugin/VCPLog/README.md，Plugin/WeatherReporter/plugin-manifest.json，Plugin/WeatherReporter/README.md，dailynote/VCP开发/静态插件折叠协议开发手册.md。
+
+核对记录(2026-09-02): WebSocket服务已由插件内迁至主仓WebSocketServer.js统一管理（连接路径/VCPlog/VCP_Key=仍有效，connection_ack文本更新为"WebSocket connection successful for VCPLog."）；旧stream_loop/non_stream_*来源标识已不存在，source现为可选字段（现值如task_scheduler_executor），并新增按设备的日志离线补发机制。源码：Plugin/VCPLog/VCPLog.js、WebSocketServer.js、Plugin/VCPLog/plugin-manifest.json。WeatherReporter各项（占位符、cron、配置项、三个缓存文件、vcp_dynamic_fold折叠阈值0.5/0.35/0.0）均与源码一致，未改动。
 
 Tag: VCPLog，日志监控，WebSocket，工具调用日志，实时推送，WeatherReporter，天气预报，和风天气，静态插件，折叠协议，VCPWeatherInfo，天气API，service插件，调试工具

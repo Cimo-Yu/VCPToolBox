@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——ServerTencentCOSBackup（原子切片）
 
 一、插件身份
@@ -33,5 +33,7 @@ command:「始」upload_file「末」,
 local_path:「始」D:\github\VCP\VCPToolBox-fork\dailynote\VCP百科全书\49_插件说明_BilibiliFetch_原子切片.txt「末」,
 target_folder:「始」agent-data「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): ServerTencentCOSBackup 插件源码缺失——主仓 D:\vcp\VCPToolBox\Plugin\ 与分布式节点 D:\vcp\VCPChat\VCPDistributedServer\Plugin\ 均无同名或 *Tencent*/*COS*/*Backup* 变体目录（glob 依据）。上文命令清单（copy_file/move_file/delete_file/list_files/get_permissions/病毒检测等）未核证，请勿引用；现存的腾讯云COS插件为分布式节点 ChatTencentcos（plugin-manifest.json v1.0.0，仅 upload_file/download_file 两个命令，保留 TENCENTCLOUD_SECRET_ID/KEY、COS_BUCKET_NAME、COS_REGION、AGENT_FOLDERS_CONFIG 权限矩阵与 COMPRESS_THRESHOLD_MB 配置）。
 
 Tag: ServerTencentCOSBackup, 腾讯云COS, 云备份, upload_file, download_file, 权限矩阵, AGENT_FOLDERS_CONFIG, 病毒检测, 对象存储

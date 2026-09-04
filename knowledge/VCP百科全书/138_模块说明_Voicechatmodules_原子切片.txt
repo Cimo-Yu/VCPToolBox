@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] Voicechatmodules - 语音聊天模块
 
 一、模块基本信息
@@ -39,15 +39,16 @@ Voicechatmodules是VCPChat的语音聊天模块，提供语音和文本混合的
    - 用户手势检测
 
 四、主要文件结构
-- voicechat.js：核心逻辑（25KB）
+- voicechat.js：核心逻辑（31KB）
 - recognizer.html：语音识别界面（7KB）
 - voicechat.html：UI布局
 - voicechat.css：样式定义
 
 五、关键API接口
-1. Web Speech API：
-   - SpeechRecognition：语音识别
-   - SpeechSynthesisUtterance：语音合成
+1. 语音识别与合成（经 Electron API）：
+   - startSpeechRecognition()/stopSpeechRecognition()：启动/停止语音识别
+   - onSpeechRecognitionResult(callback)：接收识别结果
+   - sovitsSpeak(...)：请求TTS合成，音频经 onPlayTtsAudio 返回
 
 2. Web Audio API：
    - AudioContext：音频上下文
@@ -55,7 +56,7 @@ Voicechatmodules是VCPChat的语音聊天模块，提供语音和文本混合的
 
 3. window.electronAPI接口：
    - onVoiceChatData(callback)：接收语音聊天数据
-   - saveChatHistory()：保存聊天历史
+   - onPlayTtsAudio(callback)：接收TTS音频并入队播放
 
 六、使用场景
 1. 语音聊天：用语音与Agent交互

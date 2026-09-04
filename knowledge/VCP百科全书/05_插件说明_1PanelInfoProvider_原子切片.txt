@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——1PanelInfoProvider（原子切片）
 
 一、插件身份
@@ -6,6 +6,7 @@
 - displayName: 1Panel 信息提供器
 - pluginType: static
 - command: 无（自动触发）
+- 现状：插件已从主仓删除，当前源码中不存在（见文末核对记录）
 
 二、核心能力
 - 从1Panel服务器获取Dashboard基础信息和操作系统信息，并通过独立的系统提示词占位符提供这些数据。
@@ -24,5 +25,7 @@
 
 六、调用示例
 触发示例：在系统提示词中引用该插件占位符，等待周期刷新后自动注入。
+
+核对记录(2026-09-02): 全仓核对未见该插件——VCPToolBox\Plugin 与 VCPChat\VCPDistributedServer\Plugin 下均无 1PanelInfoProvider 目录及 plugin-manifest.json；VCPToolBox\vcptoolbox更新日志.txt 记录 2025-06-18 "Delete Plugin/1PanelInfoProvider directory (c8b6e4a)"。本文按历史条目保留，当前源码无此功能。
 
 Tag: 1PanelInfoProvider, static, 静态注入, 平台功能, 1PanelDashboard, 1PanelOsInfo

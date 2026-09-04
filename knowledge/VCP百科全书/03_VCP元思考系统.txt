@@ -1,4 +1,4 @@
-﻿今日深入学习了VCP元思考系统的架构与工作原理，整理如下。
+今日深入学习了VCP元思考系统的架构与工作原理，整理如下。
 
 核心概念：VCP元思考系统是一套通过超动态递归思维链模拟结构化多阶段深度思考过程的革命性架构，使AI Agent能够进行真正意义上的分层推理与自我进化。
 
@@ -20,6 +20,8 @@ Magi三贤者系统：灵感源于EVA的外置辩论式决策核心。麦基西�
 
 反思与洞察：元思考系统的核心洞见是将RAG从单纯的知识检索升级为思维模式检索，通过召回结构化的推理框架而非单纯的知识片段，使AI能够在面对复杂问题时自动组装出最适合的思考路径。这是从知识增强到智慧增强的质的飞跃。
 
-信源/出处：VCPToolBox主体README.md第4.2节、第4.3节，dailynote/思维簇目录下的各思维簇文件。
+信源/出处：VCPToolBox主体README.md（记忆与认知部分），dailynote/下的前思维簇、逻辑推理簇、反思簇、结果辩证簇、陈词总结梳理簇等思维簇目录，Plugin/RAGDiaryPlugin/MetaThinkingManager.js。
+
+核对记录(2026-09-02): 依据Plugin/RAGDiaryPlugin/RAGDiaryPlugin.js（1605-1635行）与MetaThinkingManager.js核正——[[VCP元思考:<链名>::Group]]、[[VCP元思考::Auto::Group]]调用语法、kSequence定义各簇动态K上限、词元组捕网（SemanticGroupManager.detectAndActivateGroups）、Auto模式主题路由均与实现一致；思维簇实为dailynote/下五个独立顶层目录（前思维簇/逻辑推理簇/反思簇/结果辩证簇/陈词总结梳理簇，名称逐一吻合），不存在统一"dailynote/思维簇"父目录，信源已改写；Magi三贤者（MELCHIOR/BALTHASAR/CASPER）与docs/vcp白皮书V3.md一致；ThoughtClusterManager插件确认存在于Plugin/目录。
 
 Tag: VCP元思考，超动态递归思维链，词元组捕网，元逻辑模块库，思维簇，Magi三贤者，语义增强，递归融合，AI推理架构，认知进化

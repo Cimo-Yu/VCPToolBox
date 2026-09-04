@@ -1,4 +1,5 @@
-﻿今日系统整理了ServerFileOperator（VCP服务器文件操作器）插件的完整使用说明，作为客服知识库。
+[2026-09-02] - 系统
+今日系统整理了ServerFileOperator（VCP服务器文件操作器）插件的完整使用说明，作为客服知识库。
 
 核心概念：ServerFileOperator是VCP服务器专用的强大文件系统操作插件，允许AI对受限目录进行读、写、列出、移动、复制、删除等多种文件和目录操作，特别增强了对PDF、Word(.docx)和表格(.xlsx/.csv)文件的自动解析能力。
 
@@ -11,7 +12,7 @@ ListAllowedDirectories——列出所有被授权访问的根目录及第一层�
 ReadFile——读取文件内容，自动解析PDF/DOCX/XLSX/XLS/CSV格式，参数filePath（必需）、encoding（可选，默认utf8）。
 WebReadFile——从URL地址读取文件，先下载到临时目录再解析，支持ReadFile支持的所有格式，参数url（必需）。
 WriteFile——写入新文件，同名文件自动加序号（file.txt变为file(1).txt），参数filePath（必需）、content（必需）、encoding（可选）。
-WriteEscapedFile——专用于写入含VCP特殊字符的文件（特别是plugin-manifest.json），转义规则：「始exp」→「始」、「末exp」→「末」、<<<[TOOL_REQUEST_EXP]>>>→<<<[TOOL_REQUEST_EXP]>>>，参数filePath（必需）、content（必需）。
+WriteEscapedFile——专用于写入含VCP特殊字符的文件（特别是plugin-manifest.json），转义规则：「始ESCAPE」→「始」、「末ESCAPE」→「末」、<<<[TOOL_REQUEST_ESCAPE]>>>→<<<[TOOL_REQUEST]>>>、<<<[END_TOOL_REQUEST_ESCAPE]>>>→<<<[END_TOOL_REQUEST]>>>，参数filePath（必需）、content（必需）。
 EditFile——覆盖已有文件的全部内容，文件不存在时返回错误（区别于WriteFile），参数filePath（必需）、content（必需）。
 AppendFile——追加内容到文件末尾，文件不存在时自动创建，参数filePath（必需）、content（必需）。
 ApplyDiff——对文件进行差异修改（查找并替换），参数filePath（必需）、searchString（必需）、replaceString（必需）。
@@ -55,5 +56,7 @@ content2:「始」这是说明文件「末」
 关联节点：VCP指令协议语法（串行调用格式）、同步插件开发规范（插件类型说明）、分布式架构（超栈追踪文件解析）。
 
 信源/出处：Plugin/FileOperator/plugin-manifest.json，Plugin/FileOperator/FileOperator.js，dailynote/VCP开发/插件开发指令集.txt。
+
+核对记录(2026-09-02): 按Plugin\FileOperator\plugin-manifest.json（name=ServerFileOperator，synchronous，timeout 300000ms，入口node FileOperator.js）与FileOperator.js核正——WriteEscapedFile的转义标记现为「始ESCAPE」「末ESCAPE」「<<<[TOOL_REQUEST_ESCAPE]>>>」「<<<[END_TOOL_REQUEST_ESCAPE]>>>」（FileOperator.js 706-709行），原「始exp」/「末exp」/TOOL_REQUEST_EXP 系旧约定已失效；19个命令名与参数、MAX_FILE_SIZE默认10485760、MAX_DIRECTORY_ITEMS默认1000、MAX_SEARCH_RESULTS默认100、DEBUG_MODE默认true、command1/command2串行调用（FileOperator.js 1784行起）均与源码一致；ApplyDiff/UpdateHistory 现推荐target/replace字段，searchString/replaceString仍完全兼容。
 
 Tag: ServerFileOperator，文件操作，ReadFile，WriteFile，EditFile，ApplyDiff，WriteEscapedFile，PDF解析，目录操作，文件管理，VCP文件插件

@@ -1,4 +1,4 @@
-﻿今日系统整理了SunoMusicGen（Suno音乐生成器）插件的完整使用说明，作为客服知识库。
+今日系统整理了SunoMusicGen（Suno音乐生成器）插件的完整使用说明，作为客服知识库。
 
 核心概念：SunoMusicGen是VCP的异步音乐生成插件，使用Suno API（sunoapi.org）生成高质量AI音乐，支持描述模式和自定义歌词模式，支持音乐延长，支持多API Key智能轮换，生成完成后通过占位符机制自动更新结果。
 
@@ -62,5 +62,7 @@ query——手动查询任务状态。参数：taskId（任务ID）。通常不�
 关联节点：异步插件开发规范（占位符机制原理）、VCP指令协议语法（archery:no_reply）、VCPLog（监控生成状态）。
 
 信源/出处：Plugin/SunoMusicGen/plugin-manifest.json，Plugin/SunoMusicGen/README.md，Plugin/SunoMusicGen/SunoMusicGen.mjs。
+
+核对记录(2026-09-02): 经两仓全盘检索（VCPToolBox\Plugin\、VCPChat\VCPDistributedServer\Plugin\ 及全库均无 *Suno* 插件目录或源码，仅存本文等知识库条目），SunoMusicGen 插件源码已不在源码中；本文所载命令、参数与配置项已无法对照源码验证，按历史资料保留，请勿据此调用。
 
 Tag: SunoMusicGen，音乐生成，Suno API，异步插件，占位符机制，多API Key轮换，描述模式，自定义模式，音乐延长，extend，V4，V4_5，音频生成，AI音乐

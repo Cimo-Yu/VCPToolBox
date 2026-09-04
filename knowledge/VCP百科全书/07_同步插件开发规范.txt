@@ -1,4 +1,4 @@
-﻿今日系统学习了VCP同步插件的完整开发规范，整理如下。
+今日系统学习了VCP同步插件的完整开发规范，整理如下。
 
 核心概念：VCP同步插件是一种外部可执行程序或脚本，被主服务按需调用以执行特定任务。主服务启动插件进程、发送数据、等待执行完成并返回结果，整个过程是阻塞式的。
 
@@ -32,6 +32,8 @@ configSchema定义插件需要的配置项，这些配置项由插件目录下�
 
 反思与洞察：同步插件的设计哲学是最小化复杂度——插件只需要关心自己的核心逻辑，所有的调用管理、参数解析、结果注入都由VCP框架负责。这使得开发一个功能完备的VCP插件只需要几十行代码。
 
-信源/出处：dailynote/VCP开发/同步异步插件开发手册.md第1-4节，Plugin/SciCalculator/、Plugin/FileOperator/为参考实现。
+信源/出处：dailynote/VCP开发/VCP同步异步插件开发手册.md第1-4节，Plugin/SciCalculator/、Plugin/FileOperator/为参考实现。
+
+核对记录(2026-09-02): 依据 Plugin.js（buildVCPDescription以VCP+插件名生成{{VCP插件名}}占位符、communication.timeout默认60000、requiresAdmin时注入DECRYPTED_AUTH_CODE）、docs/VCP同步异步插件开发手册.md（§3.3多模态content数组、§4.1超时、§4.5管理员权限、§4.2参数鲁棒性）、docs/PLUGIN_ECOSYSTEM.md（标准返回格式{status,result,error,messageForAI,base64}）、Plugin/WeatherReporter等manifest及chokidar热重载逐项核对，全部一致；仅将信源中手册文件名更正为实际存在的"VCP同步异步插件开发手册.md"。
 
 Tag: VCP同步插件，plugin-manifest.json，stdio协议，invocationCommands，configSchema，多模态返回，多指令插件，参数鲁棒性，管理员权限，热加载，插件开发

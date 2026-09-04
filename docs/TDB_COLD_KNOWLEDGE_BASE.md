@@ -58,7 +58,7 @@ VCPToolBox 现有的浪潮记忆系统（[`KnowledgeBaseManager.js`](../Knowledg
 - **单例 + 多库句柄**：`TDBKnowledgeManager` 为服务内单例（TriviumDB 是独占文件锁，绝不能多进程/多实例打开同一库）；内部用 `this.libs = Map<libraryName, handle>` 管理多个库句柄。
 - **轻量 manifest（better-sqlite3）**：`VectorStoreTDB/tdb_knowledge_meta.sqlite` 维护 `files` / `chunks` 两张表，记录文件 hash、mtime、size、doc_node_id、chunk node_id。TriviumDB 自身不是文件索引器，文件更新时需要靠此 manifest 精准删除旧 chunk 节点。
 - **节点模型**：一个 chunk 一个节点（type=chunk），一个文件一个文档节点（type=document）。
-  - Payload 精简原则：只存 `source_path`、`chunk_index`、`hash`、`text_preview`（前 500 字），不塞全文（TriviumDB 的 Payload 与图关系全量常驻内存）。
+  - Payload 精简原则：只存 `source_path`、`chunk_index`、`hash`、`text_preview`（前 600 字），不塞全文（TriviumDB 的 Payload 与图关系全量常驻内存）。
   - 图关系：`document -[contains]-> chunk`、`chunk[i] -[next]-> chunk[i+1]`、`chunk[i+1] -[prev]-> chunk[i]`，使图扩散检索有意义。
 - **混合检索**：优先调用 TriviumDB 的 `search_hybrid`（BM25 稀疏 + 向量稠密 + 图扩散），不可用时回退到 `search`。
 - **绑定兼容**：通过 `_callDb()` 在多种方法命名（驼峰/下划线）和多种构造签名间做容错，避免 TriviumDB Node 绑定 API 命名差异导致崩溃。

@@ -43,9 +43,14 @@ try {
 // ============================================================
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || 'https://api.openai.com').replace(/\/+$/, '');
+const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || 'https://api.openai.com').replace(/\/+$/, '').replace(/\/v1$/i, ''); // 归一化：剥掉尾部斜杠与 /v1 后缀，后续拼接统一补 /v1/*，避免系统环境变量带 /v1 时出现 /v1/v1 双重前缀
 const GPT_IMAGE_MODEL = process.env.GPT_IMAGE_MODEL || 'gpt-image-2';
 const DEFAULT_SIZE = process.env.DEFAULT_SIZE || '1024x1024';
+// API 硬限制（2026-09-01 实测 dali2897 渠道 400 错误体确认）：
+// "longest edge must not exceed 3840px" + "total maximum number of pixels must not exceed 8,294,400"
+// 两条上限支持通过 config.env 覆盖，默认值即该渠道实测上限。
+const MAX_EDGE_PX = parseInt(process.env.MAX_EDGE_PX, 10) > 0 ? parseInt(process.env.MAX_EDGE_PX, 10) : 3840;
+const MAX_TOTAL_PIXELS = parseInt(process.env.MAX_TOTAL_PIXELS, 10) > 0 ? parseInt(process.env.MAX_TOTAL_PIXELS, 10) : 8294400;
 const DEFAULT_QUALITY = process.env.DEFAULT_QUALITY || 'auto';
 const DEFAULT_RESPONSE_FORMAT = process.env.DEFAULT_RESPONSE_FORMAT || 'url';
 const DEFAULT_BACKGROUND = process.env.DEFAULT_BACKGROUND || 'auto';
@@ -58,6 +63,12 @@ const USE_CHAT_COMPLETIONS_MODE = process.env.USE_CHAT_COMPLETIONS_MODE === 'tru
 // 重试配置
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '2', 10);
 const RETRY_BASE_DELAY_MS = parseInt(process.env.RETRY_BASE_DELAY_MS || '2000', 10);
+
+// 单次 API 请求超时（毫秒）：默认 10 分钟。
+// 高质量图像生成 + 多次图生图上传可能较慢，10 分钟给足时间，避免在高清/高质档被过早掐断。
+const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || '600000', 10) > 0
+    ? parseInt(process.env.REQUEST_TIMEOUT_MS || '600000', 10)
+    : 600000;
 
 // 图生图单图大小限制 (bytes)
 const MAX_IMAGE_SIZE = 4 * 1024 * 1024; // 4MB — OpenAI /v1/images/edits 端点限制
@@ -96,7 +107,10 @@ function debugLog(...args) {
 
 /**
  * 验证尺寸参数
- * gpt-image-2 支持灵活尺寸，规则：最长边 ≤ 3840，格式为 WIDTHxHEIGHT
+ * gpt-image-2 支持灵活尺寸，双限制（与 API 400 错误体逐字对齐）：
+ * 1) 最长边 ≤ MAX_EDGE_PX（默认 3840）
+ * 2) 宽×高总像素 ≤ MAX_TOTAL_PIXELS（默认 8,294,400，即 3840x2160 的面积预算）
+ * 仅校验最长边会让 3840x3840 等组合漏到 API 端才被 400 拒绝。
  * @param {string} size - 尺寸字符串
  * @returns {boolean}
  */
@@ -105,8 +119,10 @@ function isValidSize(size) {
     if (!match) return false;
     const width = parseInt(match[1], 10);
     const height = parseInt(match[2], 10);
-    // gpt-image-2 规则：最长边不超过 3840，最短边至少 256
-    return width >= 256 && height >= 256 && Math.max(width, height) <= 3840;
+    // 规则：最短边至少 256，最长边不超过上限，总面积不超过像素预算
+    return width >= 256 && height >= 256
+        && Math.max(width, height) <= MAX_EDGE_PX
+        && width * height <= MAX_TOTAL_PIXELS;
 }
 
 /**
@@ -234,7 +250,7 @@ function httpRequest(url, options = {}, body = null) {
             path: parsedUrl.pathname + parsedUrl.search,
             method: options.method || 'GET',
             headers: options.headers || {},
-            timeout: options.timeout || 300000 // 默认 5 分钟超时
+            timeout: options.timeout || REQUEST_TIMEOUT_MS // 默认 10 分钟超时
         };
 
         debugLog(`HTTP ${reqOptions.method} ${url}`);
@@ -732,7 +748,7 @@ async function callImageAPIViaChatCompletions(params) {
             'Accept': 'application/json',
             'Content-Length': Buffer.byteLength(bodyStr)
         },
-        timeout: 300000
+        timeout: REQUEST_TIMEOUT_MS
     }, bodyStr);
 
     debugLog('Chat Completions Response Status:', response.statusCode);
@@ -924,7 +940,7 @@ async function callImageAPI(params) {
                     'Accept': 'application/json',
                     'Content-Length': Buffer.byteLength(bodyStr)
                 },
-                timeout: 300000
+                timeout: REQUEST_TIMEOUT_MS
             }, bodyStr);
 
             // 若当前候选端点返回 404/405，则自动尝试下一个候选端点
@@ -1068,7 +1084,7 @@ async function callEditAPI(params) {
             'Accept': 'application/json',
             'Content-Length': body.length
         },
-        timeout: 300000
+        timeout: REQUEST_TIMEOUT_MS
     }, body);
 
     return parseApiResponse(response);
@@ -1314,7 +1330,7 @@ async function main() {
         if (!isValidSize(size)) {
             return outputAndExit({
                 status: 'error',
-                error: `GPTImageGen: 无效的 size 参数 "${size}"。格式为 WIDTHxHEIGHT，最长边 ≤ 3840，最短边 ≥ 256。常用尺寸: 1024x1024, 1536x1024, 1024x1536, 2048x2048, 3840x2160`
+                error: `GPTImageGen: 无效的 size 参数 "${size}"。格式为 WIDTHxHEIGHT，最长边 ≤ ${MAX_EDGE_PX}，最短边 ≥ 256，且宽x高总像素 ≤ ${MAX_TOTAL_PIXELS}（约等于 ${MAX_EDGE_PX}x${Math.floor(MAX_TOTAL_PIXELS / MAX_EDGE_PX)} 的面积）。常用尺寸: 1024x1024, 1536x1024, 1024x1536, 2048x2048, 3840x2160`
             });
         }
 

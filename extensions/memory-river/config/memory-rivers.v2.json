@@ -20,6 +20,13 @@
       "displayName": "Ariadne",
       "enabled": true,
       "metadata": {}
+    },
+    {
+      "principalId": "vcpchat:___1788245773918",
+      "principalType": "agent",
+      "displayName": "可可",
+      "enabled": true,
+      "metadata": {}
     }
   ],
   "diaries": [
@@ -46,6 +53,18 @@
       },
       "enabled": true,
       "metadata": {}
+    },
+    {
+      "diaryId": "diary:98cb702b465c",
+      "diaryName": "可可的美学体系",
+      "ownerPrincipalId": "vcpchat:weiming",
+      "source": {
+        "type": "folder",
+        "folder": "可可的美学体系",
+        "canonicalKey": "folder:可可的美学体系"
+      },
+      "enabled": true,
+      "metadata": {}
     }
   ],
   "rivers": [
@@ -65,6 +84,16 @@
       "memoryScope": "river:111",
       "diaryIds": [
         "diary:f83d31e40639"
+      ],
+      "enabled": true,
+      "metadata": {}
+    },
+    {
+      "riverId": "river:0983fea849eb",
+      "name": "可可",
+      "memoryScope": "river:river:0983fea849eb",
+      "diaryIds": [
+        "diary:98cb702b465c"
       ],
       "enabled": true,
       "metadata": {}

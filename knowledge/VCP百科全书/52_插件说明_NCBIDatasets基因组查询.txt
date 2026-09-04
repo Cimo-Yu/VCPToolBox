@@ -2,7 +2,7 @@
 
 核心概念：NCBIDatasets是VCP的NCBI基因组数据查询插件，封装了NCBI Datasets v2 API的核心功能，支持按物种搜索基因组组装、按基因ID或符号查询基因详情、获取物种分类信息、搜索病毒基因组等，是生物信息学研究的基础数据获取工具。
 
-插件基本信息：插件名称NCBIDatasets，版本0.2.0，类型synchronous同步插件，超时时间30秒，入口文件NCBIDatasets.mjs（Node.js）。系统提示词占位符为{{VCPNCBIDatasets}}。
+插件基本信息：插件名称NCBIDatasets，版本0.2.0，类型synchronous同步插件，超时时间30秒，入口文件NCBIDatasets.mjs（Node.js）。无系统提示词占位符（synchronous同步插件，通过TOOL_REQUEST工具调用使用）。
 
 简明释义：NCBI（美国国家生物技术信息中心）是全球最大的生物序列数据库，收录了数百万个基因组组装、基因和物种信息。这个插件让AI能够直接查询NCBI的基因组数据，在分子生物学、遗传学、微生物学等领域提供精确的基因组学数据支撑。
 
@@ -67,6 +67,8 @@ max_results:「始」5「末」
 
 关联节点：KEGGSearch通路数据库（配合使用进行通路-基因-物种联动分析）、PubMedSearch文献检索（查找相关文献）、PaperReader论文阅读器（深度阅读基因组学论文）。
 
-信源/出处：Plugin/NCBIDatasets/plugin-manifest.json（147行），Plugin/NCBIDatasets/NCBIDatasets.mjs。
+信源/出处：Plugin/NCBIDatasets/plugin-manifest.json.block（147行），Plugin/NCBIDatasets/NCBIDatasets.mjs。
+
+核对记录(2026-09-02): 插件当前为禁用态（契约文件为 plugin-manifest.json.block，非启用态 plugin-manifest.json）；版本、类型、超时、配置项与22个命令经 manifest(.block) 核对一致；原文{{VCPNCBIDatasets}}占位符在 manifest 与源码中均不存在，已更正为无占位符。
 
 Tag: NCBIDatasets，NCBI，基因组，基因查询，物种分类，病毒基因组，BioProject，分类学谱系，基因组组装，生物信息学

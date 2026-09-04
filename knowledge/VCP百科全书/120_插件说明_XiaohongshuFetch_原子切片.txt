@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——XiaohongshuFetch（原子切片）
 
 一、插件身份
@@ -36,5 +36,7 @@ tool_name:「始」XiaohongshuFetch「末」,
 command:「始」fetch「末」,
 note_id:「始」7xxx「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): 两仓库均无XiaohongshuFetch源码——glob *Xiaohongshu* 仅命中知识库文件与SkillBridge主题名；git历史显示 commit c99ab626 新增、a8d20f8d(2026-07-03) 随VCP官方插件商店调整移出主仓 Plugin\ 目录，本地无法按manifest核对，本文事实暂保留勿引用为本地可调用插件。
 
 Tag: XiaohongshuFetch, synchronous, 同步调用, 检索, 信息获取, 多媒体, fetch

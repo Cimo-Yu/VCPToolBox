@@ -1,4 +1,4 @@
-[2026-03-03] - 幽浮喵
+[2026-09-02] - 幽浮喵
 [VCP百科全书] VCPChat技术架构与目录结构详解
 
 一、整体架构
@@ -69,7 +69,7 @@ VCPChat采用Electron典型的多进程架构，结合模块化设计实现功�
 
 3.1 根目录文件
 
-main.js (61KB)
+main.js (87KB, 1961行)
 ├── Electron应用入口
 ├── 窗口生命周期管理
 ├── IPC事件总线注册
@@ -77,14 +77,14 @@ main.js (61KB)
 ├── 系统托盘管理
 └── 全局快捷键处理
 
-preload.js (25KB)
+preload.js (2行，已弃用的根级shim；预加载层现位于 preloads/)
 ├── contextBridge配置
 ├── IPC通道白名单
 ├── API暴露定义
 ├── 安全沙箱边界
 └── 主渲染进程通信
 
-renderer.js (90KB)
+renderer.js (58KB, 1205行)
 ├── 渲染进程入口
 ├── UI事件监听
 ├── 消息处理逻辑
@@ -92,7 +92,7 @@ renderer.js (90KB)
 ├── 模块加载协调
 └── 用户交互响应
 
-main.html (74KB)
+main.html (197KB, 2692行)
 ├── 主窗口HTML结构
 ├── 界面布局定义
 ├── 资源引用
@@ -101,12 +101,13 @@ main.html (74KB)
 
 package.json
 ├── 项目元数据
-├── 依赖声明 (74个npm包)
+├── 依赖声明 (约59个npm包：dependencies 51 + devDependencies 7 + optionalDependencies 1)
 ├── 脚本命令 (start/pack/dist)
 ├── 构建配置
-└── Electron版本锁定
+└── Electron版本锁定 (^44.0.0)
 
 VCP.md (161KB)
+├── （已不在 VCPChat 仓库；VCP.md 现位于 VCPToolBox 根目录，约54KB）
 ├── VCP协议完整规范
 ├── 学术级技术文档
 ├── 案例研究
@@ -160,11 +161,11 @@ ipc/ 子目录 (IPC处理器)
 
 3.3 功能模块目录 (*modules/)
 
-Assistantmodules/
-├── assistant.html        # 助手界面
-├── assistant.js          # 助手逻辑
-├── assistant-bar.html    # 助手侧边栏
-└── assistant-bar.js      # 侧边栏逻辑
+Assistantmodules/（已不存在——助手界面现位于 rust_assistant_engine/ui/ 的 assistant.html/assistant-bar.html，根目录另有 Agenttaskmodules/ 任务界面）
+├── assistant.html        # 助手界面（已迁移）
+├── assistant.js          # 助手逻辑（已迁移）
+├── assistant-bar.html    # 助手侧边栏（已迁移）
+└── assistant-bar.js      # 侧边栏逻辑（已迁移）
 
 Canvasmodules/
 ├── canvas.html           # Canvas主界面
@@ -218,19 +219,19 @@ VchatManager/
 
 3.4 VCPDistributedServer/ 分布式服务器
 
-VCPDistributedServer.js (25KB)
+VCPDistributedServer.js (40KB)
 ├── WebSocket服务器
 ├── 插件注册管理
 ├── 消息路由分发
 └── 节点状态监控
 
-Plugin.js (23KB)
+Plugin.js (30KB)
 ├── 插件生命周期管理
 ├── 插件进程控制
 ├── 消息序列化处理
 └── 错误处理机制
 
-Plugin/ (22个官方插件)
+Plugin/ (32个插件目录，原文所列23个均在，另新增 DesktopRemote/ LoomController/ PluginSourceViewer/ ScriptoriumCollaborator/ VChatAutoTTS/ VChatDynamicWallpaper/ VCPMobileSync/ VCPWEWallpaper/ VCPWEWallpaperUI/ VirusTotalAnalyzer/)
 ├── BladeGame/          # 文字冒险游戏
 ├── ChatRoomViewer/     # 聊天室查看器
 ├── ChatTencentcos/     # 腾讯云COS
@@ -384,4 +385,5 @@ npm run dist         # 构建完整安装包
 ✓ 进程间通信的标准化
 ✓ 便于追踪和调试
 
+核对记录(2026-09-02): 逐项glob/文件系统核对——3.2所列22个核心模块文件全部存在（modules/下），3.2所列18个ipc处理器全部存在且modules/ipc现有30个（新增ragHandlers/tavernHandlers/voiceHandlers/docxHandlers/desktopHandlers/desktopRemoteHandlers/deepWikiHandlers/translatorHandlers等）；核心模块体积普遍增长（chatManager 118KB、messageRenderer 194KB、settingsManager 121KB、text-viewer 106KB、event-listeners 80KB、topicListManager 66KB、itemListManager 52KB、filterManager 32KB、notificationRenderer 39KB、global-settings-manager 20KB、SovitsTTS 34KB，其余与原文相近），文中未逐一改写，以实际为准。3.3功能模块目录中Canvasmodules/Groupmodules（groupchat.js、grouprenderer.js）/Memomodules（memo.html/js/css）/Notemodules（notes.html/js/css）均属实；根目录现另有Desktopmodules/Logmodules/Loommodules/PluginManagerModules/ScriptoriumModules/Tavernmodules等新模块目录。3.5中assets/仅存icon.png（icon.icns与icon.ico缺失，electron-builder配置仍引用）；themes.css已不在根目录（样式归口styles/）；根级file/、image/目录不存在。3.6中.eslintrc.js已移除（eslint改由依赖与脚本承载）；pyproject.toml/poetry.lock/requirements.txt属实。3.7中backup.py/process_songs.py/start.bat/启动Vchat.vbs/splash.html均存在。
 Tag: VCPChat架构, Electron, 目录结构, 模块系统, 进程架构, IPC通信, 插件机制, 文件组织, 技术栈, 开发工作流

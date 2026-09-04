@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——AgentDream（原子切片）
 
 一、插件身份
@@ -28,4 +28,6 @@ tool_name:「始」AgentDream「末」,
 command:「始」DiaryMerge「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: AgentDream, hybridservice, 混合服务, 多媒体, 记忆管理, DiaryMerge, DiaryDelete, DreamInsight
+核对记录(2026-09-02): 插件事实已与 Plugin\AgentDream\plugin-manifest.json.block 逐项核对一致（displayName 梦系统插件、hybridservice、命令 DiaryMerge/DiaryDelete/DreamInsight、支持串语法）；该插件当前为禁用态（.json.block），启用前先核对其 config.env.example 必填项。
+
+Tag: AgentDream, hybridservice, 混合服务, 记忆管理, DiaryMerge, DiaryDelete, DreamInsight

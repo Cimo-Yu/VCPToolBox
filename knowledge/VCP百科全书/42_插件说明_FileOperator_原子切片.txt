@@ -1,10 +1,10 @@
-[2026-03-03] - Agent-A
+[2026-09-02] - Agent-A
 [VCP百科全书] FileOperator - 文件操作器
 
 一、插件基本信息
 1. 插件名称：FileOperator / 文件操作器
 2. 插件类型：同步插件 (synchronous)
-3. 版本号：1.0.1
+3. 版本号：1.0.2
 4. 所属模块：VCPDistributedServer/Plugin
 5. 功能一句话总结：强大的文件系统操作插件，支持读写删除移动复制，自动解析PDF/Word/Excel
 
@@ -228,33 +228,33 @@ FileOperator是一个功能完整的文件系统操作插件，允许AI对受限
     <<<[END_TOOL_REQUEST]>>>
 
 16. ApplyDiff - 应用差异修改
-    功能：对文件应用diff修改
+    功能：对文件应用diff修改，替换target首次出现处（旧参数名searchString/replaceString仍兼容）
     参数：
     - filePath (string, 必需): 文件路径
-    - searchString (string, 必需): 要查找的文本
-    - replaceString (string, 必需): 替换文本
+    - target (string, 必需): 要查找的文本
+    - replace (string, 必需): 替换文本
     调用格式：
     <<<[TOOL_REQUEST]>>>
     tool_name:「始」FileOperator「末」,
     command:「始」ApplyDiff「末」,
     filePath:「始」/path/to/file.md「末」,
-    searchString:「始」旧内容「末」,
-    replaceString:「始」新内容「末」
+    target:「始」旧内容「末」,
+    replace:「始」新内容「末」
     <<<[END_TOOL_REQUEST]>>>
 
 17. UpdateHistory - 更新聊天历史
-    功能：安全更新JSON格式的聊天历史文件
+    功能：安全更新JSON格式的聊天历史文件（仅修改assistant发言内容中首次命中的文本）
     参数：
     - filePath (string, 必需): 历史文件路径
-    - searchString (string, 必需): 要查找的文本
-    - replaceString (string, 必需): 替换文本
+    - target (string, 必需): 要查找的文本（旧参数名searchString仍兼容）
+    - replace (string, 必需): 替换文本
     调用格式：
     <<<[TOOL_REQUEST]>>>
     tool_name:「始」FileOperator「末」,
     command:「始」UpdateHistory「末」,
     filePath:「始」/path/to/history.json「末」,
-    searchString:「始」旧内容「末」,
-    replaceString:「始」新内容「末」
+    target:「始」旧内容「末」,
+    replace:「始」新内容「末」
     <<<[END_TOOL_REQUEST]>>>
 
 18. CreateCanvas - 创建Canvas文件

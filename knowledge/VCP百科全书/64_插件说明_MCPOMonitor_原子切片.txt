@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——MCPOMonitor（原子切片）
 
 一、插件身份
@@ -24,5 +24,7 @@
 
 六、调用示例
 触发示例：在系统提示词中引用该插件占位符，等待周期刷新后自动注入。
+
+核对记录(2026-09-02): 源码缺失——glob 两仓 *MCP* 仅命中本知识库文件与 node_modules，两处 Plugin 目录均无 MCPOMonitor 目录及 plugin-manifest，{{MCPOServiceStatus}} 占位符暂无法证实，按存档保留。
 
 Tag: MCPOMonitor, static, 静态注入, 系统工具, MCPOServiceStatus

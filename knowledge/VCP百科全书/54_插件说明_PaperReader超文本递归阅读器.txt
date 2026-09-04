@@ -1,8 +1,8 @@
 今日学习了VCPToolBox新增的PaperReader插件，这是一个超文本递归阅读引擎，能够将超长PDF文档转化为目标驱动的多分辨率自适应阅读流程，支持MinerU云端高保真解析。
 
-核心概念：PaperReader（超文本递归阅读器）V0.4版本是VCP的深度文档阅读引擎，提供从PDF解析到智能阅读的完整管线。核心创新在于统一的Read命令，自动执行Survey（骨架提取）→ Triage（分诊注意力分配）→ DeepDive/Skim（精读/扫读）→ Audit（去偏见审核）→ Synthesize（合成报告）的完整流程，智能决定哪些章节精读、哪些扫读、哪些跳过。
+核心概念：PaperReader（超文本递归阅读器）V0.6版本是VCP的深度文档阅读引擎，提供从PDF解析到智能阅读的完整管线。核心创新在于统一的Read命令，自动执行Survey（骨架提取）→ Triage（分诊注意力分配）→ DeepDive/Skim（精读/扫读）→ Audit（去偏见审核）→ Synthesize（合成报告）的完整流程，智能决定哪些章节精读、哪些扫读、哪些跳过。
 
-插件基本信息：插件名称PaperReader，版本0.4.0，类型synchronous同步插件，超时时间1800秒（30分钟，因为处理大文档需要大量时间），入口文件PaperReader.js（Node.js）。系统提示词占位符为{{VCPPaperReader}}。
+插件基本信息：插件名称PaperReader，版本0.6.0，类型synchronous同步插件，超时时间1800秒（30分钟，因为处理大文档需要大量时间），入口文件bin\paperreader-cli.exe（Rust可执行文件，stdio协议）。当前无系统提示词占位符。
 
 简明释义：想象AI像一个经验丰富的研究者阅读论文——先快速翻一遍了解结构（Survey），然后判断哪些章节对当前目标最重要（Triage），重要章节精读、次要章节扫读、无关章节跳过（DeepDive/Skim），最后审核确保没有遗漏或偏见（Audit），再综合输出报告（Synthesize）。整个过程全自动，只需要提供PDF路径和阅读目标。
 
@@ -51,6 +51,8 @@ question:「始」这份文档的核心结论是什么？「末」
 
 关联节点：PubMedSearch文献检索（获取PMID后用get_full_text获取PMC全文再用PaperReader深度阅读）、DeepWikiVCP文档抓取（同类文档处理工具）、VCP指令协议语法（调用格式）。
 
-信源/出处：Plugin/PaperReader/plugin-manifest.json（87行），Plugin/PaperReader/PaperReader.js。
+信源/出处：Plugin/PaperReader/plugin-manifest.json.block（215行），Plugin/PaperReader/README.md，Plugin/PaperReader/bin/paperreader-cli.exe。
+
+核对记录(2026-09-02): 依据 Plugin/PaperReader/plugin-manifest.json.block（现为禁用态）：版本0.4.0升至0.6.0，入口由PaperReader.js（Node.js）改为bin\paperreader-cli.exe（Rust可执行文件）；IngestPDF/Read/ReadSkeleton/ReadDeep/Query保留为legacy命令；manifest已无systemPromptPlaceholders，主仓内无{{VCPPaperReader}}注入痕迹；文中各配置项与默认值均与现行configSchema一致。
 
 Tag: PaperReader，超文本阅读器，PDF解析，MinerU，自适应阅读，Triage分诊，骨架提取，去偏见审核，Rolling Context，深度阅读，学术论文

@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP开发——插件开发完整手册（从0到1）
 
 一、插件开发总流程
@@ -6,7 +6,7 @@
 2. 编写 `plugin-manifest.json`
 3. 实现执行脚本（Node/Python/Shell）
 4. 准备插件专属 `config.env` 与依赖文件
-5. 重启VCP服务器，自动发现并加载插件
+5. 重启VCP服务器，自动发现并加载插件（manifest 文件变更亦支持热重载，direct 协议插件除外）
 6. 在系统提示词注入 `{{VCPMyPlugin}}` 让AI可感知并调用
 
 二、manifest关键字段
@@ -34,8 +34,8 @@
 四、异步插件标准流程
 1. 收到任务后立即返回 `requestId`
 2. 后台执行耗时任务
-3. 完成后回调 `POST /plugin-callback/:pluginName/:taskId`
-4. 服务器持久化结果并通过占位符在后续对话中替换
+3. 完成后回调 `POST /plugin-callback/:pluginName/:taskId`（主服务器 server.js 路由持久化到 VCPAsyncResults）
+4. 服务器持久化结果并通过 `{{VCP_ASYNC_RESULT::插件名::requestId}}` 占位符在后续对话中替换
 
 五、能力声明写法
 - `static` 插件：`systemPromptPlaceholders`
@@ -64,4 +64,5 @@
 - 多媒体结果优先返回可解析URL/Base64和摘要说明
 
 关联节点：plugin-manifest.json, PluginManager, invocationCommands, callback, configSchema
+核对记录(2026-09-02): 全篇机制经当前源码核实有效——六种插件类型 static/messagePreprocessor/synchronous/asynchronous/service/hybridservice（Plugin.js:886-887 分支）；manifest 字段 name/displayName/version/description/pluginType/entryPoint（支持 script 或 command 形态）/communication.protocol（stdio/direct）/configSchema/capabilities.invocationCommands 均被 Plugin.js 消费；同步返回 {status,result,error,messageForAI}（+base64 多媒体字段）与 docs/VCP同步异步插件开发手册.md、docs/PLUGIN_ECOSYSTEM.md 一致；异步回调路由 POST /plugin-callback/:pluginName/:taskId 位于 server.js:1359，结果占位符 {{VCP_ASYNC_RESULT::插件名::requestId}} 由 modules/messageProcessor.js 替换；全局+插件配置由 Plugin.js 的 _getPluginConfig 合并注入。占位符规则：{{VCP<name>}} 将 invocationCommands 的 description 注入系统提示词。
 Tag: 插件开发手册, plugin-manifest, 同步插件, 异步插件, stdio通信, 回调机制, capabilities, configSchema, VCP开发规范, AI工具调用

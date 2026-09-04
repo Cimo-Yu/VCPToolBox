@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] Promptmodules - 提示词模块
 
 一、模块基本信息
@@ -39,18 +39,18 @@ Promptmodules是VCPChat的系统提示词管理模块，提供三种不同的提
    - 数据持久化
 
 四、主要文件结构
-- prompt-manager.js：主管理器（13KB）
+- prompt-manager.js：主管理器（17KB）
 - original-prompt-module.js：原始富文本模块
 - modular-prompt-module.js：模块化积木块模块（56KB）
-- preset-prompt-module.js：临时与预制模块（10KB）
+- preset-prompt-module.js：临时与预制模块（12KB）
 - prompt-modules.css：统一样式
 
 五、关键API接口
 1. PromptManager类：
    - init(options)：初始化管理器
    - switchMode(mode)：切换模式
-   - save()：保存数据
-   - getPrompt()：获取提示词
+   - saveCurrentModeData()：保存当前模式数据
+   - getCurrentSystemPrompt()：获取系统提示词
 
 2. OriginalPromptModule类：
    - render(container)：渲染UI
@@ -60,12 +60,12 @@ Promptmodules是VCPChat的系统提示词管理模块，提供三种不同的提
 3. ModularPromptModule类：
    - render(container)：渲染UI
    - addBlock(type)：添加积木块
-   - removeBlock(blockId)：删除积木块
+   - deleteBlock(index)：删除积木块
    - save()：保存数据
 
 4. PresetPromptModule类：
    - render(container)：渲染UI
-   - loadPreset(presetId)：加载预设
+   - loadSelectedPreset()：加载选中的预设
    - save()：保存数据
 
 六、使用场景

@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-A
+[2026-09-02] - Agent-A
 [VCP百科全书] ChatRoomViewer (VCPChat客户端信息查看器) - 静态状态信息插件
 
 一、插件基本信息
@@ -120,8 +120,7 @@ ChatRoomViewer是一个静态数据注入插件，通过系统提示词占位符
    - 监控会话history.json文件
 
 3. 自动检测逻辑：
-   - 如果VCPChatRoot未设置，插件会自动向上查找包含main.js的目录
-   - 使用Node.js的require.main.path进行路径推断
+   - 如果VCPChatRoot未设置，插件从自身目录向上固定三层（../../..）推断VCPChat主目录，失败后回退到用户主目录下的VCPChat
 
 4. 时区处理：
    - 支持自定义时区（默认Asia/Shanghai）
@@ -141,5 +140,7 @@ ChatRoomViewer是一个静态数据注入插件，通过系统提示词占位符
 七、关联插件
 - DeepMemo：可结合使用，DeepMemo基于聊天记录进行深度回忆
 - VCPTavern：可结合使用，获取当前Agent列表后可在Tavern中进行角色扮演
+
+核对记录(2026-09-02): 该插件当前处于禁用状态（VCPChat\VCPDistributedServer\Plugin\ChatRoomViewer\plugin-manifest.json.block）；其余事实与manifest v2.1.0（static、7个占位符、cron * * * * * *、四项配置及默认值）及ChatRoomViewer.js源码核对一致，仅"自动检测逻辑"按源码（getVCPChatMainDirectory：__dirname向上三层+用户主目录回退）修正。
 
 Tag: 静态插件, 状态监控, VCPChat客户端, 系统信息, 主题自适应, 会话监控, 占位符注入

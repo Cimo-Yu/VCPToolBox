@@ -1,10 +1,10 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——LinuxShellExecutor（原子切片）
 
 一、插件身份
 - name: `LinuxShellExecutor`
 - displayName: `Linux Shell 安全执行器`
-- pluginType: `synchronous`
+- pluginType: `hybridservice`
 - 定位：高风险系统操作执行器，强调多层安全防护
 
 二、关键能力
@@ -14,10 +14,11 @@
 - 与共享 `SSHManager` 协作，支撑跨插件连接管理
 
 三、核心参数说明
-- `hostId`（必需，字符串）：目标主机标识符（如 DE-server、prod-node-01）
-- `shellCommand`（必需，字符串）：要执行的Shell命令（如 `uname -a`、`ps aux`）
-- `timeout`（可选，整数）：命令超时时间（毫秒，默认30000）
-- `taskId`（可选，字符串）：长任务标识，用于异步追踪和日志关联
+- `hostId`（必需，字符串）：目标主机标识符（如 DE-server、prod-node-01）；缺失或不匹配时返回资产发现列表引导选择
+- `command`（必需，字符串）：要执行的Shell命令或 `preset:预设名`（如 `uname -a`、`ps aux`；禁用 `;` 分隔符，多命令用 `&&`）
+- `timeout`（可选，整数）：命令超时时间（毫秒，默认30000，可用环境变量TIMEOUT_MS覆盖）
+- `isLongRunning`（可选，布尔）：设为true时任务转后台托管并返回taskId，用于异步追踪和日志关联
+- `requireAdmin`（可选，字符串）：6位管理员验证码，用于灰名单/未知命令授权逃逸及write/danger预设确认
 
 四、版本演进重点（README）
 - 强化异步闭环，避免长任务同步阻塞。
@@ -33,9 +34,10 @@
 六、调用示例
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」LinuxShellExecutor「末」,
-command:「始」LinuxShellExecutor「末」,
-hostId:「始」DE-server「末」,
-shellCommand:「始」uname -a && uptime「末」
+command:「始」uname -a && uptime「末」,
+hostId:「始」DE-server「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): 依据 Plugin/LinuxShellExecutor/plugin-manifest.json（v1.2.0，requiresAdmin）与LinuxShellExecutor.js：pluginType改为hybridservice（direct常驻加载）；命令参数名为command而非shellCommand，长任务经isLongRunning=true托管后返回taskId；hostId必需（源码execute()强制校验并有资产引导）；鉴权含管理员授权码requireAdmin与whitelist.json/graylist.json/securityLevels.json名单文件。
 
 Tag: LinuxShellExecutor, Shell安全执行, SSHManager, 主机资产, 长任务托管, taskId, PAM防护, 安全分级, 命令审计, Linux运维

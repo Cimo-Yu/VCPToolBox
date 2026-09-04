@@ -1,4 +1,4 @@
-[2026-03-03] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] 插件说明——VCPTavern（原子切片）修正版
 
 一、插件身份
@@ -20,6 +20,7 @@
 在角色系统提示词中加入占位符：
 - 基础格式：`{{VCPTavern::preset_name}}`
 - 带显式ID格式：`{{VCPTavern::preset_name::session_id}}`
+- 黑名单格式：`{{VCPTavern::preset_name::blacklist:规则名}}`（多个规则名用逗号分隔，命中的规则将被静默跳过）
 
 示例：
 ```
@@ -45,6 +46,6 @@
 六、注意事项
 - 该插件通过 `direct` 协议直接调用，非 stdio 通信。
 - 配置变更后可能需要重启服务器生效。
-- 预设文件存放在特定目录，请参考系统配置。
+- 预设文件存放在插件目录下的 presets/ 子目录（JSON 文件）。
 
 Tag: VCPTavern, 上下文注入, 预设触发, 深度注入, 时间感知, TimeSinceLastChat, LastChatTime, 角色扮演, 话题隔离, hybridservice, direct协议, 修正版

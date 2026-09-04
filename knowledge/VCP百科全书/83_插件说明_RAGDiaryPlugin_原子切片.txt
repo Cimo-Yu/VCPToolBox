@@ -1,4 +1,4 @@
-[2026-03-03] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] 插件说明——RAGDiaryPlugin（原子切片）修正版
 
 一、插件身份
@@ -11,9 +11,9 @@
 
 二、核心能力
 - 通过向量检索动态地将日记内容注入到系统提示词中，实现高效、低消耗的长期记忆。
-- 与 `DailyNoteWrite`、`DailyNoteEdit`、`DailyNoteManager` 协同形成"写入-编辑-批处理-检索"闭环。
+- 与 `DailyNote`（写入/编辑）、`DailyNoteManager`（批处理/整理）协同形成"写入-编辑-批处理-检索"闭环。
 - 支持日记内容增量向量化与大规模变化下全量重建策略。
-- 结合 HNSW 向量索引与多阶段检索，提升长周期记忆召回稳定性。
+- 结合 rust-vexus-lite 向量索引与多阶段检索，提升长周期记忆召回稳定性。
 
 三、配置参数（configSchema）
 - `RerankUrl`（字符串）：Rerank服务的URL
@@ -23,10 +23,10 @@
 - `RerankMaxTokensPerBatch`（数字）：单次Rerank请求的最大Token数，默认 30000
 
 四、系统实现关键词
-- HNSW向量索引（高性能近邻检索）
+- Rust Vexus向量索引（高性能近邻检索，rust-vexus-lite N-API）
 - 文件变更监控（增删改）
 - 哈希/时间戳驱动的原子级更新
-- Worker线程执行向量化与检索任务（避免阻塞主线程）
+- Rust/Rayon 并发检索与 Embedding 缓存复用（不再使用 Node Worker 线程）
 
 五、实务注意
 - RAG质量高度依赖日记Tag规范与切片粒度。
@@ -35,21 +35,12 @@
 - 配置 Rerank 服务可显著提升召回精度。
 
 六、触发方式
-`RAGDiaryPlugin` 通常不直接暴露单独 `TOOL_REQUEST`，常通过日记写入/检索链路间接触发。
-可在系统提示词中保留记忆检索意图，例如：
+`RAGDiaryPlugin` 是 hybridservice（direct 协议），不暴露 `TOOL_REQUEST` 命令，而是作为 messagePreprocessor 在对话管线中拦截系统提示词里的日记占位符并注入检索结果。
+在系统提示词中书写占位符即可触发，例如：
+`[[小克日记本]]`、`《《小克日记本》》`、`[[VCP元思考:<链名>::Group]]`，可追加 `::Rerank`、`::TagMemo+`、`::AIMemo` 等修饰符。
+
+占位符使用示例（写入系统提示词）：
+`[[Nova日记本::Rerank]]` —— 检索 Nova 日记本并启用 Rerank 精排。
 `请先检索相关历史日记再回答，优先匹配同主题Tag。`
 
-直接调用示例（高级用法）：
-<<<[TOOL_REQUEST]>>>
-tool_name:「始」RAGDiaryPlugin「末」,
-command:「始」search「末」,
-query:「始」VCP插件开发最佳实践「末」,
-topK:「始」5「末」,
-tags:「始」VCP开发, 插件系统「末」
-<<<[END_TOOL_REQUEST]>>>
-
-返回格式：
-- 成功：`{"status":"success","results":[{"date":"2026-03-03","content":"...","score":0.95}]}`
-- 失败：`{"status":"error","error":"..."}`
-
-Tag: RAGDiaryPlugin, 日记检索器, 向量索引, HNSW, 增量向量化, 全量重建, Rerank, 配置参数, DailyNoteWrite, DailyNoteEdit, DailyNoteManager, 记忆召回, 修正版
+Tag: RAGDiaryPlugin, 日记检索器, 向量索引, Vexus, 增量向量化, 全量重建, Rerank, 配置参数, DailyNote, DailyNoteManager, 记忆召回, 修正版

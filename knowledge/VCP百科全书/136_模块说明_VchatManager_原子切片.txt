@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] VchatManager - VChat管理器模块
 
 一、模块基本信息
@@ -44,7 +44,7 @@ VchatManager是VCPChat的管理器模块，提供Agent和Group的集中管理界
 
 四、主要文件结构
 - script.js：核心逻辑（36KB）
-- consistency-checker.js：一致性检查模块（10KB）
+- consistency-checker.js：一致性检查模块（22KB）
 - index.html：UI布局
 - style.css：样式定义
 - main.js：Electron主进程

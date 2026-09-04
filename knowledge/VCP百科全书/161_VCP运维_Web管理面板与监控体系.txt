@@ -1,10 +1,10 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP运维——Web管理面板与监控体系
 
 一、入口与认证
-访问地址：http://<服务器IP>:<端口>/AdminPanel
-认证方式：HTTP Basic Auth
-配置项：AdminUsername / AdminPassword（默认 admin / 123456）
+访问地址：http://<服务器IP>:<PORT+1>/AdminPanel（由独立 adminServer.js 进程托管，监听主端口+1；访问主端口 /AdminPanel 会被重定向）
+认证方式：HTTP Basic Auth（支持 Header 或 admin_auth Cookie 携带凭据，未认证页面请求重定向登录页）
+配置项：AdminUsername / AdminPassword（无默认值，未配置时返回503；含登录防暴力破解：15分钟窗口内错5次封禁30分钟）
 
 二、核心功能模块
 1. 系统监控：CPU、内存、PM2进程状态、Node进程信息
@@ -38,5 +38,6 @@
 - 禁止在公共仓库提交真实密钥
 - 使用可信API服务，避免敏感信息泄露
 
+核对记录(2026-09-02): 据根目录 adminServer.js、routes/adminPanelRoutes.js 与 routes/admin/ 33个子模块核对：面板前端为 AdminPanel-Vue 构建产物（Vue SPA），由独立 adminServer.js 托管于 PORT+1（主进程 /AdminPanel 仅重定向）；系统监控含 CPU/内存/PM2 进程列表/Node 进程内存与 CPU 温度（routes/admin/system.js）；本地处理模块之外的 /admin_api 请求兜底反向代理到主进程；登录防暴力破解（错5次封30分钟）与无凭据访问限流已内置；功能模块另含 NewAPI 用量监控、工具审批配置（toolApprovalConfig.json）、语义模型路由、梦境日志、任务助手、插件商店、动态工具等（routes/adminPanelRoutes.js 挂载清单）。
 关联节点：AdminPanel, config.env, RAG标签编辑器, 词元组网, TVStxt, VCPTavern
 Tag: Web管理面板, AdminPanel, 运维监控, 配置管理, 插件中心, RAG标签管理, 词元组网, 高级变量编辑器, 安全运维, 日志调试

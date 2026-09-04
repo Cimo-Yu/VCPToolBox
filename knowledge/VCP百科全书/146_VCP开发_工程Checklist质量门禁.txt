@@ -1,8 +1,9 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] VCP开发——工程Checklist质量门禁
 
 一、文档来源
-- `dailynote/VCP开发/` 下 CHECKLIST 系列文档（架构、测试、注释、防御式编程、重构等）
+- 历史来源：`dailynote/VCP开发/` 下曾有 CHECKLIST 系列文档（架构、测试、注释、防御式编程、重构等），现已不在仓库中
+- 现行工程规范入口：仓库各层 AGENTS.md（根目录、modules/、routes/、Plugin/、rust-vexus-lite/）与 docs/ 手册（PLUGIN_ECOSYSTEM.md、VCP同步异步插件开发手册.md、CONFIGURATION.md、OPERATIONS.md 等）；`dailynote/VCP开发/` 现存 VCP同步异步插件开发手册.md、插件开发指令集.txt、静态插件折叠协议开发手册.md
 
 二、Checklist族用途
 - 不是“写完再看”的装饰文档，而是开发前中后的门禁清单。
@@ -23,5 +24,6 @@
 - 每个Checklist切片保留：适用阶段、必做项、失败后果、对照文件。
 - tag要同时覆盖“问题词元”和“修复词元”，提升反向召回能力。
 
+核对记录(2026-09-02): 本条引用的 dailynote/VCP开发/ CHECKLIST 系列文档已从仓库移除（该目录现仅存 VCP同步异步插件开发手册.md、插件开发指令集.txt、静态插件折叠协议开发手册.md），全仓 glob 无 *CHECKLIST* 文件；二至五节的方法论（门禁用途、执行顺序、插件落地、切片建议）作为工程实践叙述保留，执行时应以现行 AGENTS.md 体系与 docs/ 手册为对照文件。
 Tag: Checklist, 工程质量, 质量门禁, 防御式编程, 测试用例, 架构检查, 命名规范, 重构安全, 调试清单, 开发流程
 

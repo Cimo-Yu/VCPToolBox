@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP项目总览——愿景、核心设计哲学与革命性特性
 
 一、VCP是什么
@@ -17,10 +17,10 @@ VCP（Variable & Command Protocol，变量与命令协议）是一个超越传�
 6. 开箱即用：初始DailyNote提供VCP开发文档等专业日记，任何Agent可快速上手。
 
 三、革命性特性概览
-3.1 统一日记管理系统：创建、编辑、批处理统一为DailyNote一个插件。
+3.1 统一日记管理系统：创建、编辑统一为 DailyNote 插件（现 hybridservice 常驻队列服务，create/update 指令），批处理整理由 DailyNoteManager 等承接。
 3.2 分布式备份与恢复：VCPBackUpDEV自动备份分布式所有用户数据和配置。
 3.3 ChromeBridge浏览器模组：动态网页深度交互、多标签页管理、视频理解、字幕解析。
-3.4 学术研究模块：NCBI、KEGG等6个插件、数百个专业指令。
+3.4 学术研究模块：NCBIDatasets、PaperReader、ArxivDailyPapers、CrossRefDailyPapers 等专业插件（KEGG 相关插件已移除；上述插件当前为 .block 禁用态，按需启用）。
 3.5 自定义消息角色：Agent发言可自定义system/user/assistant身份。
 3.6 VCPTavern增强注入：支持数组content内精准嵌入占位符。
 3.7 上下文折叠协议：静态插件根据语义解析器动态注入不同粒度信息。
@@ -39,4 +39,5 @@ VCP支持300多个官方插件，涵盖六大类型：静态(static)、消息预
 六、VCP vs MCP核心差异
 VCP协议基于文本标记（模型无关），MCP依赖FunctionTool字段；VCP前端零侵入，MCP需深度集成；VCP原生并行异步，MCP串行阻塞；VCP即用即销，MCP常驻进程；VCP有VCPFileAPI统一中转跨工具数据，MCP工具间数据孤岛；VCP内建完整记忆进化系统，MCP无记忆。
 
+核对记录(2026-09-02): 据 README.md（现为 VCP 1.1 正式版叙事）、config.env.example、Plugin/ 目录与 docs/ 核对：许可证 CC BY-NC-SA 4.0、六类插件协议、300+ 官方插件、SQLite(WAL)+USearch(Rust)、PM2/Docker、MCPO 兼容 MCP（docs/vcp白皮书V3.md §MCP 兼容）、VCPBackUpDEV（独立仓库，VCP.md 与 docs/OPERATIONS.md 仍引用）均未变；VCP.md 现为「VCP 1.0 正式版发布演讲稿」；完整白皮书为 docs/vcp白皮书V3.md；VCP vs MCP 一节为理念性对照，协议桥接现支持 OpenAI Responses/Anthropic/Gemini（routes/protocolBridge.js）。
 Tag: VCP项目总览, 核心设计哲学, 革命性特性, 插件生态, 技术栈, VCP vs MCP, AI能力增强中间层, 变量与命令协议, 铁三角架构, 模型无关性

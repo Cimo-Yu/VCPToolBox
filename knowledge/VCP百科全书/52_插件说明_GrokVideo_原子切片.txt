@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——GrokVideoGen（原子切片）
 
 一、插件身份
@@ -27,5 +27,7 @@
 tool_name:「始」GrokVideoGen「末」,
 command:「始」submit「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): 源码已移除——主仓 D:\vcp\VCPToolBox\Plugin\（92个插件目录）与分布式节点 D:\vcp\VCPChat\VCPDistributedServer\Plugin\ 均无 GrokVideo/GrokVideoGen，glob D:\vcp **\*Grok* 仅命中知识库文件；docs/FILE_INVENTORY.md 与 docs/PLUGIN_ECOSYSTEM.md 残留条目（两处类型记载互相矛盾），Plugin/AgnesVideoGen/AgnesVideoGen.mjs 注释仍引用 GrokVideo 的 concat 与 ffmpeg 拼接方案；现役视频生成插件为 VideoGenerator(Wan2.1) 与 AgnesVideoGen，submit/concat 命令名仅据旧注释佐证。
 
 Tag: GrokVideo, GrokVideoGen, synchronous, 同步调用, 多媒体, submit, concat

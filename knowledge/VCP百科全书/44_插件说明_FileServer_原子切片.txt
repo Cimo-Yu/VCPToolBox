@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——FileServer（原子切片）
 
 一、插件身份
@@ -24,5 +24,7 @@
 
 六、调用示例
 触发示例：启动服务后由路由或事件系统被动触发，无需手动命令。
+
+核对记录(2026-09-02): Plugin/FileServer目录已不存在（主仓Plugin\与VCPChat/VCPDistributedServer/Plugin\ glob均无变体，仅docs/FILE_INVENTORY.md、docs/PLUGIN_ECOSYSTEM.md保留历史表格条目）。受密码保护的静态文件服务现由Plugin/ImageFileServer承接（manifest name: ImageServer，displayName 图床服务与文件服务，service，/pw=[Image_Key]/images/ 与 /pw=[File_Key]/files/），server.js:865仍保留/pw=…/files/的Bearer豁免路由。本文按历史条目保留。
 
 Tag: FileServer, service, 后台服务, 系统工具

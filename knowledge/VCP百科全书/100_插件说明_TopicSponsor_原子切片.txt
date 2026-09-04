@@ -1,10 +1,10 @@
-[2026-03-03] - Agent-C
+[2026-09-02] - Agent-C
 [VCP百科全书] TopicSponsor / AI主动创建话题 - 话题管理
 
 一、插件基本信息
 1. 插件名称：TopicSponsor / AI主动创建话题
 2. 插件类型：同步(synchronous)
-3. 版本号：2.1.0
+3. 版本号：2.2.0
 4. 所属模块：VCPDistributedServer/Plugin
 5. 功能一句话总结：允许Agent自主创建、查询和管理VChat聊天话题
 
@@ -16,6 +16,7 @@ TopicSponsor是一个完整的话题管理系统，使AI能够像用户一样主
 - 在话题中回复消息
 - 验证话题所有权
 - 列出所有未锁定话题
+- 创建Flowlock自主工作话题（在当前回复落盘后由前端原子认领）
 
 该插件是构建主动型Agent的核心组件，支持实现"Agent主动找主人聊天"的场景。
 
@@ -269,6 +270,23 @@ TopicSponsor是一个完整的话题管理系统，使AI能够像用户一样主
      ]
    }
 
+9. CreateFlowlockTopic - 创建Flowlock自主工作话题
+   功能: 创建带持久化Flowlock请求的新话题，请求不在工具执行时直接启动，而是在当前assistant最终回复完整落盘后由前端原子认领并交接该Agent的唯一Session
+   参数:
+   - maid (string, 必需): 发起请求的AI女仆的中文名
+   - topic_name (string, 必需): 新话题的名称
+   - initial_message (string, 必需): AI想说的第一句话
+   - flowlock_heartbeat (integer, 可选, 默认5): 心跳秒数，范围1-86400
+   - flowlock_prompt (string, 可选): 认领后读取的初始任务提示
+   调用格式:
+   <<<[TOOL_REQUEST]>>>
+   tool_name:「始」TopicSponsor「末」,
+   command:「始」CreateFlowlockTopic「末」,
+   maid:「始」Nova「末」,
+   topic_name:「始」自主工作区「末」,
+   initial_message:「始」请执行连续自检任务。「末」
+   <<<[END_TOOL_REQUEST]>>>
+
 五、使用示例
 
 示例1：AI主动创建话题并发起对话
@@ -308,7 +326,7 @@ tool_name:「始」TopicSponsor「末」,
 command:「始」ReplyToTopic「末」,
 maid:「始」小克「末」,
 topic_id:「始」topic_1766100505346「末」,
-message:「始】收到！我已经在处理了，稍等片刻～「末」,
+message:「始」收到！我已经在处理了，稍等片刻～「末」,
 sender_name:「始」小克「末」
 <<<[END_TOOL_REQUEST]>>>
 
@@ -323,7 +341,7 @@ days:「始」3「末」
 六、注意事项与限制
 1. 依赖VCPChat目录结构：插件会自动向上查找../../../AppData目录
 2. Agent必须通过maid参数指定中文名，而非Agent ID
-3. 话题ID格式为topic_xxxxxxxxxxxx(时间戳)，需要通过ListTopics或ListUnlockedTopics获取
+3. 话题ID格式为topic_时间戳_UUID后缀，需要通过ListTopics或ListUnlockedTopics获取
 4. ReplyToTopic只能回复未锁定(locked=false)或标记为未读(unread=true)的话题
 5. 超时时间为15000毫秒(15秒)
 6. 所有操作都会验证Agent是否存在，如果maid名称错误会返回明确的错误信息
@@ -335,4 +353,4 @@ days:「始」3「末」
 - DailyNote：可以将重要话题内容保存到日记中形成长期记忆
 - PromptSponsor：可以配合修改Agent的提示词，实现基于话题上下文的个性化回复
 
-Tag: 话题管理, 主动对话, 消息回复, 未读检查, 话题创建, Agent社交, VChat集成, 同步插件
+Tag: 话题管理, 主动对话, 消息回复, 未读检查, 话题创建, Agent社交, VChat集成, 同步插件, Flowlock

@@ -5,6 +5,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const http = require('http');
+const net = require('net');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_PROFILE_DIR = path.join(PROJECT_ROOT, 'Plugin', 'ChromeBridge', 'managed-profile');
@@ -35,6 +36,10 @@ let previousPid = null;
 let lastCloseReason = null;
 let lastClosedAt = null;
 let shutdownHooksRegistered = false;
+// Chrome 启动时经 stderr 输出的官方 DevTools 端点（"DevTools listening on ws://..."）。
+// 实测 chrome-for-testing 151 不再可靠写出 DevToolsActivePort 文件，stderr 是权威来源。
+let stderrWebSocketEndpoint = null;
+let stderrTailBuffer = '';
 
 function readBooleanEnv(name, defaultValue = false) {
     const raw = process.env[name];
@@ -566,12 +571,32 @@ async function ensureManagedBrowser(options = {}) {
         return getManagedBrowserStatus({ reusedExistingProcess: true });
     }
 
+    // 固定调试端口预检：若端口被其他程序占用，Chrome 会静默放弃 DevTools 绑定继续运行，
+    // 导致之后所有依赖 DevTools 的调用失败。这里提前失败并给出可操作的错误信息。
+    if (config.remoteDebuggingPort > 0) {
+        const adoptableEndpoint = await probeWebSocketEndpointOnPort(config.remoteDebuggingPort);
+        if (adoptableEndpoint) {
+            // 竞态兜底：reuse 探测刚失败但端口上有带 DevTools 的 Chromium —— 直接采纳复用
+            currentProfileDir = config.profileDir;
+            currentDebuggingPort = config.remoteDebuggingPort;
+            currentExecutablePath = config.executablePath || findChromeExecutable();
+            lastTouchedAt = Date.now();
+            await persistDevToolsActivePort(config.profileDir, adoptableEndpoint);
+            return getManagedBrowserStatus({ reusedExistingProcess: true });
+        }
+        if (await isTcpPortListening(config.remoteDebuggingPort)) {
+            throw new Error(`固定调试端口 ${config.remoteDebuggingPort} 已被其他程序占用。请释放该端口，或在 config.env 中更换 VCP_BROWSER_REMOTE_DEBUGGING_PORT。`);
+        }
+    }
+
     if (launchPromise) {
         return launchPromise;
     }
 
     launchPromise = (async () => {
         lastError = null;
+        stderrWebSocketEndpoint = null;
+        stderrTailBuffer = '';
         const executablePath = config.executablePath || findChromeExecutable();
         if (!executablePath) {
             throw new Error('未找到 Chrome/Chromium/Edge 可执行文件，请设置 VCP_BROWSER_EXECUTABLE_PATH');
@@ -625,11 +650,17 @@ async function ensureManagedBrowser(options = {}) {
 
         spawnedProcess.stderr.on('data', data => {
             const text = data.toString().trim();
-            if (text) {
-                lastError = text.slice(-1000);
-                if (readBooleanEnv('DebugMode', false)) {
-                    console.warn('[BrowserRuntimeManager][chrome]', text);
-                }
+            if (!text) return;
+            lastError = text.slice(-1000);
+            // 捕获官方 DevTools 端点行：DevTools listening on ws://127.0.0.1:<port>/devtools/browser/<id>
+            // stderr 分块可能截断该行，用滚动缓冲匹配。
+            stderrTailBuffer = (stderrTailBuffer + text).slice(-4000);
+            const wsMatch = stderrTailBuffer.match(/DevTools listening on (ws:\/\/[^\s]+)/);
+            if (wsMatch) {
+                stderrWebSocketEndpoint = wsMatch[1];
+            }
+            if (readBooleanEnv('DebugMode', false)) {
+                console.warn('[BrowserRuntimeManager][chrome]', text);
             }
         });
 
@@ -654,6 +685,8 @@ async function ensureManagedBrowser(options = {}) {
                 chromeProcess = null;
                 startedAt = null;
                 currentLaunchConfig = null;
+                stderrWebSocketEndpoint = null;
+                stderrTailBuffer = '';
                 clearIdleTimer();
             }
         });
@@ -664,6 +697,8 @@ async function ensureManagedBrowser(options = {}) {
                 chromeProcess = null;
                 startedAt = null;
                 currentLaunchConfig = null;
+                stderrWebSocketEndpoint = null;
+                stderrTailBuffer = '';
                 clearIdleTimer();
             }
         });
@@ -748,6 +783,53 @@ async function restartManagedBrowser() {
     await closeManagedBrowser('restart');
     return ensureManagedBrowser();
 }
+function extractPortFromWebSocketEndpoint(endpoint) {
+    try {
+        const port = Number.parseInt(new URL(endpoint).port, 10);
+        return Number.isFinite(port) && port > 0 ? port : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+async function probeWebSocketEndpointOnPort(port) {
+    try {
+        const version = await httpGetJson(`http://127.0.0.1:${port}/json/version`);
+        const endpoint = version && typeof version.webSocketDebuggerUrl === 'string'
+            ? version.webSocketDebuggerUrl
+            : null;
+        return endpoint || null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function isTcpPortListening(port, host = '127.0.0.1') {
+    return new Promise(resolve => {
+        const socket = net.createConnection({ host, port });
+        const done = result => {
+            socket.destroy();
+            resolve(result);
+        };
+        socket.once('connect', () => done(true));
+        socket.once('error', () => done(false));
+        socket.setTimeout(1000, () => done(false));
+    });
+}
+
+// 自愈：把发现到的真实端点回写 DevToolsActivePort 文件，保持文件与运行实例一致。
+// 失败不影响主流程（文件只是三层发现来源之一）。
+async function persistDevToolsActivePort(profileDir, endpoint) {
+    try {
+        const port = extractPortFromWebSocketEndpoint(endpoint);
+        if (!port || !profileDir) return;
+        const wsPath = new URL(endpoint).pathname || '/devtools/browser';
+        await fsp.writeFile(path.join(profileDir, 'DevToolsActivePort'), `${port}\n${wsPath}\n`, 'utf8');
+    } catch (_) {
+        // best-effort
+    }
+}
+
 async function readDevToolsActivePort(options = {}) {
     const allowUnownedProcess = options.allowUnownedProcess === true;
     if (!allowUnownedProcess && !isProcessAlive()) {
@@ -776,16 +858,53 @@ async function readDevToolsActivePort(options = {}) {
 }
 
 async function getManagedBrowserWebSocketEndpoint(options = {}) {
-    const activePort = await readDevToolsActivePort(options);
-    if (!activePort) return null;
-    try {
-        const version = await httpGetJson(`http://127.0.0.1:${activePort.port}/json/version`);
-        return typeof version.webSocketDebuggerUrl === 'string' && version.webSocketDebuggerUrl
-            ? version.webSocketDebuggerUrl
-            : null;
-    } catch (_) {
-        return null;
+    const allowUnownedProcess = options.allowUnownedProcess === true;
+    const profileDir = options.profileDir || currentProfileDir || getRuntimeConfig().profileDir;
+
+    // 1) stderr 端点：Chrome 启动时输出的 "DevTools listening on ws://..."，官方权威来源，
+    //    仅对由本进程托管的 Chrome 生效。使用前轻量校验其端口仍然可用。
+    if (!allowUnownedProcess && isProcessAlive() && stderrWebSocketEndpoint) {
+        const stderrPort = extractPortFromWebSocketEndpoint(stderrWebSocketEndpoint);
+        const alive = stderrPort ? await probeWebSocketEndpointOnPort(stderrPort) : null;
+        if (alive) {
+            await persistDevToolsActivePort(profileDir, stderrWebSocketEndpoint);
+            return stderrWebSocketEndpoint;
+        }
+        stderrWebSocketEndpoint = null; // DevTools server 内部重启过，落回文件/固定端口探测
     }
+
+    // 2) DevToolsActivePort 文件（兼容旧行为；单次快速读取，重试节奏交给外层轮询）
+    const activePort = await readDevToolsActivePort({ ...options, attempts: 1 });
+    if (activePort) {
+        const endpoint = await probeWebSocketEndpointOnPort(activePort.port);
+        if (endpoint) {
+            await persistDevToolsActivePort(profileDir, endpoint);
+            return endpoint;
+        }
+    }
+
+    // 3) 固定调试端口直探：VCP_BROWSER_REMOTE_DEBUGGING_PORT 为固定端口时完全摆脱对
+    //    DevToolsActivePort 文件的依赖（实测新版 Chrome 可能根本不写该文件）。
+    const fixedPortCandidates = new Set();
+    if (Number.isInteger(options.fixedPort) && options.fixedPort > 0) {
+        fixedPortCandidates.add(options.fixedPort);
+    }
+    if (!allowUnownedProcess && Number.isInteger(currentDebuggingPort) && currentDebuggingPort > 0) {
+        fixedPortCandidates.add(currentDebuggingPort);
+    }
+    const configuredPort = getRuntimeConfig().remoteDebuggingPort;
+    if (Number.isInteger(configuredPort) && configuredPort > 0) {
+        fixedPortCandidates.add(configuredPort);
+    }
+    for (const port of fixedPortCandidates) {
+        const endpoint = await probeWebSocketEndpointOnPort(port);
+        if (endpoint) {
+            await persistDevToolsActivePort(profileDir, endpoint);
+            return endpoint;
+        }
+    }
+
+    return null;
 }
 
 async function waitForManagedBrowserWebSocketEndpoint(timeoutMs = 10000) {
@@ -820,16 +939,17 @@ function httpGetJson(url) {
 }
 
 async function getManagedBrowserDebugTargets() {
-    const activePort = await readDevToolsActivePort();
-    if (!activePort) {
+    const endpoint = await getManagedBrowserWebSocketEndpoint({});
+    const port = endpoint ? extractPortFromWebSocketEndpoint(endpoint) : null;
+    if (!port) {
         return {
             available: false,
-            reason: 'DevToolsActivePort not available',
+            reason: 'DevTools endpoint not available',
             devToolsActivePortFile: path.join(currentProfileDir || getRuntimeConfig().profileDir, 'DevToolsActivePort')
         };
     }
 
-    const targets = await httpGetJson(`http://127.0.0.1:${activePort.port}/json/list`);
+    const targets = await httpGetJson(`http://127.0.0.1:${port}/json/list`);
     const summarizedTargets = Array.isArray(targets)
         ? targets.map(target => ({
             id: target.id,
@@ -842,7 +962,7 @@ async function getManagedBrowserDebugTargets() {
 
     return {
         available: true,
-        port: activePort.port,
+        port,
         targetCount: summarizedTargets.length,
         extensionTargets: summarizedTargets.filter(target => String(target.url || '').startsWith('chrome-extension://')),
         targets: summarizedTargets

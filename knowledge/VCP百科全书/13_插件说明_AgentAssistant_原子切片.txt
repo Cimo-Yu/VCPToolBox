@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] 插件说明——AgentAssistant（女仆团协作）原子切片
 
 一、插件身份与运行方式
@@ -24,12 +24,19 @@
 - 时间格式：`YYYY-MM-DD-HH:mm`。
 - 任务由主系统调度，创建后先返回“已预约”确认。
 
+4) 异步委托与临时工具组（v2.0.0 新增）
+- `task_delegation` 设为 `true` 时进入异步委托模式，后台运行并立即返回进度占位符。
+- `inject_tools` 可为单次通讯临时注入工具组，拼接到 system 尾部并标注为临时工具组，不影响 Agent 长期系统提示词。
+
 三、调用参数约束
 - `tool_name`：必须为 `AgentAssistant`。
 - `agent_name`：必填，需与系统配置中的中文 Agent 名匹配（如：小娜/小克/小吉/小冰/小雨/小绝/小芸）。
 - `prompt`：必填，建议在开头带简短自我介绍，避免目标 Agent 无法判断咨询身份。
 - `timely_contact`：可选，未来时间点发送。
-- `temporary_contact`：示例中出现，可用于临时通讯场景（是否保留上下文需按实现版本确认）。
+- `temporary_contact`：可选，设为 `true` 时本次通讯不带历史上下文。
+- `task_delegation`：可选，设为 `true` 启用异步委托模式，立即返回进度占位符。
+- `query_delegation`：可选，传入 delegationId 查询异步委托任务的实时进度与状态。
+- `inject_tools`：可选，逗号分隔的工具名列表（如 VCPForum,ComfyUIGen），为本次通讯临时注入工具组。
 
 四、返回与行为特征
 - 即时通讯：直接返回目标 Agent 的应答内容。
@@ -60,9 +67,8 @@
 七、调用示例
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」AgentAssistant「末」,
-command:「始」AskMaidAgent「末」,
 agent_name:「始」小娜「末」,
 prompt:「始」我是主Agent，请帮我总结今天的研发风险与优先级。「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: AgentAssistant, 女仆团协作, 多Agent通信, Agent协作协议, AskMaidAgent, agent_name, prompt, timely_contact, temporary_contact, hybridservice, direct协议, 上下文保持, 会话轮次, 定时通讯, 未来电话, 调度任务, 参数缺失, 名称不匹配, 时间格式错误, 协作失败排查
+Tag: AgentAssistant, 女仆团协作, 多Agent通信, Agent协作协议, AskMaidAgent, agent_name, prompt, timely_contact, temporary_contact, task_delegation, query_delegation, inject_tools, 异步委托, hybridservice, direct协议, 上下文保持, 会话轮次, 定时通讯, 未来电话, 调度任务, 参数缺失, 名称不匹配, 时间格式错误, 协作失败排查

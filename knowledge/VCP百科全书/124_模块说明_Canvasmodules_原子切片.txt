@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] Canvasmodules - 协同Canvas编辑模块
 
 一、模块基本信息
@@ -60,9 +60,9 @@ Canvasmodules是VCPChat的协同编辑模块，为用户提供强大的代码编
 2. window.electronAPI.saveCanvasFile({path, content})
    - 保存Canvas文件
 
-3. window.electronAPI.onAIModifyCanvas(callback)
-   - 接收AI修改的文件内容
-   - 触发Diff对比
+3. window.electronAPI.onExternalFileChanged(callback)
+   - 接收外部（含AI）修改后的文件内容，显示变动通知栏
+   - 点击后用CodeMirror MergeView打开Diff对比，可接受或拒绝变动
 
 4. CodeMirror API：
    - editor.getValue()：获取编辑器内容
@@ -89,5 +89,7 @@ Canvasmodules是VCPChat的协同编辑模块，为用户提供强大的代码编
 3. 文件路径显示在状态栏
 4. 支持多种编程语言自动识别
 5. Diff对比支持接受或拒绝AI修改
+
+核对记录(2026-09-02): 依D:\vcp\VCPChat\Canvasmodules\核实——canvas.html/js/css与vendor\diff_match_patch.js均在，CodeMirror 5、2秒防抖自动保存、Ctrl-F查找、onCanvasLoadData（{current:{path,content}}）、saveCanvasFile、Python执行与Markdown/HTML预览无误；原文onAIModifyCanvas接口已不存在，实际由onExternalFileChanged触发变动通知与MergeView Diff对比。
 
 Tag: Canvas编辑, 代码编辑器, 文件管理, 版本控制, Diff对比, CodeMirror, 协同编辑, 自动保存

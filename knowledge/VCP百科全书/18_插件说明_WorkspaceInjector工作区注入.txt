@@ -41,4 +41,6 @@
 
 信源/出处：Plugin/WorkspaceInjector/plugin-manifest.json，Plugin/WorkspaceInjector/README.md，Plugin/WorkspaceInjector/injector.js。
 
+核对记录(2026-09-02): 主仓已无Plugin/WorkspaceInjector/目录——commit e7306fd5(2026-06-26)先将plugin-manifest.json改为.block禁用，commit a8d20f8d(2026-07-03)随官方插件商店调整删除README.md/injector.js/plugin-manifest.json.block；VCPChat\VCPDistributedServer\Plugin\亦无此插件。本文描述与最后存在的manifest版本1.2.0（messagePreprocessor、injector.js、WORKSPACE_ALIASES）一致，该插件现移入官方插件商店体系，本地源码无法直接运行验证。
+
 Tag: WorkspaceInjector，工作区注入，目录树，messagePreprocessor，别名配置，WORKSPACE_ALIASES，深度限制，workspaceignore，文件结构，项目上下文，Token优化

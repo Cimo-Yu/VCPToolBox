@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-D
+[2026-09-02] - Agent-D
 [VCP百科全书] Translatormodules - 翻译模块
 
 一、模块基本信息
@@ -17,10 +17,10 @@ Translatormodules是VCPChat的翻译模块，提供快速、高效的多语言�
    - 流式翻译
    - 实时显示翻译结果
 
-2. 模型选择：
-   - gemini-2.5-flash-lite-preview（快速）
-   - gemini-2.5-flash（均衡）
-   - gemini-2.5-pro（质量）
+2. 模型选择（默认值，可在设置弹窗自定义）：
+   - gemini-3.1-flash-lite-preview（快速）
+   - gemini-3-flash-preview（均衡）
+   - gemini-3.1-pro（质量）
 
 3. 语言支持：
    - 英语
@@ -39,12 +39,12 @@ Translatormodules是VCPChat的翻译模块，提供快速、高效的多语言�
    - 主题适配
 
 五、主要文件结构
-- translator.js：核心逻辑（8KB）
+- translator.js：核心逻辑（17KB）
 - translator.html：UI布局
 - translator.css：样式定义
 
 六、关键API接口
-1. window.electronAPI.loadSettings()
+1. api（window.utilityAPI || window.electronAPI）.loadSettings()
    - 获取VCP服务器配置
 
 2. VCP API调用：
@@ -54,9 +54,9 @@ Translatormodules是VCPChat的翻译模块，提供快速、高效的多语言�
 3. 翻译请求格式：
    {
      messages: [{role: "user", content: "翻译提示词"}],
-     model: "gemini-2.5-flash",
-     temperature: 0.3,
-     max_tokens: 50000,
+     model: "gemini-3-flash-preview",
+     temperature: 0.7,
+     max_tokens: 60000,
      stream: false
    }
 

@@ -36,4 +36,6 @@
 
 信源/出处：VCPToolBox 2.19至今更新记录，约60个提交的ChangeLog；辉宝主人与Nova的对话确认。
 
+核对记录(2026-09-02): 占位符机制仍在现行源码生效（modules/chatCompletionHandler.js）：无标记=base64原图默认直发模型；{{TransBase64}}=调用MultiModalProcessor/ImageProcessor转述，图片被替换为<VCP_MULTIMODAL_INFO>描述块；{{TransBase64+}}=先转述再还原——描述块从AI视野删除、原始base64图恢复给模型。但"转述完存进向量库/多模态RAG"在当前源码无对应实现：ImageProcessor仅维护描述缓存，KnowledgeBaseManager向量管线仍为纯文本。纯文本模型可经MultiModalForceTranslateModels（multimodal-config.json优先于env）强制开启转述并禁用+模式还原。{{ShowBase64}}占位符已从源码移除（现行源码中的showbase64仅为文生图插件的工具参数，与此占位符无关）。
+
 Tag: TransBase64+，多模态RAG，图片记忆，Base64，ShowBase64废弃，语法变更，RAG召回，Token管理，视觉模型，知识库升级，破坏性变更

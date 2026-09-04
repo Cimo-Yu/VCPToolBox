@@ -1,18 +1,18 @@
-[2026-03-03] - Agent-A
+[2026-09-02] - Agent-A
 [VCP百科全书] DeepMemo - 深度回忆插件
 
 一、插件基本信息
 1. 插件名称：DeepMemo / 深度回忆插件
-2. 插件类型：同步插件 (synchronous)
-3. 版本号：1.0.0
+2. 插件类型：常驻混合服务 (hybridservice, direct)
+3. 版本号：2.0.0
 4. 所属模块：VCPDistributedServer/Plugin
-5. 功能一句话总结：从Vchat聊天记录中检索相关上下文，实现AI的深度回忆功能
+5. 功能一句话总结：通过 VCP-CDS 中央聊天数据服务检索历史上下文，实现AI的深度回忆功能
 
 二、功能定位
-DeepMemo是一个基于Rust编写的高性能记忆检索插件，可根据关键词从Vchat聊天记录中检索相关上下文。通过高级搜索语法支持精确短语、权重调整、逻辑组合等功能，帮助AI快速回忆历史对话内容。适用于需要长期记忆、上下文感知的AI Agent场景，如个性化对话、历史参考、知识积累等。
+DeepMemo 2.0 是一个通过 VCP-CDS 中央聊天数据服务检索历史上下文的常驻薄适配器（入口 DeepMemoService.js），可根据关键词从Vchat聊天记录中检索相关上下文；保留 Rust 检索后端（deepmemo_rust.exe）作为遗留回退（DeepMemoLegacyFallback）。通过高级搜索语法支持精确短语、权重调整、逻辑组合等功能，帮助AI快速回忆历史对话内容。适用于需要长期记忆、上下文感知的AI Agent场景，如个性化对话、历史参考、知识积累等。
 
 三、配置参数
-本插件无config.env配置文件，所有参数通过命令行参数传递。
+插件目录提供 config.env.example，manifest configSchema 含：DeepMemoBackend、DeepMemoLegacyFallback、DeepMemoExcludeCurrentTopic、DeepMemoCandidateLimit、DeepMemoResultLimit、DeepMemoTimeoutMs、MaxMemoTokens、QueryPreset，以及 RerankSearch/RerankUrl/RerankApi/RerankModel/RerankCandidateMultiplier/RerankMaxDocumentsPerBatch/RerankMaxTokensPerBatch/RerankTimeoutMs 精排配置。maid/keyword/window_size/rerank 等调用参数通过命令参数传递。
 
 四、调用命令列表
 
@@ -23,6 +23,7 @@ DeepMemo是一个基于Rust编写的高性能记忆检索插件，可根据关�
    - maid (string, 必需): 发起请求的AI女仆的中文名（如小克、小吉、小娜），通过名字匹配记忆
    - keyword (string, 必需): 用于搜索的关键词，多个关键词可用英文逗号、中文逗号或空格分隔
    - window_size (integer, 可选, 范围1-20, 默认10): 上下文窗口大小，代表以匹配到的对话为中心，向前和向后各取多少轮对话
+   - rerank (boolean, 可选): true 表示本次请求精排，false 表示本次强制跳过；省略时遵循服务端 RerankSearch 配置
 
    高级搜索语法（keyword参数）：
    - 普通词：VCP
@@ -99,10 +100,12 @@ window_size:「始」5「末」
 
 5. 性能考虑：
    - 大型记忆库搜索可能需要数秒时间
-   - 通信超时设置为180秒，适合长时间搜索
+   - manifest 通信超时为30秒（DeepMemoTimeoutMs 默认 30000）
 
 七、关联插件
 - DailyNote：日记管理，可用于存储和组织记忆内容
 - TopicMemo：话题记忆，可配合使用进行话题级别的记忆管理
 
-Tag: 深度回忆, 聊天记录检索, 记忆管理, 上下文感知, 高级搜索, 权重调整, Rust高性能
+核对记录(2026-09-02): 依据 VCPChat\VCPDistributedServer\Plugin\DeepMemo\plugin-manifest.json（v2.0.0, hybridservice/direct/30000ms）与 DeepMemoService.js 重写——1.0.0 纯 Rust 同步插件形态已升级为 VCP-CDS 常驻适配器，新增 config.env.example 与 rerank 参数；主仓 Plugin\DeepMemo\ 仅剩遗留 config.env，实际实现位于分布式节点仓库。
+
+Tag: 深度回忆, 聊天记录检索, 记忆管理, 上下文感知, 高级搜索, 权重调整, VCP-CDS

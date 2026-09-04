@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——MIDITranslator（原子切片）
 
 一、插件身份
@@ -52,5 +52,7 @@ tool_name:「始」MIDITranslator「末」,
 command:「始」validate_dsl「末」,
 dslContent:「始」Timeline: [0-1920]120|4/4|TPB480\nTrack0: [c4,0.0,100,ch0]「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): 源码缺失——glob 两仓 *MIDI* 仅命中 TVStxt\MIDITranslator.txt（{{VarMIDITranslator}} 提示词资源）与本知识库文件，VCPToolBox\Plugin\ 与 VCPChat\VCPDistributedServer\Plugin\ 均无插件目录及 manifest；本文命令清单与 TVStxt 存档一致，运行状态无法证实，按存档保留。
 
 Tag: MIDITranslator, hybridservice, 混合服务, 多媒体, list_midi_files, parse_midi, generate_midi, validate_dsl, validate_dsl_with_details, multi-command

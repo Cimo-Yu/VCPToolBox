@@ -1607,7 +1607,14 @@ function collectSteps(params = {}) {
     return steps;
 }
 
-async function connectToManagedBrowser(maxWaitMs = 10000) {
+// 连接托管浏览器的等待预算：默认 10s，可通过 VCP_BROWSER_CONNECT_TIMEOUT_MS 调整（2s-120s）。
+function resolveBrowserConnectTimeoutMs() {
+    const raw = Number.parseInt(process.env.VCP_BROWSER_CONNECT_TIMEOUT_MS, 10);
+    if (!Number.isFinite(raw) || raw <= 0) return 10000;
+    return Math.min(Math.max(raw, 2000), 120000);
+}
+
+async function connectToManagedBrowser(maxWaitMs = resolveBrowserConnectTimeoutMs()) {
     const startedAt = Date.now();
     let lastError = null;
 

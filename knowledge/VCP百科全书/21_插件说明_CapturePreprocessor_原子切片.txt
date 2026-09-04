@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——CapturePreprocessor（原子切片）
 
 一、插件身份
@@ -8,14 +8,15 @@
 - command: 无（自动触发）
 
 二、核心能力
-- 一个预处理插件，用于检测和替换消息中的截图和摄像头捕获占位符，如 {{VCPScreenShot}} 和 {{VCPCameraCapture}}。
+- 一个预处理插件，用于检测和替换系统提示词中的截图/摄像头捕获占位符，通过 /v1/human/tool 透明调用分布式 ScreenPilot（ScreenCapture 命令）获取截图，注入为即时视觉上下文。
 - 以自动注入/后台服务方式提供能力，不要求直接命令调用。
 
 三、占位符与注入点
-- systemPromptPlaceholders: 无(处理占位符: {{VCPScreenShot}}, {{VCPCameraCapture}})
-- 处理模式配置:
-  * PLACEHOLDER_SCREENSHOT_MODE: full_analysis/direct_to_ai/capture_only
-  * PLACEHOLDER_CAMERA_MODE: full_analysis/direct_to_ai/capture_only
+- systemPromptPlaceholders: 无(处理占位符: {{VCPScreenShot}}, {{VCPScreenShotMini}}, {{VCPScreenShot:窗口标题}}, {{VCPScreenShot:[长窗口标题]}}, {{VCPScreenShot:纯数字hwnd}}, {{VCPCameraCapture(N)}})
+- {{VCPCameraCapture(N)}} 会被识别但分布式摄像头采集尚未实现（返回 not yet implemented 提示）
+- 处理模式配置（现行）:
+  * MONITOR_TIMEOUT_MS: 调用分布式 ScreenPilot 的超时时间（毫秒，默认30000）
+  * 旧版 PLACEHOLDER_SCREENSHOT_MODE / PLACEHOLDER_CAMERA_MODE（full_analysis/direct_to_ai/capture_only）配置已不存在
 
 四、配置重点
 - 优先核对插件目录内的 plugin-manifest.json(.block) 与 config.env.example 必填项。
@@ -27,5 +28,7 @@
 
 六、调用示例
 触发示例：发送原始消息后由消息预处理插件先改写，再进入主模型。
+
+核对记录(2026-09-02): CapturePreprocessor已改为分布式ScreenPilot门面（源码：Plugin/CapturePreprocessor/plugin-manifest.json、CapturePreprocessor.js），旧PLACEHOLDER_SCREENSHOT_MODE/PLACEHOLDER_CAMERA_MODE模式配置已删除，现行配置仅MONITOR_TIMEOUT_MS；占位符扩展为{{VCPScreenShotMini}}、{{VCPScreenShot:窗口标题/hwnd/方括号长标题}}等，{{VCPCameraCapture(N)}}识别但未实现采集，身份信息（messagePreprocessor、displayName捕获预处理器、无命令）与manifest一致。
 
 Tag: CapturePreprocessor, messagePreprocessor, 消息预处理

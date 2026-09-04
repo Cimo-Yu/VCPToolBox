@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——SynapsePusher（原子切片）
 
 一、插件身份
@@ -25,4 +25,5 @@
 六、调用示例
 触发示例：启动服务后由路由或事件系统被动触发，无需手动命令。
 
+核对记录(2026-09-02): 源码缺失——glob 未在 D:\vcp\VCPToolBox\Plugin 与 D:\vcp\VCPChat\VCPDistributedServer\Plugin 发现 SynapsePusher 或 *Synapse*/*Push* 变体目录，manifest 关键词（Synapse/Matrix）无命中，本文按占位保留，无法核实。
 Tag: SynapsePusher, service, 后台服务, 记忆管理

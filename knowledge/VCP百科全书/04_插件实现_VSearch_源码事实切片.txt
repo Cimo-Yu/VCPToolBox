@@ -1,16 +1,17 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件实现——VSearch（源码事实切片）
 
 一、源码锚点
 - manifest: Plugin/VSearch/plugin-manifest.json
 - entry: Plugin/VSearch/VSearch.js
-- 关键函数: main(request), callSearchModel(topic, keyword, showURL)
+- 关键函数: main(request), callGroundingMode(topic, keyword, showURL, deadline, signal)；另有 callGrokMode / callTavilyMode / callKimiSearchMode 四种后端。
 
 二、行为事实（代码级）
 - 必填参数是 SearchTopic 与 Keywords，缺失即返回错误。
 - Keywords 支持分隔符：英文逗号、中文逗号、换行。
 - ShowURL 支持布尔 true 或字符串 'true' 两种打开方式。
-- 执行模型为分批并发：按 CONCURRENCY 切块，逐块 Promise.all 并发检索。
+- 执行模型分后端：Grounding 按 CONCURRENCY（默认5）切块并发并受安全截止时间守卫；Tavily/KimiSearch 全关键词 Promise.all 并发后再做二阶总结；Grok 单次请求处理全部关键词（指数退避重试）。
+- SearchMode 未指定时按 kimisearch > tavily > grounding > grok 优先级自动选用配置齐全的后端。
 
 三、输出结构
 - 统一输出标题“VSearch 检索报告”。
@@ -24,4 +25,5 @@ Keywords:「始」TagMemo V5, 语义分段, 相控阵去重「末」,
 ShowURL:「始」true「末」
 <<<[END_TOOL_REQUEST]>>>
 
-Tag: VSearch, VSearch.js, SearchTopic, Keywords, ShowURL, 分批并发, Promise.all, 检索报告, 同步调用, 信息获取
+核对记录(2026-09-02): 已对照 Plugin/VSearch/plugin-manifest.json 与 VSearch.js——callSearchModel 已不存在，现为四后端函数（callGroundingMode/callGrokMode/callTavilyMode/callKimiSearchMode）；分批并发（CONCURRENCY 切块）仅 Grounding 模式采用，Tavily/KimiSearch 为全量 Promise.all + 二阶总结，Grok 为单请求全关键词；新增 SearchMode 自动选择优先级 kimisearch > tavily > grounding > grok。
+Tag: VSearch, VSearch.js, SearchTopic, Keywords, ShowURL, SearchMode, 多后端并发, Promise.all, 检索报告, 同步调用, 信息获取

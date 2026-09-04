@@ -1,14 +1,14 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——ImageServer（原子切片）
 
 一、插件身份
 - name: ImageServer
-- displayName: 图床服务
+- displayName: 图床服务与文件服务
 - pluginType: service
 - command: 无（自动触发）
 
 二、核心能力
-- 提供受密码保护的静态图片服务。
+- 提供受密码保护的静态图片与静态文档（文件）服务。
 - 以自动注入/后台服务方式提供能力，不要求直接命令调用。
 
 三、占位符与注入点
@@ -24,5 +24,7 @@
 
 六、调用示例
 触发示例：启动服务后由路由或事件系统被动触发，无需手动命令。
+
+核对记录(2026-09-02): 插件name仍为ImageServer，目录现位于Plugin/ImageFileServer/（依据 Plugin/ImageFileServer/plugin-manifest.json：displayName"图床服务与文件服务"，提供ProtectedImageHosting与ProtectedFileHosting两个受密码保护服务）。
 
 Tag: ImageServer, service, 后台服务, 多媒体, 系统工具

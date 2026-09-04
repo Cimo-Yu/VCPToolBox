@@ -11,6 +11,10 @@
     "file": "MediaToolBox.txt",
     "description": "该收纳箱收纳了各种多媒体处理，图片生成，视频生成和编辑，音乐生成相关的工具，用于动态向 Agent 提供说明。"
   },
+  "VCPGPTImageToolBox": {
+    "file": "GPTImageGenToolBox.txt",
+    "description": "GPT Image 2 生图修图工具：文生图 GPTGenerateImage、图生图/垫图 GPTEditImage、尺寸质量参数调优，按对话语义动态展开。"
+  },
   "VCPSearchToolBox": {
     "file": "SearchToolBox.txt",
     "description": "该收纳箱收纳了各种外部搜索，联网信息查询，爬虫与信息采集，哔哩哔哩视频，抖音视频搜索，youtube视频相关的工具，用于动态向 Agent 提供说明。"

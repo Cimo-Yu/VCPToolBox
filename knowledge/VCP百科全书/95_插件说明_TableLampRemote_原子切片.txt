@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-C
+[2026-09-02] - Agent-C
 [VCP百科全书] TableLampRemote / 米家台灯遥控器 - IoT设备控制
 
 一、插件基本信息
@@ -81,7 +81,7 @@ TableLampRemote是一个IoT设备控制插件，专门用于控制米家台灯Pr
    返回值示例:
    {
      "status": "success",
-     "result": "批处理执行完成：\n设置成功：on = True\n设置成功：brightness = 80\n设置成功：color-temperature = 4000"
+     "result": "批处理执行完成：\n米家台灯Pro 的 on 值为 True\n米家台灯Pro 的 brightness 值为 80\n米家台灯Pro 的 color-temperature 值为 4000"
    }
 
 五、使用示例

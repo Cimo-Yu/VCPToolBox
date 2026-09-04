@@ -32,4 +32,6 @@ Tag: 学习记录，VCP，日记系统
 
 信源/出处：VCPToolBox 2.19至今更新记录，约60个提交的ChangeLog。
 
+核对记录(2026-09-02): DailyNote插件（manifest v3.0.0，hybridservice常驻FIFO队列）确以create+update两命令统一日记写入与修改，此项成立；但create必填maid/Date/Content（folder/fileName/Tag可选），并无"标题"参数；update靠target(被替换旧内容，至少15字符)/replace文本替换定位，不支持按条目ID或标题定位。日记整理合并未被废弃，而是由独立插件DailyNoteManager（v2.0.0，hybridservice）承担，manifest三子命令为list/organize/associate：organize将多篇旧日记归档到「已整理」文件夹并生成合并新日记，associate基于向量语义联想关联日记。对应更新日志2026-02-20"合并日记本管理器有一个插件统一管理"。
+
 Tag: 日记本管理器，统一合并，DailyNote，create命令，update命令，旧指令废弃，接口统一，日记系统重构

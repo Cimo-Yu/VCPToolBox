@@ -1,8 +1,8 @@
-﻿今日系统学习了VCP静态插件与动态上下文语义折叠协议的设计原理，整理如下。
+今日系统学习了VCP静态插件与动态上下文语义折叠协议的设计原理，整理如下。
 
 核心概念：静态插件（Static Plugins）是VCP系统中提供基础全局状态感知的常驻组件，在VCP Server启动时作为常驻子进程被挂载，通过向stdout周期性或一次性输出内容，将外部状态无缝注入到所有Agent的运行时系统提示词中。
 
-简明释义：静态插件不需要AI显式调用，而是在每次对话前自动将数据注入系统提示词。例如WeatherReporter插件每8小时自动获取天气数据，通过{{VCPWeatherInfo}}占位符在每次对话时自动注入当前天气信息，AI无需主动查询即可感知天气。
+简明释义：静态插件不需要AI显式调用，而是在每次对话前自动将数据注入系统提示词。例如WeatherReporter插件按cron每6小时自动获取天气数据，通过{{VCPWeatherInfo}}占位符在每次对话时自动注入当前天气信息，AI无需主动查询即可感知天气。
 
 关键原理与逻辑：
 
@@ -16,9 +16,9 @@ fold_blocks数组结构示例：threshold:0.5对应极高相关度（用户明�
 
 向量缓存机制：如果plugin_description未修改，其哈希值不变，系统从SQLite零消耗读取缓存向量，不会重复调用Embedding API消耗Token。只有修改了plugin_description才会重新向量化。
 
-WeatherReporter插件配置：需要在config.env中配置VarCity（城市名）、WeatherKey（和风天气API Key）、WeatherUrl（和风天气API域名）。插件特定配置在Plugin/WeatherReporter/config.env中，可设置forecastDays（预报天数，支持3/7/10/15）、hourlyForecastInterval（逐小时预报间隔）、hourlyForecastCount（逐小时预报条目数）。
+WeatherReporter插件配置：需要在config.env中配置VarCity（城市名）、WeatherKey（和风天气API Key）、WeatherUrl（和风天气API域名）。插件特定配置在Plugin/WeatherReporter/config.env中，可设置forecastDays（预报天数，范围1-30，默认7）、hourlyForecastInterval（逐小时预报间隔）、hourlyForecastCount（逐小时预报条目数）。
 
-使用方法：在系统提示词中添加{{VCPWeatherInfo}}或{{VCPWeatherReporter}}占位符即可自动获取天气数据。折叠协议会根据用户当前话题的相关性自动决定注入多少天气信息。
+使用方法：在系统提示词中添加{{VCPWeatherInfo}}占位符即可自动获取天气数据（WeatherReporter的manifest仅声明此一个静态占位符）。折叠协议会根据用户当前话题的相关性自动决定注入多少天气信息。
 
 可能遇到的问题：天气数据不更新通常是WeatherKey无效或WeatherUrl配置错误；折叠协议不生效通常是plugin_description描述不够准确导致向量匹配失败，建议使用拟人化的自然语言描述而非技术术语；插件启动失败通常是依赖未安装，检查Node.js版本和npm依赖。
 
@@ -26,6 +26,8 @@ WeatherReporter插件配置：需要在config.env中配置VarCity（城市名）
 
 反思与洞察：折叠协议的核心洞见是将Token消耗与信息相关性挂钩——只有当用户真正需要某类信息时，才展开完整内容。这种设计使得系统可以同时挂载大量静态插件而不会导致上下文爆炸，是VCP在工程实践上的重要创新。
 
-信源/出处：dailynote/VCP开发/静态插件折叠协议开发手册.md，Plugin/WeatherReporter/README.md，modules/messageProcessor.js的replaceOtherVariables函数。
+信源/出处：dailynote/VCP开发/静态插件折叠协议开发手册.md，Plugin/WeatherReporter/README.md，modules/messageProcessor.js的resolveDynamicFoldProtocol函数。
+
+核对记录(2026-09-02): 依据 modules/foldProtocol.js与modules/messageProcessor.js的resolveDynamicFoldProtocol（vcp_dynamic_fold结构、plugin_description/fold_blocks/threshold/content、比对用户最后一条消息向量）、KnowledgeBaseManager.js的getPluginDescriptionVector（plugin_desc_hash:<sha256>键持久化于SQLite kv_store，未修改则零成本命中）核对，折叠协议描述与向量缓存机制全部一致；按Plugin/WeatherReporter/plugin-manifest.json修正三处事实——刷新周期实为refreshIntervalCron"0 */6 * * *"（每6小时，原写8小时）、forecastDays范围为1-30默认7（原写仅3/7/10/15）、静态占位符仅{{VCPWeatherInfo}}（无{{VCPWeatherReporter}}），并修正信源中的函数名。
 
 Tag: VCP静态插件，折叠协议，vcp_dynamic_fold，余弦相似度，语义匹配，天气插件，WeatherReporter，Token优化，向量缓存，自适应展示，常驻子进程

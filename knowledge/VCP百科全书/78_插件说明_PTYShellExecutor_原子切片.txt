@@ -1,4 +1,4 @@
-[2026-03-03] - Agent-C
+[2026-09-02] - Agent-C
 [VCP百科全书] PTYShellExecutor / PTY Shell 执行器 - Linux本地命令执行
 
 一、插件基本信息
@@ -6,11 +6,11 @@
 2. 插件类型：混合服务(hybridservice)
 3. 版本号：1.0.0
 4. 所属模块：VCPDistributedServer/Plugin
-5. 功能一句话总结：在Linux桌面环境下使用PTY会话执行本地Shell命令
+5. 功能一句话总结：在Linux桌面环境下执行本地Shell命令，支持同步POSIX Shell执行与异步任务模式
 
 二、功能定位
-PTYShellExecutor是一个强大的Linux本地Shell命令执行插件，使用node-pty创建持久化的PTY(伪终端)会话。支持bash/fish/zsh等多种Shell，保持环境变量和会话状态。核心特性包括：
-- 同步执行模式：在PTY会话中执行命令，保持环境变量和会话状态
+PTYShellExecutor是一个强大的Linux本地Shell命令执行插件，基于node-pty。同步执行使用独立POSIX Shell子进程，stdin固定隔离；异步模式托管长任务；GUI终端镜像命令与输出并保留PTY可视化能力。核心特性包括：
+- 同步执行模式：使用独立POSIX Shell子进程执行命令，不复用PTY会话，不保持跨命令的目录/环境状态
 - 异步任务模式：后台执行长时间任务(如codex编译)，立即返回taskId供后续查询
 - 任务管理：支持查询、取消、列出所有异步任务
 - 自动过滤ANSI转义序列和Shell Integration标记，返回干净的文本输出
@@ -48,9 +48,9 @@ COMMAND_TIMEOUT=120000
 | action | string | 否 | execute | 操作类型: execute(同步执行)/async(异步执行)/query(查询任务)/cancel(取消任务)/list(列出任务) |
 | command | string | 条件 | - | 要执行的Shell命令(execute/async模式必需) |
 | taskId | string | 条件 | - | 异步任务ID(query/cancel模式必需) |
-| shell | string | 否 | - | 指定Shell类型: fish/zsh/bash |
-| newSession | boolean | 否 | false | 是否创建新的PTY会话 |
-| cwd | string | 否 | - | 工作目录(async模式可用) |
+| shell | string | 否 | - | async模式指定Shell类型: fish/zsh/bash；execute模式固定使用bash/sh |
+| newSession | boolean | 否 | - | 已废弃：execute模式不复用PTY会话 |
+| cwd | string | 否 | - | 工作目录(execute/async模式可用) |
 
 返回值说明:
 - execute模式: 返回命令执行结果，包含stdout/stderr/exitCode
@@ -131,20 +131,20 @@ shell:「始」zsh「末」,
 cwd:「始」/home/user/projects/myapp「末」
 <<<[END_TOOL_REQUEST]>>>
 
-示例8：创建新会话执行隔离命令
+示例8：查询任务事件日志(eventlog)
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」PTYShellExecutor「末」,
-command:「始」source venv/bin/activate && pip list「末」,
-newSession:「始」true「末」
+action:「始」eventlog「末」,
+taskId:「始」task_abc123_xyz789「末」
 <<<[END_TOOL_REQUEST]>>>
 
 六、注意事项与限制
 1. 仅支持Linux桌面环境，Windows/macOS不适用
 2. 必须安装node-pty依赖：npm install node-pty
-3. 系统必须安装bash/fish/zsh中的至少一种Shell
+3. 系统需安装bash/fish/zsh中的至少一种Shell（execute模式固定使用bash/sh）
 4. 危险命令(rm -rf /等)会被拦截，可在FORBIDDEN_COMMANDS中配置
 5. 特权命令(sudo/su等)需要确认，可在AUTH_REQUIRED_COMMANDS中配置
-6. PTY会话会保持环境变量，但进程退出后状态不保留
+6. 同步execute模式不复用PTY会话，不保持跨命令的目录与环境状态
 7. 异步任务的输出会持续累积，需定期查询获取最新输出
 8. 超时会强制终止命令执行，长任务建议使用async模式
 9. 通信协议为direct(直接调用)，非stdio
@@ -155,4 +155,5 @@ newSession:「始」true「末」
 - OldPowerShellExecutor：旧版PowerShell执行器
 - FileOperator：可配合使用进行文件操作后的命令验证
 
-Tag: Shell执行, Linux命令, PTY会话, 异步任务, 本地执行, 混合服务插件, 环境保持
+核对记录(2026-09-02): 同步execute模式已改为独立POSIX Shell子进程（stdin固定隔离，不复用PTY会话，不保持跨命令状态），newSession 参数已废弃，cwd 在 execute/async 均可用，action 另支持 eventlog 查询任务事件日志。依据 D:\vcp\VCPChat\VCPDistributedServer\Plugin\PTYShellExecutor\plugin-manifest.json 与 PTYShellExecutor.impl.js。
+Tag: Shell执行, Linux命令, PTY会话, 异步任务, 本地执行, 混合服务插件, GUI终端

@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——VCPForumAssistant（原子切片）
 
 一、插件身份
@@ -24,5 +24,7 @@
 
 六、调用示例
 触发示例：该目录为占位插件，待补充 manifest 后可生成标准调用示例。
+
+核对记录(2026-09-02): 源码缺失——在 VCPToolBox\Plugin\ 与 VCPChat\VCPDistributedServer\Plugin\ 两处检索 *Forum*/*Assistant* 变体名，均无 VCPForumAssistant 目录（仅有 AgentAssistant、VCPTaskAssistant、VCPForum、VCPForumLister、VCPForumOnline、VCPForumOnlinePatrol 等无关或不同插件），本文按占位条目保留，能力描述未经源码证实。
 
 Tag: VCPForumAssistant, static, 静态注入, 多媒体, 平台功能

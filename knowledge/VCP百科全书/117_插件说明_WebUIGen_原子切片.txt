@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——WebUIGen（原子切片）
 
 一、插件身份
@@ -31,5 +31,7 @@ prompt:「始」a beautiful landscape with mountains and rivers「末」,
 model:「始」default「末」,
 steps:「始」20「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): 两仓库均无WebUIGen源码——glob *WebUI* 仅命中 OpenWebUISub 用户脚本与知识库文件；git历史显示该插件曾位于主仓 Plugin\WebUIGen，commit a8d20f8d(2026-07-03)"新增vcp官方插件商店，移动部分插件到官方商店"后本地已移除，无法按manifest核对，本文事实暂保留勿引用为本地可调用插件。
 
 Tag: WebUIGen, synchronous, 同步调用, 多媒体, WebUIGenerate

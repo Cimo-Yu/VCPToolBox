@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——FileListGenerator（原子切片）
 
 一、插件身份
@@ -24,5 +24,7 @@
 
 六、调用示例
 触发示例：在系统提示词中引用该插件占位符，等待周期刷新后自动注入。
+
+核对记录(2026-09-02): 依据 Plugin/FileListGenerator/plugin-manifest.json.block 与 file-list-generator.js 核对，各断言与契约一致；注意该插件当前处于禁用状态（契约文件为plugin-manifest.json.block），禁用期间{{VCPFileServer}}不会注入。除扫描'file'目录外，源码还会附带收录 image/doubaogen 与 image/fluxgen 两个目录。
 
 Tag: FileListGenerator, static, 静态注入, 多媒体, 系统工具, VCPFileServer

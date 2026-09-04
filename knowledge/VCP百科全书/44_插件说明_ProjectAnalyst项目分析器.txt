@@ -69,4 +69,6 @@ analysisId:「始」MyApp-2026-03-14.19.30「末」
 
 信源/出处：Plugin/ProjectAnalyst/plugin-manifest.json，Plugin/ProjectAnalyst/ProjectAnalyst.js。
 
+核对记录(2026-09-02): 源码缺失——主仓Plugin\与VCPChat/VCPDistributedServer/Plugin\均无ProjectAnalyst目录（两仓glob仅命中本知识文件与docs/FILE_INVENTORY.md、docs/PLUGIN_ECOSYSTEM.md、docs/vcp白皮书V3.md的历史提及），文中命令（AnalyzeProject/QueryAnalysis/QueryProgress）、参数（directoryPath/full/filePath/keyword）、30秒超时与{{VCPProjectAnalyst}}占位符暂无法对照源码证实，条目按原文保留待源码回归。
+
 Tag: ProjectAnalyst，项目分析，代码分析，文件树，逐文件分析，分析ID，文件检索，关键词搜索，项目理解，代码库导航

@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP记忆系统——元思考系统与超动态递归思维链
 
 一、VCP元思考系统概述
@@ -25,8 +25,8 @@ VCP的记忆系统最终通向的，是一套足以颠覆现有AI工作流的革
 
 三、使用语法
 完整语法：[[VCP元思考:<theme>::<modifiers>]]
-- theme：具体主题名（creative_writing, RyanThink）或Auto（自动路由）
-- modifiers：Group（词元组增强）、Rerank（重排扩寻）
+- theme：具体链名（现行配置为 default、解构、重构，见 Plugin/RAGDiaryPlugin/meta_thinking_chains.json）或Auto（自动路由）
+- modifiers：Group（词元组增强）、Rerank（重排扩寻）；可在修饰符后追加K序列（如 Group:2-1-1-1-1）
 - Auto模式：系统根据上下文语义自动选择匹配的thinktheme
 
 示例：
@@ -34,12 +34,13 @@ VCP的记忆系统最终通向的，是一套足以颠覆现有AI工作流的革
 [[VCP元思考::Auto::Group]]             ← 自动路由+词元组增强
 
 四、思维簇配置
-theme配置文件定义数字序列控制每个簇的动态K上限，如2-1-1-1表示：
+theme配置文件（meta_thinking_chains.json）定义数字序列（kSequence）控制每个簇的动态K上限，序列长度须与簇数量一致，如 default 链为 2-1-1-1-1 表示：
 - 前思维簇：最多召回2条元逻辑模块
 - 逻辑推理簇：最多1条
 - 反思簇：最多1条
 - 结果辩证簇：最多1条
 - 陈词总结梳理簇：最多1条
+现行其他链：解构（2簇，2-2）、重构（4簇，3-2-1-1）。
 
 五、思维簇详解
 1. 前思维簇：准备阶段，召回与当前话题相关的基础背景知识和前置条件
@@ -49,17 +50,18 @@ theme配置文件定义数字序列控制每个簇的动态K上限，如2-1-1-1�
 5. 陈词总结梳理簇：最终输出阶段，召回总结模板和表达范式
 
 六、Auto路由机制
-Auto模式下，系统根据上下文语义自动选择最匹配的thinktheme。路由逻辑在Rust底层数据抽象层中实现，适合任务类型多变的场景。
+Auto模式下，系统根据上下文语义自动选择最匹配的thinktheme。路由逻辑在RAGDiaryPlugin的MetaThinkingManager.js（JavaScript层）中实现：将上下文向量与各链主题向量做余弦相似度比较，相似度超过阈值（默认0.65）则切换主题，否则使用默认链。适合任务类型多变的场景。
 
 七、元思考与日记系统的关系
 - 元逻辑模块就是日记条目，存储在dailynote/对应思维簇文件夹中
 - 每条模块都有标准的日记格式（日期头+内容+Tag尾行）
 - 通过TagMemo浪潮算法进行语义检索
-- Agent可以通过DailyNoteWrite创建新的元逻辑模块
-- ThoughtClusterManager管理思维簇的生命周期
+- Agent可以通过DailyNote create创建新的元逻辑模块
+- ThoughtClusterManager管理思维簇的生命周期（现行命令：CreateClusterFile / EditClusterFile / ListClusters，ListClusters 支持按 chainName 查询）
 
 八、实际效果
 元思考系统注入到系统提示词后，AI在每次回复前都会"看到"一个经过多阶段递归检索构建的思维框架。这相当于AI在回答之前先进行了一轮结构化的"深度思考"，显著提升了推理质量、逻辑连贯性和回答深度。
 
 关联节点：TagMemo浪潮算法, 词元组捕网, ThoughtClusterManager, SemanticGroupEditor, 思维簇文件夹结构
+核对记录(2026-09-02): 元思考现由 RAGDiaryPlugin/MetaThinkingManager.js 与 meta_thinking_chains.json 实现，语法 [[VCP元思考:<链名>::<修饰符>]] 不变（RAGDiaryPlugin.js:1605-1713），Auto路由为JS层主题向量余弦相似度（阈值0.65），不在Rust层；现行链配置为 default（5簇，K序列2-1-1-1-1）、解构（2-2）、重构（3-2-1-1），文初 creative_writing/RyanThink 仅为手册示例名。五个思维簇文件夹（前思维簇/逻辑推理簇/反思簇/结果辩证簇/陈词总结梳理簇）现存于 dailynote/。ThoughtClusterManager 为 synchronous/stdio 插件，命令为 CreateClusterFile/EditClusterFile/ListClusters；词元组管理插件现名 SemanticGroupEditor（QueryGroups/UpdateGroups，旧名SGManager已弃用）。
 Tag: VCP元思考, 超动态递归思维链, 思维簇, 前思维簇, 逻辑推理簇, 反思簇, 辩证簇, 陈词总结簇, 词元组捕网, Auto路由, 元逻辑模块, ThoughtClusterManager, 递归向量增强

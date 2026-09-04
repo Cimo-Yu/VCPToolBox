@@ -1,4 +1,4 @@
-[2026-03-02] - Nova
+[2026-09-02] - Nova
 [VCP百科全书] VCP协议白皮书——设计哲学、交互流程与核心机制
 
 一、VCP协议的诞生动机
@@ -39,10 +39,10 @@ command3:「始」ApplyDiff「末」, filePath3:「始」path3「末」, searchS
 非流式模式：收集完整响应后解析工具调用，执行插件后重新提交给AI。
 
 七、日记写入协议
-AI通过输出<<<DailyNoteStart>>>...<<<DailyNoteEnd>>>标记提交日记条目，内部包含Maid/Date/Content字段。VCP服务器自动解析并调用DailyNoteWrite插件持久化存储。
+日记写入现通过 VCP 工具调用完成：AI 发起 tool_name:「始」DailyNote「末」 的 create/update 指令（hybridservice direct 常驻服务，常配 archery:「始」no_reply「末」免回执），由服务器持久化到 dailynote/ 对应日记本。旧的 <<<DailyNoteStart>>>...<<<DailyNoteEnd>>> 输出标记协议与 DailyNoteWrite 插件调用路径已废弃（docs/Tag记忆检索全链路.md 明确标注为过时死路径）。
 
-八、变量替换引擎（replaceCommonVariables）
-在请求发送给AI之前，VCP服务器遍历所有messages，执行多层变量替换：
+八、变量替换引擎（modules/messageProcessor.js）
+在请求发送给AI之前，VCP服务器遍历所有messages，经 resolveAllVariables / replaceOtherVariables / replacePriorityVariables 多层管线执行变量替换：
 - 日期时间：{{Date}}, {{Time}}, {{Today}}, {{Festival}}
 - 插件数据：{{VCPWeatherInfo}}, {{VCPPluginName}}（自动生成的插件描述）
 - 日记注入：{{角色名日记本}}（全文注入）, [[角色名日记本]]（RAG检索）
@@ -51,11 +51,12 @@ AI通过输出<<<DailyNoteStart>>>...<<<DailyNoteEnd>>>标记提交日记条目�
 - 表情包列表：{{xx表情包}}
 
 九、全局匹配替换引擎
-DetectorX：系统提示词层面的精确匹配替换（修正不良指令、引导AI行为）。
-SuperDetectorX：全局上下文层面的动态替换（文本规范化、抑制异常高频词权累积导致的超长上下文崩溃）。
+Detector（config.env 中 DetectorN/Detector_OutputN）：系统提示词层面的精确匹配替换（修正不良指令、引导AI行为），由 applyDetectorRules 处理。
+SuperDetector（config.env 中 SuperDetectorN/SuperDetector_OutputN）：全局上下文层面的动态替换（文本规范化、抑制异常高频词权累积导致的超长上下文崩溃）。
 
 十、VCP协议的哲学总结
 为AI打造趁手的工具 → 鲁棒语法（免错权）+ 串语法（心流保护）+ 工具署名（主体性）+ 容错设计。
 AI不再是工具的"使用者"，而是工具的"创造者"——通过FileOperator等插件，AI可以阅读、修改、从零创建新插件。
 
+核对记录(2026-09-02): 据 modules/vcpLoop/toolCallParser.js、docs/vcp白皮书V3.md 与 config.env.example 核对：TOOL_REQUEST「始」「末」语法、参数键大小写/连字符容错、串语法、archery/ink/maid、MaxVCPLoop、{{Date}}/{{Festival}}/{{VCPWeatherInfo}}/{{Port}}/{{Image_Key}}/{{Var*}}/{{Tar*}}/{{Sar*}}/{{xx表情包}}、{{xx日记本}}全文注入与[[xx日记本]]RAG检索均现行有效；协议解析器已新增 river/vref 上下文与记忆传递、carry_paste 摘录传递、timely_contact 定时触发及 valet 中性署名字段（解析时镜像到 maid）；日记注入现由 RAGDiaryPlugin 承接并支持 <<>>/《《》》 变体；VCP.md 现为「VCP 1.0 正式版发布演讲稿」，完整白皮书为 docs/vcp白皮书V3.md。
 Tag: VCP协议语法, 工具调用标记, 串语法, 心流体验, 免错权, 请求生命周期, 变量替换引擎, DetectorX, 日记写入协议, 异步射箭, 主动持久化, 设计哲学, 认知工学

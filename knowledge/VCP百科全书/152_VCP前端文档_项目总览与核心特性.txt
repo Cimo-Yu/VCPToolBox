@@ -1,4 +1,4 @@
-[2026-03-03] - 幽浮喵
+[2026-09-02] - 幽浮喵
 [VCP百科全书] VCPChat前端项目总览——桌面级AI交互客户端的架构与特性
 
 一、VCPChat是什么
@@ -8,7 +8,7 @@ VCPChat是一个基于Electron构建的桌面级AI聊天客户端，专为VCP（
 核心定位：VCP生态的桌面入口，提供沉浸式的AI交互体验。
 三层架构角色：前端交互层（VCPChat）→ VCP中间层（VCPToolBox）→ AI模型API层。
 技术底座：Electron + Node.js + Chromium，支持Windows/macOS/Linux三平台。
-许可证：MIT（开源可自由使用）。
+许可证：CC BY-NC-SA 4.0（VCPChat/package.json声明）。
 
 二、核心设计哲学
 
@@ -76,7 +76,7 @@ VCPChat采用模块化架构，包含以下核心模块系统：
 - notificationRenderer.js: 通知渲染
 
 功能模块（*modules/）：
-- Assistantmodules: AI助手界面
+- Agenttaskmodules: 任务界面（原Assistantmodules已迁移至rust_assistant_engine/ui/）
 - Canvasmodules: Canvas画板
 - Dicemodules: 骰子游戏
 - Flowlockmodules: 流程锁定
@@ -93,16 +93,16 @@ VCPChat采用模块化架构，包含以下核心模块系统：
 - VchatManager: VChat管理器
 
 分布式插件（VCPDistributedServer/Plugin/）：
-22个官方插件，涵盖文件操作、代码搜索、系统控制、IoT设备等领域。
+32个插件目录（原文22个基础上新增DesktopRemote/LoomController/VCPMobileSync等），涵盖文件操作、代码搜索、系统控制、IoT设备等领域。
 
 五、核心技术栈
 
-运行时：Electron 37.2.6 (基于Chromium + Node.js)
+运行时：Electron ^44.0.0 (基于Chromium + Node.js，VCPChat/package.json声明)
 前端框架：原生HTML/CSS/JavaScript (无框架依赖)
 音频引擎：Rust (HiFi音频处理)
 通信协议：WebSocket (与VCP服务器)
 进程管理：Electron主进程 + 渲染进程 + Node子进程
-存储：文件系统 + SQLite (通过VCP后端)
+存储：文件系统 + SQLite（本地better-sqlite3与rust_chat_data_service，及VCP后端）
 插件通信：Stdio + IPC
 
 六、与VCPToolBox的协作关系
@@ -171,13 +171,13 @@ IoT控制：通过插件控制智能家居设备
 
 九、许可证与开源
 
-VCPChat采用MIT许可证开源，允许：
-✓ 自由使用、修改、分发
-✓ 商业使用
+VCPChat采用CC BY-NC-SA 4.0许可证（以package.json声明为准），允许：
+✓ 自由使用、修改、分发（须署名，NonCommercial 非商业性）
 ✓ 私有使用
-
-需遵守：
+✗ 商业使用（NC条款禁止；如需商用须另行获得授权）
+须遵守：
 ✓ 保留版权声明
-✓ 包含许可证副本
+✓ 以相同协议（SA，相同方式共享）分发演绎作品
 
+核对记录(2026-09-02): 对照VCPChat/package.json（version 1.0.0，name vcp-chat-desktop，author 莱恩）核对——①Electron实际为^44.0.0（原文37.2.6已过期，已改）；②许可证实际为CC BY-NC-SA 4.0而非MIT（原文两处已改，第九节商业使用表述按NC条款修正）；③VCPDistributedServer/Plugin/现为32个插件目录（已改）；④Assistantmodules已不存在，助手界面迁移至rust_assistant_engine/ui/（已改）；⑤SQLite现由前端本地better-sqlite3依赖与rust_chat_data_service承载（已改）。其余断言核对属实：modules/下chatManager/messageRenderer/settingsManager/fileManager/topicListManager/itemListManager/searchManager/notificationRenderer均存在；Canvasmodules/Dicemodules/Flowlockmodules/Forummodules/Groupmodules/Memomodules/Musicmodules/Notemodules/Promptmodules/RAGmodules/Themesmodules/Translatormodules/Voicechatmodules/VchatManager目录均在；音频引擎为Rust（audio_engine/、rust_audio_engine/）；npm start/pack/dist脚本存在；三层架构与WebSocket协作描述仍与实际相符。
 Tag: VCPChat, 前端客户端, Electron, AI聊天, 多Agent, 插件系统, 桌面应用, VCP生态, 伙伴式交互, 模块化架构

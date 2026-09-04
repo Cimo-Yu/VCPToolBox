@@ -1,4 +1,4 @@
-[2026-03-03] - Codex
+[2026-09-02] - Codex
 [VCP百科全书] 插件说明——NCBIDatasets（原子切片）
 
 一、插件身份
@@ -27,7 +27,7 @@
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」NCBIDatasets「末」,
 command:「始」search_genomes「末」,
-query:「始」human「末」
+tax_id:「始」9606「末」
 <<<[END_TOOL_REQUEST]>>>
 
 获取基因信息:
@@ -41,7 +41,9 @@ gene_id:「始」672「末」
 <<<[TOOL_REQUEST]>>>
 tool_name:「始」NCBIDatasets「末」,
 command:「始」get_genome_info「末」,
-genome_id:「始」GCF_000001405.40「末」
+accession:「始」GCF_000001405.40「末」
 <<<[END_TOOL_REQUEST]>>>
+
+核对记录(2026-09-02): 插件当前为禁用态（Plugin\NCBIDatasets\plugin-manifest.json.block）；displayName 与 22 个命令经 .block manifest 及 NCBIDatasets.mjs 核对一致；示例参数按源码修正——search_genomes 必需 tax_id（query 自动解析仅存在于 search_assemblies），get_genome_info 参数为 accession。
 
 Tag: NCBIDatasets, synchronous, 同步调用, 检索, 信息获取, search_genomes, get_gene_info, get_genome_info, get_organism_info, get_assembly_info, multi-command

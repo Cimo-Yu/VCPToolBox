@@ -114,7 +114,6 @@ module.exports = function (
   mount("/", "clawMail"); // Handles /claw-mail/*
   mount("/", "tarotDivination"); // Handles /tarot-divination/*
   mount("/", "toolCallRecords"); // Handles /tool-call-records/*
-  mount("/", "memoryRiverExtension"); // Handles /memory-river-extension/*
 
   return adminApiRouter;
 };

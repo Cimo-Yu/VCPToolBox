@@ -239,22 +239,6 @@ async function handleListCommand(args) {
 // Command: organize
 // 整理日记：创建新的合并日记 + 将原始文件归档到「已整理」
 // ============================================================
-function toKnowledgeBaseRelativePath(filePath, rootPath) {
-    return path.relative(rootPath, filePath).split(path.sep).join('/');
-}
-
-async function publishArchivedSources(manager, sources, rootPath) {
-    if (typeof manager?._publishKnowledgeLifecycleEvent !== 'function') return;
-    await Promise.all(sources.map(source => manager._publishKnowledgeLifecycleEvent({
-        type: 'knowledge.archived',
-        source: {
-            filePath: toKnowledgeBaseRelativePath(source.sourcePath, rootPath),
-            diaryName: source.diaryName,
-            checksum: source.checksum
-        }
-    })));
-}
-
 async function handleOrganizeCommand(args) {
     const urls = args.urls || args.Urls || args.URL;
     const maid = args.maid || args.maidName || args.Maid;
@@ -431,8 +415,7 @@ async function _handleOrganizeInternal(args) {
                 status: 'success',
                 message: `已归档到 ${ARCHIVE_FOLDER}/`,
                 sourcePath,
-                destinationPath: destPath,
-                diaryName: path.relative(dailyNoteRootPath, sourcePath).split(path.sep)[0]
+                destinationPath: destPath
             });
             debugLog(`已移动: ${sourcePath} -> ${destPath}`);
         } catch {
@@ -444,8 +427,7 @@ async function _handleOrganizeInternal(args) {
                     status: 'success',
                     message: `已归档到 ${ARCHIVE_FOLDER}/`,
                     sourcePath,
-                    destinationPath: destPath,
-                    diaryName: path.relative(dailyNoteRootPath, sourcePath).split(path.sep)[0]
+                    destinationPath: destPath
                 });
             } catch (copyErr) {
                 moveResults.push({ url, status: 'error', message: `归档失败: ${copyErr.message}` });
@@ -458,11 +440,6 @@ async function _handleOrganizeInternal(args) {
     const deletedSourcePaths = moveResults
         .filter(result => result.status === 'success' && result.sourcePath)
         .map(result => result.sourcePath);
-    await publishArchivedSources(
-        knowledgeBaseManager,
-        moveResults.filter(result => result.status === 'success' && result.sourcePath),
-        dailyNoteRootPath
-    );
 
     let summaryMessage = `日记整理完成！\n`;
     summaryMessage += `✅ 新日记已保存: ${newFilePath}\n`;
@@ -708,6 +685,5 @@ module.exports = {
     initialize,
     setDependencies,
     processToolCall,
-    publishArchivedSources,
     shutdown
 };

@@ -1,0 +1,48 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——金融数字全球监控（原子切片）
+
+一、插件身份
+- name: DigitalOracle
+- displayName: 金融数字全球监控
+- pluginType: synchronous
+- protocol: stdio，超时 180000ms
+- 入口: entryPoint.type=python，command=python digital_oracle_vcp.py
+- 版本: 1.0.0
+- 现状: 启用态（存在 plugin-manifest.json）
+
+二、核心能力
+基于上游库 digital_oracle（digital-oracle-main/ 子目录，Python 包）封装的同步插件。AI 手动选金融信源一键拉取结构化数据（宏观/利率/商品/股票/加密/预测市场/期权）。15 个信源：polymarket、kalshi、yahoo、treasury（美债曲线）、cftc（持仓报告）、coingecko、deribit_futures、deribit_options、fear_greed（CNN恐惧贪婪）、cme_fedwatch（FOMC概率）、worldbank、bis（政策利率）、web（网页搜索 VIX/CDS/OAS）、yfinance_options、edgar（SEC内部人交易）。支持按 command1/command2 编号的批量串行执行，及 GetGlobalMacroDashboard 并行总览（gather 并行，fail_fast=False）。同步返回，引用时保留信源、标的与时间窗口。
+
+三、配置重点
+- configSchema: DIGITAL_ORACLE_SEC_EMAIL（edgar 信源所需邮箱，作 User-Agent 身份，默认空）；DIGITAL_ORACLE_DEBUG（bool，默认 false，控制错误堆栈是否进 details）。
+- 源码补充 env：DIGITAL_ORACLE_PROXY_URL / DIGITAL_ORACLE_PROXY_PORT（配置 HTTP/HTTPS 代理，墙内抓外网信源必需）；SEC_USER_EMAIL（edgar 邮箱的兼容别名，与 SEC_EMAIL 二选一可用）。
+- 无 config.env.example 文件；信任源 env 需写根 config.env 或插件级 config.env。
+
+四、调用示例
+抓取黄金价格历史：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」DigitalOracle「末」,
+command:「始」FetchMarketData「末」,
+provider:「始」yahoo「末」,
+symbol:「始」GC=F「末」,
+interval:「始」d「末」,
+limit:「始」30「末」
+<<<[END_TOOL_REQUEST]>>>
+
+全球总览面板：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」DigitalOracle「末」,
+command:「始」GetGlobalMacroDashboard「末」,
+risk_assets:「始」["SPY","QQQ","GC=F","CL=F","BTC-USD","EURUSD=X"]「末」,
+coin_ids:「始」["bitcoin","ethereum","solana"]「末」,
+countries:「始」["US","CN","JP","EU"]「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 命令清单：ListProviders（无参列信源）、FetchMarketData（核心，需 provider/source，参数可平铺根级或放 params JSON）、GetGlobalMacroDashboard。
+- yahoo 必须给 symbol；cftc 必须给 commodity_name；coingecko 必须给 coin_ids；worldbank 必须 indicator+countries；bis 必须 countries；web 必须 query；yfinance_options 必须 ticker+expiration；edgar 必须 ticker 且带邮箱。
+- edgar 报错多半是 DIGITAL_ORACLE_SEC_EMAIL 未配。
+- treasury 官方 CSV 接口格式变化时返回 status=degraded 跳过曲线抓取（源码捕获 Date column 类异常）。
+- 抓外网信源失败先查代理：DIGITAL_ORACLE_PROXY_URL/PORT 是否配置有效。
+
+Tag: DigitalOracle,金融数据,全球监控,信源聚合,预测市场,yahoo,treasury,同步插件

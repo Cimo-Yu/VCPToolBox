@@ -1,0 +1,47 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——TimedTaskQuery（原子切片）
+
+一、插件身份
+- name: TimedTaskQuery
+- displayName: 定时任务结果查询
+- pluginType: synchronous
+- protocol: stdio
+- 入口: entryPoint.command = "node TimedTaskQuery.js"（type: nodejs）
+- 版本: 1.0.0；author: VCPToolBox
+- 现状: 启用态（plugin-manifest.json 生效）；命令: QueryTimedTaskResult；权限: read_from_file_system, write_to_file_system。
+
+二、核心能力
+- 查询或取消通用未来工具调用（timely_contact）的待执行任务，并查询执行后的持久化结果。
+- 依据 task_id/taskId 查找;未到点/未执行完返回 pending，已完成返回 completed。
+- 取消（action=cancel）仅对未执行任务有效;已完成任务不可取消、只能查结果。
+
+三、配置重点
+- configSchema: 无。
+- 行为依赖项目根目录两个数据目录（非 config，源码路径）:
+  · VCPTimedResults/<taskId>.json —— 执行结果持久化文件
+  · VCPTimedContacts/<taskId>.json —— 待执行任务文件
+- 项目根取 process.env.PROJECT_BASE_PATH || ../..（插件目录上级两级）。
+
+四、调用示例
+查询已完成/待执行任务:
+<<<[TOOL_REQUEST]>>>
+maid:「始」你的署名「末」,
+tool_name:「始」TimedTaskQuery「末」,
+task_id:「始」task-1779106560000-650e398d「末」
+<<<[END_TOOL_REQUEST]>>>
+取消待执行任务:
+<<<[TOOL_REQUEST]>>>
+maid:「始」你的署名「末」,
+tool_name:「始」TimedTaskQuery「末」,
+task_id:「始」task-1779106560000-650e398d「末」,
+action:「始」cancel「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 返回 not_found: task_id 错误、任务已执行、或结果目录被清理。
+- 已完成任务取消: 返回 cancelStatus=not_cancelled 并带结果，不能撤销。
+- task_id 仅允许字母/数字/下划线/点/连字符（sanitizeTaskId 白名单，否则报缺 ID）。
+- 参数非合法 JSON: 报「参数不是有效 JSON」错误。
+- 取消后调度器在文件删除事件中同步取消内存定时 Job；若待执行文件已不存在则 queryStatus=not_found。
+
+Tag: TimedTaskQuery,定时任务,结果查询,取消,async timely_contact,VCPTimedResults,VCPTimedContacts,task_id,pending

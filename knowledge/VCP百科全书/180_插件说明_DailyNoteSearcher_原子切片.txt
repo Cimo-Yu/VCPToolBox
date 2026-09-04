@@ -1,0 +1,58 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——DailyNoteSearcher（原子切片）
+
+一、插件身份
+- name: DailyNoteSearcher
+- displayName: 日记/知识库搜索器 (Rust)
+- pluginType: hybridservice
+- protocol: direct
+- 入口: entryPoint.script = "DailyNoteSearcher.js"；常驻启动本地 HTTP 服务，父进程存活检测 + 优雅关闭
+- 版本: 1.0.0；author: Kilo Code
+- 现状: 启用态（plugin-manifest.json 生效）；命令: SearchDailyNote。
+- Rust 原生二进制: DailyNoteSearcher.exe（win x64）/ DailyNoteSearcher-x86_64-pc-windows-msvc.exe、DailyNoteSearcher-aarch64-unknown-linux-musl；JS 桥按平台/架构精确选择，仍保留 stdin 一次性调用兼容路径。
+
+二、核心能力
+- 高性能 Rust 文本搜索: 文本/正则/BM25 排序召回，搜索日记目录或 knowledge 冷知识库。
+- 两种模式: ① 默认文本/正则检索（query/多关键词 AND/is_regex/case_sensitive/whole_word/context_lines）; ② mode=bm25 的 BM25 排序召回（query_tokens 预分词、bm25_limit 候选范围、bm25_search_mode body/tag、tag_blacklist）。
+- JS 桥 spawn Rust 常驻进程（--serve 参数），子进程通过 HTTP POST /search 与 /health、/shutdown 通信;支持实例 ID + shutdown token 防误杀，超时强制终止进程树（taskkill）。
+- 单次结果上限 128MB 响应防护；结果分页/上下文行数控制。
+
+三、配置重点（configSchema 及默认）
+- DAILY_NOTE_SEARCHER_HOST: string，默认 "127.0.0.1"（仅监听回环）。
+- DAILY_NOTE_SEARCHER_PORT: integer，默认 38765（供 RAGDiary 等模块统一定点调用）。
+- DAILY_NOTE_SEARCHER_TIMEOUT: integer，默认 60000（ms）。
+- DAILY_NOTE_SEARCHER_SHUTDOWN_TIMEOUT: integer，默认 5000（ms）。
+- DAILY_NOTE_ROOT: string，默认 "dailynote"（相对项目根;搜 knowledge 时参数 root_path 覆盖）。
+- MAX_RESULTS: integer，默认 200（config.env.example 里为 20）。
+- IGNORED_FOLDERS: string，默认 "VectorStore,DebugLog"。
+- ALLOWED_EXTENSIONS: string，默认 ".md,.txt,.json,.html"（冷知识库可用）。
+- config.env.example: HOST=127.0.0.1 / PORT=38765 / TIMEOUT=60000 / SHUTDOWN_TIMEOUT=5000 / DAILY_NOTE_ROOT=dailynote / MAX_RESULTS=20 / IGNORED_FOLDERS=VectorStore,DebugLog / ALLOWED_EXTENSIONS=md,txt,json,html。
+
+四、调用示例（命令 SearchDailyNote）
+默认文本检索冷知识库:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」DailyNoteSearcher「末」,
+query:「始」TriviumDB search_hybrid「末」,
+root_path:「始」knowledge「末」,
+folder:「始」TDBdocs「末」,
+allowed_extensions:「始」md,txt,json,html「末」,
+is_regex:「始」false「末」
+<<<[END_TOOL_REQUEST]>>>
+BM25 正文召回（推荐）:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」DailyNoteSearcher「末」,
+mode:「始」bm25「末」,
+query:「始」分布式节点如何跨节点取文件「末」,
+folder:「始」VCP桌面知识「末」,
+root_path:「始」dailynote「末」,
+bm25_limit:「始」20「末」,
+bm25_search_mode:「始」body「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 找不到对应平台二进制: getExecutableCandidates 只按平台/架构（win/linux/mac × x64/arm64）选;缺失时报需 Cargo 构建。
+- 端口被其他实例占用: /health 校验 instance_id+pid 不匹配会报「port belongs to another instance」，需清理旧进程。
+- Rust 进程未在 deadline 内 ready: 抛「did not become ready」。
+- 响应超过 128MB: 请求被强制销毁，需缩小范围/提高筛选。
+
+Tag: DailyNoteSearcher,日记搜索,Rust,BM25,全文检索,knowledge冷知识库,规则expressions,常驻服务,RAGDiary

@@ -1,0 +1,40 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——VCPBridgeServer（原子切片）
+
+一、插件身份
+- name: VCPBridgeServer
+- displayName: VCP Bridge Server (System Prompt 劫持代理)
+- pluginType: service
+- protocol: direct
+- 入口: entryPoint.script = "bridgeserver.js"；hasApiRoutes: false；依赖 express/chokidar/dotenv
+- 版本: 2.0.0
+- 现状: 启用态（plugin-manifest.json 生效）；无 invocationCommands，非 LLM 工具，是独立端口常驻 HTTP 代理服务。
+
+二、核心能力
+- 独立端口透明代理，拦截 CLI 工具（Codex、Claude Code、Cursor 等）请求并注入/替换 System Prompt。
+- 协议全矩阵转换: OpenAI Chat、Responses API、Anthropic Messages、Gemini。
+- 四种劫持模式: replace（完全替换）/ prepend（前置）/ append（后置）/ merge（合并置顶）/ off（纯透传）。
+- 模型名映射（modelMap）+ Profile 级动态切换（URL path 前缀 / HTTP 头 x-bridge-profile / model 名斜杠前缀 / defaultProfile）。
+- 配置热加载: chokidar 监听 bridge-config.json 与 profiles/ 目录，改动即重载（端口变更需重启）。
+- 上游默认自动指向本地 VCP 主服务器 http://127.0.0.1:{PORT}（默认 6015），key 默认复用主服务 Key；留空则透传下游 Bearer。
+- Responses API 下游强制转换为 Responses 格式（不裸透传其他协议 SSE）。
+
+三、配置重点
+- 真相源是 bridge-config.json（不是 config.env）。首次启动无该文件时从 config.env/example 迁移生成。
+- 键/默认值（DEFAULT_BRIDGE_CONFIG）: port=3100（独立于主服务器）; upstreamUrl=''（空则自动指主服务器）; upstreamKey='' ; upstreamType='chat'; defaultModel='gpt-4.1-mini'; systemPrompt=''; hijackMode='off'; modelMap={}; debugMode=false; defaultProfile=''。
+- config.env.example 关键键: BRIDGE_PORT=3100 / BRIDGE_UPSTREAM_URL= / BRIDGE_UPSTREAM_KEY= / BRIDGE_UPSTREAM_TYPE=chat / BRIDGE_MODEL=gpt-4.1-mini / BRIDGE_SYSTEM_PROMPT= / BRIDGE_HIJACK_MODE=off / BRIDGE_MODEL_MAP= / DebugMode=false。
+- systemPrompt 支持 .txt 文件名: 从插件根目录与 presets/ 查找读取。
+- Profile 文件存于 profiles/<name>.json（name 仅小写字母数字 _ -，防路径穿越）。
+
+四、调用示例（HTTP 服务式触发，非 TOOL_REQUEST 工具）
+- 健康检查: GET http://127.0.0.1:3100/health
+- 注入 system prompt: 把 CLI 工具的 base_url 指向本代理对外开放端点即可，例如 POST http://127.0.0.1:3100/v1/chat/completions 或 /v1/responses、/v1/messages、/v1beta/models/{model}:generateContent|streamGenerateContent。
+- Profile 前缀路由: POST /v1/{profile}/chat/completions 等按 Profile 动态切换劫持配置。
+
+五、排障提示
+- hijackMode 默认 off、systemPrompt 空 → 纯透传，属预期。需在 bridge-config.json 填 systemPrompt 并改 hijackMode。
+- 端口变更仅热重载日志提示、需重启插件/主服务生效（applyBridgeRuntimeConfig 仅在非初始且端口变化时 warn）。
+- Responses 下游: 若上游为 chat/anthropic/gemini，请走 sendResponsesStream/Json 路径转换；失败会以 vcp_bridge_stream_error 返回。
+- 上游默认指主服务器；直连外部 API 才需填 BRIDGE_UPSTREAM_URL/KEY/TYPE。
+
+Tag: VCPBridgeServer,system prompt劫持,代理,Codex,Claude Code,Cursor,协议转换,Responses API,bridge-config,Profile

@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "VCPBridge - 浏览器数据桥接器",
+  "version": "1.7.0",
+  "description": "将浏览器页面数据桥接到VCP系统，支持抖音的结构化数据提取（视频/图文/作者/喜欢/收藏/搜索/作品列表/热搜/推荐流/直播弹幕）、创作者平台受众画像、一键投喂与视频下载。",
+ "permissions": [
+  "activeTab",
+  "alarms",
+  "contextMenus",
+    "storage",
+    "downloads",
+    "declarativeNetRequest",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+ "background": {
+  "service_worker": "background.js"
+ },
+ "web_accessible_resources": [
+  {
+   "resources": [
+    "managed-runtime-config.json"
+   ],
+   "matches": [
+    "<all_urls>"
+   ]
+  }
+ ],
+ "content_scripts": [
+    {
+      "matches": ["https://www.douyin.com/*"],
+      "js": ["main-world/douyin-downloader.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.douyin.com/*"],
+      "js": ["content-scripts/douyin.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-scripts/generic.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://creator.douyin.com/*", "https://trendinsight.oceanengine.com/*"],
+      "js": ["main-world/creator-portrait-sniffer.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://creator.douyin.com/*", "https://trendinsight.oceanengine.com/*"],
+      "js": ["content-scripts/creator.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "VCPBridge"
+  }
+}

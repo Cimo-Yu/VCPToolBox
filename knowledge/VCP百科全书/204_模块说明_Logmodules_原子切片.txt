@@ -1,0 +1,57 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 模块说明——Logmodules（原子切片）
+
+一、模块定位
+属于 D:\vcp\VCPChat\ 前端的「日志中心」功能域，
+是独立 Electron 渲染窗口（VCP 日志中心），
+用于实时读取、增量追踪、筛选、复制与清空后端 VCP 服务器的运行日志。
+窗口由 log.html 为宿主，
+按 script 标签加载 log.js 并引入 log.css。
+在需要观测后端服务行为时由主程序加载触发。
+
+二、核心文件（目录内共 3 个文件）
+- log.html：窗口骨架。
+  顶部导航条含 刷新/清空 按钮与 最小化/最大化/关闭；
+  控制面板含「默认行数」「筛选文本」「倒序显示」「复制可见」，
+  及 全部/IP/TOOL/RAG/POST/PLUGIN/ERROR 预筛选标签；
+  主区为只读日志流容器（#log-lines）；
+  另有清空确认模态窗与 Toast 提示。
+- log.js：全部逻辑。
+  管理行数上限、正/倒序、筛选、
+  轮询（每 1800ms 增量拉取）、清空后端日志、复制可见日志，
+  及日志行修饰（LOG/INFO/WARN/WARNING/ERROR/FATAL/DEBUG
+  级别着色与关键词高亮）。
+- log.css：日志行样式、级别徽标、预筛选 chip、浮动静置按钮等。
+
+三、对外接口与协议
+IPC / preload（window.utilityAPI || window.electronAPI）：
+- minimizeWindow/maximizeWindow/closeWindow
+- loadSettings、loadForumConfig、getCurrentTheme、onThemeUpdated
+HTTP（管理端 API，`admin_api` 前缀，Basic Auth 继承自论坛凭据）：
+- GET /server-log
+  支持参数 incremental=true 与 offset，增量/全量拉取，
+  返回 content 与 offset；needFullReload 触发回退全量。
+- POST /server-log/clear（清空后端日志）
+
+四、与其他模块或后端的联动
+- 管理员凭据继承自前端 Forum 模块
+  （loadForumConfig 的 username/password），
+  未登录/未保存凭据时状态显示「缺少论坛管理员凭据」。
+- 后端返回的 path（当前日志文件路径）、fileSize
+  用于状态/元信息展示；
+  needFullReload 表明后端日志已轮转，需回退全量。
+- 行过滤与后端无关，纯前端客户端过滤
+  （PRESET_FILTERS 为 IP/TOOL/RAG/POST/PLUGIN/ERROR）。
+
+五、备注
+- 本地偏好持久化到 localStorage：
+  vcp-log-center-line-limit（行数，范围 50–20000，默认 500）；
+  vcp-log-center-reverse-order（倒序）。
+- 依赖 `vcpServerUrl` 配置且需论坛管理员凭据；
+  复制失败时退回 execCommand 老路径。
+- 已知限制：
+  增量拉取依赖后端维护的 offset 游标，
+  若后端无增量语义会频繁触发 needFullReload；
+  清空操作不可撤销。
+
+Tag: Logmodules,日志中心,日志追踪,admin_api,server-log,增量轮询,日志筛选

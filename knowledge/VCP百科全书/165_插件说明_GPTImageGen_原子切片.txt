@@ -1,0 +1,58 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——GPTImageGen（原子切片）
+
+一、插件身份
+- name: GPTImageGen
+- displayName: GPT Image 2 图像生成器
+- pluginType: synchronous
+- protocol: stdio
+- 入口: node GPTImageGen.js
+- 版本: 1.1.0
+- manifestVersion: 1.0.0
+- 现状: 启用态（plugin-manifest.json 存在，无 .block）
+
+二、核心能力
+- 通过 OpenAI 兼容 API 调用 gpt-image-2 模型生成与编辑高清图（OpenAI 官方或反代渠道）。
+- 命令：GPTGenerateImage（文生图）、GPTEditImage（图生图/垫图，单图≤4MB，支持 URL/base64 data URI/本地路径/图片数组≤16张）。
+- 支持尺寸/质量/背景/n 参数；分辨率受双上限（最长边≤3840 且 宽x高≤8,294,400）。共享生成模型版本快照锁定（如 gpt-image-2-2026-04-21，经 GPT_IMAGE_MODEL 配置）。
+- 内置 429/503 指数退避自动重试；支持 Chat Completions 模式回退（某些渠道无 /v1/images/generations）。
+
+三、配置重点（configSchema / config.env）
+- OPENAI_API_KEY: string(必需)，OpenAI 兼容 API 密钥。
+- OPENAI_BASE_URL: 默认 https://api.openai.com（可配反代）。
+- GPT_IMAGE_MODEL: 默认 gpt-image-2。
+- DEFAULT_SIZE: 默认 1024x1024（最长边≤3840）。
+- MAX_EDGE_PX / MAX_TOTAL_PIXELS: config.env 可选，默认 3840 / 8294400，渠道级硬限制。
+- DEFAULT_QUALITY: low / medium / high / auto，默认 auto。
+- DEFAULT_RESPONSE_FORMAT: b64_json(推荐) / url(60分钟内有效)，默认 b64_json。
+- DEFAULT_BACKGROUND: opaque / auto（官方不支持 transparent），默认 auto。
+- MAX_RETRIES / RETRY_BASE_DELAY_MS: 默认 2 / 2000（指数退避）。
+- USE_CHAT_COMPLETIONS_MODE: 布尔，默认 false；检测到相关错误自动回退。
+- DebugMode: 布尔，stderr 详细日志，默认 false。
+
+四、调用示例
+文生图:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」GPTImageGen「末」,
+command:「始」GPTGenerateImage「末」,
+prompt:「始」A cute cat wearing a tiny astronaut helmet floating in space, digital art style「末」,
+size:「始」1024x1024「末」,
+quality:「始」high「末」
+<<<[END_TOOL_REQUEST]>>>
+
+图生图:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」GPTImageGen「末」,
+command:「始」GPTEditImage「末」,
+prompt:「始」Transform this photo into a Studio Ghibli anime style illustration「末」,
+image:「始」http://example.com/photo.png「末」,
+size:「始」1536x1024「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- manifest 与源码一致（GPTGenerateImage / GPTEditImage 两命令）；不支持 transparent，部分反代兼容。
+- 分辨率超预算组合（如 3840x3840、4096x4096）本地直接拒绝，用 MAX_EDGE_PX / MAX_TOTAL_PIXELS 按渠道调整。
+- 生成耗时 30-120 秒；communication.timeout 300000ms。若渠道不支持 images/generations 端点，开启 USE_CHAT_COMPLETIONS_MODE 或依赖自动回退。
+- 单张输入图超 4MB 会被拒绝；支持 PNG/JPEG/WebP/GIF。
+
+Tag: GPTImageGen, synchronous, 文生图, 图生图, GPTImage2, OpenAI兼容, GPTGenerateImage, GPTEditImage, 重试, 启

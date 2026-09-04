@@ -1,0 +1,45 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——LinuxLogMonitorServer（原子切片）
+
+一、插件身份
+- name：LinuxLogMonitorServer
+- displayName：Linux 日志监控服务
+- pluginType：service（direct 协议）；manifestVersion 1.0.0
+- 入口：LinuxLogMonitorServer.js（entryPoint.type=nodejs）
+- 版本：1.0.0；作者 VCP Team
+- capabilities：{}（无自身 invocationCommands）
+- dependencies.shared：["SSHManager"]
+- 现状：禁用态（manifest 为 plugin-manifest.json.block，未启用）
+
+二、核心能力
+- 常驻主进程的日志监控服务：接收 LinuxLogMonitor 插件子进程的 UDS JSON-RPC 请求，管理远端 tail -f watcher、内存环形缓冲与异常检测。
+- 生命周期：startMonitor 创建服务端 watcher 并返回 taskId，subscribe/unsubscribe 管理订阅集合；客户端断连自动回收孤儿 watcher。
+- 查询契约：searchLog / lastErrors / logStats 优先查内存缓冲，缺失或未覆盖范围则回退远端 SSH（grep/tail/awk）；logStats 远端聚合计数。
+- 通知方法（broadcast 给已订阅 socket）：anomaly.detected（透传 anomaly 的 type/description/matchedText/extractedValue）、watcher.error、watcher.stopped、log.rotation / log.truncation。
+- 安全：每个 RPC 请求须携带 LOG_MONITOR_TOKEN（仅注入 LinuxLogMonitor 白名单插件）；UDS socket 权限 0600；Windows 用命名管道，类 Unix 用 /tmp 下 sock。
+- 规则加载：../LinuxLogMonitor/rules/default-rules.json（默认）+ custom-rules.json（自定义）喂给 AnomalyDetector；hosts.json 仍为默认模板时仅启用本地监控。
+
+三、配置重点
+- manifest 无 configSchema；运行时读取：host 为 Plugin/LinuxShellExecutor/hosts.json（默认模板仅 local）、回调 config.callbackBaseUrl 或 env CALLBACK_BASE_URL（默认 http://localhost:5000）、config.debug。
+- 目录中无 config.env.example；将 UDS socket 与 token 挂到 global.__vcp_log_monitor_sock / __vcp_log_monitor_token。
+- watcher 参数：prefetchLines 未配时用 contextLines 预读；afterContextTimeoutMs 默认 5s；dedupeMode/dedupeWindow/maxHashes 传给 LogWatcher 做去重。
+
+四、调用示例（无自身命令，触发方为 LinuxLogMonitor 插件）
+- 本服务是被动 RPC 提供服务；其消费端 LinuxLogMonitor（stdio 插件）通过 LogMonitorProxy 发起调用，示意：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」LinuxLogMonitor「末」,
+command:「始」startMonitor「末」,
+hostId:「始」prod-server「末」,
+logPath:「始」/var/log/app.log「末」,
+prefetchLines:「始」100「末」
+<<<[END_TOOL_REQUEST]>>>
+（注意：这是 LinuxLogMonitor 插件经 UDS 对 188 服务的封装调用，非服务自命令，以实际情况为准。）
+
+五、排障提示
+- 依赖 LinuxLogMonitor（其 manifest 需为启用态）与共享 SSHManager；本服务单独禁用或缺失依赖时查询不可用。
+- 报 -32001 说明 RPC 未带正确 LOG_MONITOR_TOKEN；-32603 为内部处理错误；Engine not initialized 因 accelerate 读到的规则/SSHManager 初始化失败。
+- hosts.json 仍为默认模板（MD5 校验）只会启用本地监控，远端日志需先配置真实主机。
+- 查询 memory 覆盖范围不足或远端失败时返回 partial/fallbackError，不代表数据全部丢失。
+- manifest capabilities 为空，无直接调用命令；若预期由 AI 直接调用属误解——服务仅供 LinuxLogMonitor 消费，以源码为准。
+
+Tag: LinuxLogMonitorServer,日志监控,service,禁用态,UDS,JSON-RPC,SSH,watcher,异常检测,SSHManager

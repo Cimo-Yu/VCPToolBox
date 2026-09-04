@@ -1,0 +1,36 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——DynamicToolBridge（原子切片）
+
+一、插件身份
+- name: DynamicToolBridge
+- displayName: 动态工具清单桥接器
+- pluginType: synchronous
+- protocol: stdio
+- 入口: entryPoint.command = "node noop.js"（注意：本插件目录仅含 plugin-manifest.json 与 config.env.example，未见 noop.js 源文件）
+- 版本: 1.0.0；author: 白金喵
+- 现状: 启用态（plugin-manifest.json 生效，非 .block）；本插件**不作为 LLM 可调用工具**暴露（capabilities.invocationCommands 为空），仅私有配置管理。
+
+二、核心能力
+- 为 `{{VCPDynamicTools}}` 动态插件工具清单提供「插件中心可见」的配置入口。
+- 只负责小模型分类器等私有配置，不进入普通请求主路径；仅在新增插件、插件说明变化或手动重建分类时才调用小模型。
+- 目的: 供管理面板展示并对小模型分类参数做热配置，本身不产生工具调用。
+
+三、配置重点（configSchema 键与默认值）
+- SmallModel_Enabled: boolean，默认 false —— 是否启用小模型分类器。
+- SmallModel_Use_Main_Config: boolean，默认 true —— 是否复用主配置上游 API；true 时自动用 VCPToolBox/config.env 的 API_URL/API_Key，只填模型名。
+- SmallModel_Model: string，默认 "" —— 小模型名（复用或独立配置都必填）。
+- SmallModel_Endpoint: string，默认 "" —— 仅 Use_Main_Config=false 时填；可填基础地址（自动补 /v1/chat/completions）或完整地址。
+- SmallModel_API_Key: string，默认 "" —— 仅独立配置时读，复用主配置时忽略。
+- config.env.example 同构（SmallModel_Enabled=false / SmallModel_Use_Main_Config=true）。
+
+四、调用示例（静态占位符触发说明）
+- 本插件非 LLM 可调用工具，无 TOOL_REQUEST 命令。
+- 触发方式是让 LLM 生成 `{{VCPDynamicTools}}` 占位符由模块展开；插件中心通过读取本插件 configSchema/config.env 呈现并保存小模型分类配置。
+- 启用分类: 在配置中设 SmallModel_Enabled=true 并填 SmallModel_Model。
+
+五、排障提示
+- manifest 的入口指向 node noop.js 但目录未见该文件，属 manifest 与文件系统不一致；若 PluginManager 尝试启动 stdio 会失败，但本插件通常仅作配置承载，不依赖该入口实际执行。以源码/实际文件为准。
+- 独立端点联通失败: 检查 SmallModel_Endpoint 是否为合法 OpenAI 兼容 chat/completions 地址，或改用 SmallModel_Use_Main_Config=true 复用主上游。
+- 小模型不生效: 确认 SmallModel_Enabled=false 时分类不会运行（默认关闭，属预期）。
+
+Tag: DynamicToolBridge,动态工具清单,小模型分类,configSchema,占位符,VCPDynamicTools,桥接器

@@ -1,0 +1,44 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——PlaceholderExplorer（原子切片）
+
+一、插件身份
+- name: PlaceholderExplorer；displayName: 占位符索引管理器；pluginType: static；
+  protocol: stdio（timeout 120000ms）；入口: node PlaceholderExplorer.js（entryPoint.type=nodejs, command）。
+- version: 1.0.0；author: VCPToolBox。
+- 现状: 启用态——plugin-manifest.json（非 .block）。
+- capabilities.systemPromptPlaceholders: {{VCPPlaceholderMap}}（生成的全量占位符索引摘要）；
+  invocationCommands 为空数组——static 类型，无工具命令位，靠占位符注入能力。
+- 刷新节奏: refreshIntervalCron = "*/30 * * * *"（每30分钟扫描一次）。
+
+二、核心能力
+- 定期扫描 VCP 的 Tar/Var/Sar、插件 manifest 静态占位符、Agent、Toolbox 映射、表情包目录及引擎内置
+  占位符，构建"定义→引用"统一索引与嵌套引用链，向 {{VCPPlaceholderMap}} 输出可折叠健康摘要。
+- 扫描源：config.env 中 Tar*/Var*/SarPrompt*；sarprompt.json 的 Sar 定义；Plugin/*/plugin-manifest.json
+  显式占位符及 {{VCP<插件名>}} 说明占位符；TVStxt/**/*.{txt,md} 与 Agent/**/*.{txt,md} 的 {{…}}/[[…]]；
+  agent_map.json、toolbox_map.json、表情包目录与引擎内置。
+- 产物：generated/placeholder-index.json（索引）；backups/ 每次成功写入前自动备份原文件。
+- 主干即扫描+摘要：PlaceholderExplorer.js（main）调 modules/scanner.scanProject →
+  modules/reporter.buildSummaryFold，输出 summary fold 到 stdout。真正写索引/编辑由配套的命令插件
+  PlaceholderExplorerCommand 完成（见 174）。
+
+三、配置重点（manifest configSchema 默认值）
+- PLACEHOLDER_SCAN_ROOT（string, 默认 "."）：扫描根，相对路径以 VCP 项目根为基准。
+- PLACEHOLDER_INDEX_FILE（默认 generated/placeholder-index.json）：索引输出路径，相对本插件目录。
+- PLACEHOLDER_BACKUP_DIR（默认 backups）：编辑前备份目录，必须位于本插件目录内。
+- PLACEHOLDER_BACKUP_RETENTION（integer, 默认 20）：最多保留备份文件数。
+- PLACEHOLDER_MAX_EDIT_BYTES（integer, 默认 1048576=1MB）：单次编辑内容最大字节。
+- config.env.example 另有可选覆盖：PLACEHOLDER_ENV_FILE/SAR_FILE/TVS_DIR/AGENT_DIR/PLUGIN_DIR/
+  IMAGE_DIR/AGENT_MAP_FILE/TOOLBOX_MAP_FILE、PLACEHOLDER_MAX_SCAN_FILES=20000。
+
+四、调用示例
+- static 插件无命令，不在 DO 工具位注册；能力经由占位符 {{VCPPlaceholderMap}} 自动注入系统提示。
+- 查询该 map 是只读文件/注入文本，配合 PlaceholderExplorerCommand(Scan/Locate/Edit/Preview/
+  CheckDeadLinks)获得定义引用详情；占位符触发仅由加载器按 cron 刷新注入，无需人工调起。
+
+五、排障提示
+- 摘要内容陈旧：核对 refreshIntervalCron=*/30 * * * * 与扫描根 PLACEHOLDER_SCAN_ROOT 是否指向正确根；
+  手工强制重建用 PlaceholderExplorerCommand 的 Scan。
+- 占位符 {{VCPPlaceholderMap}} 未出现：检查 static 插件是否在启用态、扫描是否报错（错误写入 stderr、
+  exitCode=1）。
+- 备份被清理/编辑失败：确认备份目录在本插件目录内、未超 PLACEHOLDER_BACKUP_RETENTION。
+Tag: PlaceholderExplorer,占位符,索引,VCPPlaceholderMap,static,cron,扫描

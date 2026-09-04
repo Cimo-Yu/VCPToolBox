@@ -1,0 +1,40 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——OneRing 统一上下文（原子切片）
+
+一、插件身份
+- name: OneRing
+- displayName: OneRing 统一上下文
+- pluginType: messagePreprocessor（direct 协议）
+- protocol: direct（无 stdio，通过动态工具调用/预处理器处理）
+- 入口: entryPoint.type=nodejs，script=OneRing.js
+- 版本: 0.1.0
+- 现状: 启用态（存在 plugin-manifest.json，未折叠）
+
+二、核心能力
+实验级统一上下文系统。为某 Agent 维护跨前端/群聊/私聊的统一终极上下文，基于 SQLite 记录每条 User/Assistant 发言（时间戳、来源对象、前端来源），用 fuzzy diff 做历史比对更新，实际发送时追加/拆分 [OneRing通知:...] 来源标记。AI 回复以异步方式在响应完成后入库。触发由系统提示词语法控制：[[OneRing::AgentName::Frontend]]；只写库不追加用 [[OneRing::AgentName::Frontend::Only]] 或独立 [[OneRing::Only]]。运行热开关、maxContextBlocks、时间线插入、来源标记输出位置由 OneRingConfig.json 经 chokidar 热加载控制（无需重启）。时间线策略含 RawClientTimeline 与 ServerInferredTimeline 两种。
+
+三、配置重点（config.env.example）
+- ONERING_USER_NAME=Ryan（无来源前缀时用户发言标记名）
+- ONERING_ALLOW_CONTEXT_PATCH=true（是否允许跨端补充；上限由 OneRingConfig.json 的 maxContextBlocks 控制）
+- ONERING_RECORD_ONLY=false（true=只记录不改写，仅记录/标记/retry 更新；推荐初期保持）
+- ONERING_MAX_UNKNOWN_RATIO=0.35（未知消息比例阈值，超过则放弃补充）
+- ONERING_DEDUP_SIMILARITY=0.92（fuzzy 去重/匹配阈值）
+- ONERING_MAX_DB_RECORDS=100（每 Agent SQLite 保留上限，0/负=不限）
+- ONERING_MEMO_FALLBACK_MESSAGE_COUNT=30（Memo 时间范围消息不足时回退条数，范围 1~1000）
+- 另：ONERING_POST_SNAPSHOT_MAX_BLOCKS=20、ONERING_OUTPUT_DEDUP_SIMILARITY=0.98、DebugMode=false
+- OneRingConfig.json 热配置：enabled、tailTagPlacement（system_user_block 默认 / inline）、maxContextBlocks=5、timeInsert、memo.*（model=glm-5.3-flash）
+
+四、调用示例
+静态 messagePreprocessor，无 AI 可调命令；行为由系统提示词占位符触发。触发写法（写库并追加上下文）：
+[[OneRing::AgentName::Vchat]]
+只记录不追加：
+[[OneRing::AgentName::Vchat::Only]]
+
+五、排障提示
+- 无 invocationCommands，不通过 TOOL_REQUEST 调用，靠系统提示词触发，别用工具语法。
+- 触发字符串每字段必须限制在同一 [[...]] 内，不能吞右方括号或换行，否则会跨行回溯借用其他 [[...]] 标记（源码注释明确警告）。
+- tailTagPlacement 选 inline 保强调 message 数组严格兼容，但增加时间/来源幻觉风险；system_user_block 提升时间理解但部分老模型不兼容。
+- ONERING_ALLOW_CONTEXT_PATCH 与 ONERING_RECORD_ONLY 都开启时行为趋保守；只记录推荐 RECORD_ONLY=true。
+- maxContextBlocks 只控制注入 block 数，实际 DB 保留由 ONERING_MAX_DB_RECORDS 控制。
+
+Tag: OneRing,统一上下文,messagePreprocessor,跨端上下文,SQLite,时间线,fuzzy,diff,上下文补充

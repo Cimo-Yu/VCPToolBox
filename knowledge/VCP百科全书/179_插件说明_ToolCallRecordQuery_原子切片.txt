@@ -1,0 +1,48 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——ToolCallRecordQuery（原子切片）
+
+一、插件身份
+- name: ToolCallRecordQuery
+- displayName: 工具调用记录查询器
+- pluginType: synchronous
+- protocol: stdio
+- 入口: entryPoint.command = "node ToolCallRecordQuery.js"（type: nodejs）
+- 版本: 1.0.0；author: VCPToolBox；manifestVersion 1.0.0
+- 现状: 启用态（plugin-manifest.json 生效）；命令: ToolCallRecordQuery。
+- 依赖: ../../modules/toolCallRecordStore（记录存储）与 toolCallRecordReportFormatter（报告格式化）。
+
+二、核心能力
+- 查询 VCP 工具调用记录，支持按记录 ID、时间范围、调用者署名(maid/valet)、工具名、成功失败状态和全文字段搜索。
+- 默认返回 AI 友好 Markdown 报告，摘要嵌套 JSON，并把 data:image/...;base64 多模态图片迁移为可访问图片 URL 防上下文膨胀。
+- 支持 format=json 输出原始结构（调试用）；detail=true/mode=detail 返回单条详情报告。
+
+三、配置重点
+- configSchema: {}（无配置键）。
+- 查询参数（从 TOOL_REQUEST 提供，非环境配置）: id/recordId、from/startTime、to/endTime、caller/callerSignature/maid/valet、callerType、toolName/tool、success、status(running/success/failure)、search/keyword/q(全文字段模糊)、limit、offset、order(desc/asc)、detail、format/output(markdown/json)、migrateMultimodal、includeRaw、maxTextChars/max_json_chars。
+
+四、调用示例
+按时间范围 + 工具名查询:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」ToolCallRecordQuery「末」,
+caller:「始」Nova「末」,
+toolName:「始」DMXDoubaoGen「末」,
+from:「始」2026-07-06T00:00:00+08:00「末」,
+to:「始」2026-07-06T23:59:59+08:00「末」,
+search:「始」关键词「末」,
+limit:「始」20「末」,
+migrateMultimodal:「始」true「末」
+<<<[END_TOOL_REQUEST]>>>
+查单条详情（detail）:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」ToolCallRecordQuery「末」,
+id:「始」<记录ID>「末」,
+detail:「始」true「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 仅当工具调用记录系统开启并存在记录时才有结果，否则空。
+- migrateMultimodal 默认 true（迁移图片）；设为 false 可保留 base64 原文。
+- includeRaw 默认 false;format=json 时返回原始结构、字段可能较大。
+- 存储层依赖 modules/toolCallRecordStore 初始化，初始化失败会抛 ToolCallRecordQuery Error;查询进程退出前会调用 shutdown 释放存储。
+
+Tag: ToolCallRecordQuery,工具调用记录,查询,Markdown报告,multimodal,全文搜索,记录审计,DMXDoubaoGen

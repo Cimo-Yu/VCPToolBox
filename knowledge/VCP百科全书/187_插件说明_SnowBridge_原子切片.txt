@@ -1,0 +1,45 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——SnowBridge（原子切片）
+
+一、插件身份
+- name：SnowBridge
+- displayName：Snow 工具桥接器
+- pluginType：hybridservice（direct 协议，timeout 60000）
+- 入口：index.js（entryPoint.script）
+- 版本：2.1.0；作者 Gugu_Kilo
+- hasApiRoutes：true（注册 /status 路由并 monkey-patch WebSocketServer.handleDistributedServerMessage）
+- 现状：禁用态（manifest 为 plugin-manifest.json.block，未启用）
+
+二、核心能力
+- 为 Snow CLI 导出 VCP 原生工具：`get_vcp_manifests` 按黑/白名单与过滤器导出可桥接插件 manifest；`execute_vcp_tool` 转发到 pluginManager.processToolCall，支持 token 鉴权、限流与异步回调；`cancel_vcp_tool` 取消进行中调用。
+- 工具筛选：Excluded_Tools 黑名单、Excluded_Display_Keywords 关键词排除、Allowed_Tools 白名单、clientFilters 过滤；跳过 distributed 插件。
+- 来源鉴权契约：Require_Snow_Request_Headers 开启时校验 x-snow-client=snow-cli、x-snow-protocol=function-calling、x-snow-channel=bridge-ws；x-snow-tool-mode 默认仅接受 bridge/hybrid（local 拒绝）。
+- 限流 & 鉴权：Bridge_Access_Token 可选令牌；Rate_Limit_Per_Minute 每分钟请求上限（manifest/execute/cancel 共享）。
+- 桥接工具 ID 形如 vcp_bridge:snowbridge:<origin>；Bridge_Enabled=false 时全部转发事件静默，仅放行原 handler。
+- 自身命令：GetStatus 返回运行状态/hooked/config/bridgeVersion/capabilities。
+
+三、配置重点
+- configSchema 默认：Bridge_Enabled=false、Excluded_Tools=VCPLog,VCPInfo,VCPToolBridge,SnowBridge、Excluded_Display_Keywords="[AIO]"、Allowed_Tools=""、Require_Snow_Request_Headers=true、Allowed_Snow_Tool_Modes=bridge,hybrid、Bridge_Access_Token=""、Rate_Limit_Per_Minute=60。
+- config.env.example 关键键与默认值与上一致；注意示例注释提示 PluginManager 不会自动注入 manifest 的 default，生效键建议在 config.env 显式写出。
+
+四、调用示例
+- 桥接请求（Snow CLI 侧），以 execute_vcp_tool 为例：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」SnowBridge「末」,
+command:「始」execute_vcp_tool「末」,
+x-snow-client:「始」snow-cli「末」,
+x-snow-protocol:「始」function-calling「末」,
+x-snow-channel:「始」bridge-ws「末」,
+originName:「始」目标插件名「末」,
+toolArgs:「始」{}「末」
+<<<[END_TOOL_REQUEST]>>>
+（实际经 WebSocketServer 分布式消息通道发送，此处为语义示意图；命令行方式以远程调用为例。）
+
+五、排障提示
+- 请求被拒常因未携带契约头或 x-snow-tool-mode 不在白名单（错误码 bridge_source_*_forbidden）。
+- `bridge_rate_limited`：命中分钟限流，收紧 Bridge_Access_Token 或调高 Rate_Limit_Per_Minute。
+- requireAdmin 无关：本插件鉴权走 accessToken/authToken，与管理员验证码无关。
+- 禁用态下 registerApiRoutes 仍可能被调用但 Bridge_Enabled=false 时钩子透传原 handler，status.hooked=false 属正常。
+- manifest 声明 capabilities.invocationCommands 仅 GetStatus；源码 processToolCall 对该命令给出状态，其余 command 抛 Unknown command——以源码为准。
+
+Tag: SnowBridge,工具桥,hybridservice,禁用态,桥接,WebSocket,GetStatus,tool导出过滤

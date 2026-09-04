@@ -308,3 +308,17 @@ Plugin/.backup/
 # ==== 开发SDK ====
 Plugin/VCPQQBotServer/bot-node-sdk-main
 开发日志/
+
+# ==== 本机运行产物与备份（2026-09-04 理清）====
+/bin/
+/file/
+/.superpowers/
+__pycache__/
+Plugin/ChromeBridge/managed-profile-probe/
+Plugin/ChromeBridge/managed-profile-cft-probe/
+Plugin/CodeSearcher/backup_*/
+Plugin/GPTImageGen/image/
+Plugin/PlaceholderExplorer/generated/
+Plugin/PaperReader/workspace-rs/
+rust-vexus-lite/*.node.bak-*
+extensions/memory-river/data/

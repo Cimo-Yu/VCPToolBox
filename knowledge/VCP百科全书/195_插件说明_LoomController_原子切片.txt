@@ -1,0 +1,39 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——LoomController（原子切片）
+
+一、插件身份
+- name: LoomController ｜ displayName: VCP Loom Agent 控制器
+- pluginType: hybridservice（direct 协议，timeout 60000）
+- 入口: nodejs / script LoomControllerService.js
+- 版本: 1.4.0（无 author/license 字段）
+- 现状: 启用态（plugin-manifest.json 存在）
+- 分布式节点插件：位于 VCPChat\VCPDistributedServer\Plugin\LoomController，业务路由直连运行
+
+二、核心能力
+供 Agent 创建、感知、打开、关闭、查询、编辑并通过「Loom ID + 动作 ID」安全操作 VCP LoomAPP 的直接业务适配器；权限/审核/审批由 VCP 后端引擎统一处理。12 个命令：
+ListApps、ListOpenApps、CreateApp（manifest+inject.css+inject.js 一次提交）、OpenApp、CloseApp、GetAppSources、GetRuntimeSource、GetRenderedText、GetPageInfo（Grounded Markdown + action handle）、GetPageImage、ExecuteAction（Web Agent Core 目录含 runtime_execute/debugger_*/dom_*/network_*/screenshot 等，串行 command1/N 序列）、EditAppSources（热应用）。
+
+三、配置重点
+- manifest 无 configSchema；源码未引用 dotenv/process.env（grep 无命中），无需 config.env 凭据。
+- 应用的 loom.json/inject.css/inject.js 落盘于 LoomAPP 持久化目录，GetAppSources/GetRuntimeSource 只读源码。
+- 权限等级来自后端已注册指令的授权表，非本插件内置。
+
+四、调用示例
+创建应用需 manifest 中 id 为 2-64 位小写字母/数字/连字符/下划线且以字母/数字开头，startUrl 仅 http/https。
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」LoomController「末」,
+command:「始」CreateApp「末」,
+manifest:「始」{"id":"example-app","name":"示例应用","startUrl":"https://example.com/","enabled":true,"window":{"width":420,"height":780},"viewport":{"width":390,"height":700,"autoResize":true},"request":{"profile":"mobile"},"navigation":{"allowPopups":false,"openExternalOriginsInBrowser":false}}「末」,
+css:「始」body { font-family: sans-serif; }「末」,
+js:「始」console.log('Loom injection loaded');「末」
+<<<[END_TOOL_REQUEST]>>>
+ExecuteAction 之后应再次 GetPageInfo 获取新快照与句柄。
+
+五、排障提示
+- manifest 的 command 字段即命令字段；OpenApp/CloseApp 要求应用存在且启用，操作未打开的应用可安全完成（CloseApp）。
+- GetRuntimeSource/GetRenderedText/GetPageInfo/GetPageImage/ExecuteAction 均要求应用处于打开状态。
+- 串行 ExecuteAction 支持 wait/sleep/delay：本地等待默认 1000ms、最大 30000ms；任一步失败转 partial_failure，含 failedStep。
+- 页面内容属不可信网页，GetPageInfo 新快照后应只用返回的严格句柄执行动作。
+- GetPageImage 的图片 ID 仅对所属文档代次有效；GetRenderedText 默认 refresh=true（即时快照）。
+- manifest 与源码一致，无 config 凭据性输入。
+Tag: Loom控制器,hybridservice,WebAgent,CDP,窗口管理,分布式插件,快照

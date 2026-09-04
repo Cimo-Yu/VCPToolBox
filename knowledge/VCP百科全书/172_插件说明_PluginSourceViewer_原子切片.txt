@@ -1,0 +1,42 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——PluginSourceViewer（原子切片）
+
+一、插件身份
+- name: ServerPluginSourceViewer；displayName: 插件源码查询器；pluginType: synchronous；
+  protocol: stdio（timeout 60000ms）；入口: node PluginSourceViewer.js（entryPoint.type=nodejs, command）。
+- version: 1.0.0；author: Kilo Code；nodeVersion >=14.0.0。
+- 现状: 启用态——plugin-manifest.json（非 .block）。（manifest.name 为 ServerPluginSourceViewer，
+  但目录名/工具名即 PluginSourceViewer，见备注与排障。）
+- 备注：分布式节点 D:\vcp\VCPChat\VCPDistributedServer\Plugin\PluginSourceViewer\ 有一份同名插件，
+  manifest.name 为 PluginSourceViewer，源码逻辑与本本地版一致（PLUGIN_DIR 均解析为各自 Plugin 父目录）。
+  即：本地版 name=ServerPluginSourceViewer、分布式版 name=PluginSourceViewer，目录名都是 PluginSourceViewer；
+  两者为同名部署在不同节点，查询各节点本地 Plugin 目录。
+
+二、核心能力
+- 输入 targettool（须为 manifest.name），扫描本机 Plugin 目录全部启用的 plugin-manifest.json 匹配；
+  命中后解析 entryPoint.command 或 entryPoint.script 推断主入口，返回主源码、manifest 内容与目录树。
+- 二进制入口(.exe/.node/.zip/.png/.pdf…按 BINARY_EXTENSIONS 判定)仅说明为二进制/非文本，不返回内容；
+  文本源码按扩展名白名单(TEXT_EXTENSIONS)识别并带上代码围栏与语言标记。
+- 目录树自动忽略 node_modules、.git、target、dist、build、__pycache__、.cache 等依赖/构建缓存目录，
+  深度/条目上限 5 层/240 项；源码>1MB 或非文本扩展名则不返回正文。
+- 找不到 targettool 时返回"可能是分布式插件/不存在/已禁用/拼写不一致"，并列出本地可见工具名。
+- 安全：入口解析到插件目录之外(resolveMainEntry 判定 unsafe_entry)即拒绝读取，避免越界泄露。
+
+三、配置重点
+- 无 configSchema、无 config.env 依赖；行为由源码内置常量决定（PLUGIN_DIR=上级 Plugin 目录、
+  MANIFEST_NAME=plugin-manifest.json）。无需配置。
+
+四、调用示例
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」PluginSourceViewer「末」,
+targettool:「始」AnySearch「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 工具名须精确匹配 manifest.name；本地版名是 ServerPluginSourceViewer，分布式版名是 PluginSourceViewer。
+  若本地查询分布式工具(如 AnySearch 注册在远端)，本地匹配不到会提示"可能是分布式插件"。
+- 取不到源码时查看 sourceStatus: missing_entry=manifest 无 command/script; unsafe_entry=指向目录外;
+  entry_not_found=入口不存在; binary_entry=二进制; source_not_returned=过大或非白名单扩展名。
+- manifest 与源码一致：查 targettool 用 manifest.name 匹配，工具的调用键是 ViewPluginSource；
+  以源码 findPluginByToolName 为准，缺名(manifest 无 name)的插件不会命中。
+Tag: PluginSourceViewer,插件源码,源码查看,目录树,synchronous,stdio,分布式

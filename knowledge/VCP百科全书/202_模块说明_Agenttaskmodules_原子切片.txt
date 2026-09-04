@@ -1,0 +1,68 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 模块说明——Agenttaskmodules（原子切片）
+
+一、模块定位
+属于 D:\vcp\VCPChat\ 前端的任务与 Agent 管理功能域，
+是一组独立 Electron 渲染窗口（VCP 任务助手 / Task Assistant），
+在 VCP Chat 主程序经任务/委托入口调用时加载。
+它以任务巡航（TaskAssistant，后台定时任务）、
+Agent 属性（AgentAssistant，多 Agent 配置）与
+异步委托追踪（Delegation）三个视图为核心，
+替用户管理 VCP 后端的自动化流排单。
+窗口由 task.html 作为宿主页面，
+按 script 标签加载 task.js 并引入 task.css。
+
+二、核心文件（目录内共 3 个文件）
+- task.html：窗口骨架。
+  顶部玻璃导航条含 设置/最小化/最大化/关闭 按钮；
+  Tab 导航切换「任务巡航」与「Agent 管理」两个视图；
+  内含三个模态窗（agent-modal、task-modal、delegation-modal），
+  分别用于新建/编辑 Agent、编辑任务、查看委托详情。
+- task.js：全部交互与数据逻辑。
+  维护全局状态、API 凭据（serverBaseUrl、Basic Auth）、
+  AA/FA 配置缓存、委托轮询定时器；
+  DOM 初始化时读取设置、应用主题、
+  加载本地 Agent 列表并初始化 API，
+  成功后开启状态（15s）与委托（5s）定时轮询。
+- task.css：视口样式（玻璃拟态、light-theme 切换、任务/Agent 卡片栅格）。
+
+三、对外接口与协议
+IPC / preload（window.utilityAPI || window.electronAPI）：
+- minimizeWindow / maximizeWindow / closeWindow（窗口控制）
+- loadSettings（读 vcpServerUrl 与主题）
+- onThemeUpdated（主题联动）
+- loadForumConfig（继承管理员 Basic Auth 凭据）
+- loadAgentsList、loadAgentAvatar(folder)（Agent 头像匹配）
+HTTP（管理端 API，`admin_api` 前缀，Basic Auth）：
+- GET/POST /agent-assistant/config
+- GET /agent-assistant/delegations
+- GET /agent-assistant/delegations/{id}
+- POST /agent-assistant/delegations/{id}/cancel
+- GET/POST /task-assistant/config
+- GET /task-assistant/status
+- POST /task-assistant/trigger
+
+四、与其他模块或后端的联动
+- 与前端 Forum 模块共享管理员 Basic Auth 凭据
+  （经 loadForumConfig 继承），
+  是「论坛登录后自动获得管理权限」机制的同族实现。
+- AgentAvatar 显示复用本地 Agent 列表（loadAgentsList）
+  按名称模糊匹配再取头像。
+- 后端为 VCP 服务端：
+  AgentAssistant 管理多 Agent 会话与异步委托
+  （轮数、超时、心跳提示词、[[TaskComplete]]/[[TaskFailed]] 结束标记）；
+  TaskAssistant 管理调度（interval/cron/manual/once）与全局调度器；
+  面板每 15s 轮询状态、每 5s 轮询委托列表。
+
+五、备注
+- 依赖 `vcpServerUrl` 在主设置配置，
+  且需先在 Forum 页面登录获取管理员凭据，
+  否则连接状态显示「凭证缺失」。
+- 委托循环协议串含 {{SenderName}}、{{TaskPrompt}} 占位符，
+  委托系统提示词留空会用插件内置默认值。
+- 已知限制：
+  AA 历史保留按「轮数×20 条」为上限；
+  分布式/远程能力需后端同时具备
+  agent-assistant、task-assistant 路由。
+
+Tag: Agenttaskmodules,任务巡航,AgentAssistant,TaskAssistant,异步委托,任务调度,管理API

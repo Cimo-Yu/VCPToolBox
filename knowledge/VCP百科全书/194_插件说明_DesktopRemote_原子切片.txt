@@ -1,0 +1,38 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——DesktopRemote（原子切片）
+
+一、插件身份
+- name: DesktopRemote ｜ displayName: 桌面远程控制器
+- pluginType: synchronous（协议 stdio）
+- 入口: node desktop-remote.js（entryPoint.command，未声明 type/nodejs）
+- 版本: 1.4.0 ｜ author: VCPToolBox ｜ license: MIT
+- 现状: 启用态（plugin-manifest.json 存在）
+- 分布式节点插件：位于 VCPChat\VCPDistributedServer\Plugin\DesktopRemote，运行于分布式服务端
+
+二、核心能力
+远程控制 VCPdesktop 桌面画布：推送壁纸、感知查询桌面状态、查 Dock 应用列表、查看/创建挂件、指标驱动全局样式自动化。7 个命令：
+SetWallpaper（URL/file://本地/HMTL 动态壁纸，按扩展名自动识别图片/视频/HTML）、QueryDesktop（列出 widgets 与 icons）、QueryDock（Dock 快捷方式+12个VChat内建应用+5个系统工具+内置挂件）、ViewWidgetSource（按 widgetId 取渲染 HTML）、CreateWidget（Shadow DOM 沙箱渲染，vcpAPI.fetch/weather、musicAPI 可用，x/y/width/height/autoSave/saveName/scriptFiles）、SetStyleAutomation（轮询系统指标映射全局 CSS 变量与壁纸滤镜，persist 到 layout.json globalSettings）、GetStyleAutomationStatus。
+
+三、配置重点
+- manifest 无 configSchema/configSchema 结构，也无 config.env.example、未引用 dotenv/process.env（源码 grep 无命中），运行不需要额外密钥配置。
+- 相关运行状态/持久化由 VCPdesktop 侧维护（如收藏挂件目录、layout.json globalSettings），插件只做桥接。
+
+四、调用示例
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」DesktopRemote「末」,
+command:「始」SetWallpaper「末」,
+wallpaperSource:「始」https://example.com/beautiful-landscape.jpg「末」
+<<<[END_TOOL_REQUEST]>>>
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」DesktopRemote「末」,
+command:「始」QueryDesktop「末」
+<<<[END_TOOL_REQUEST]>>>
+创建挂件宜先 QueryDesktop/QueryDock 取得上下文；HTML 增量式壁纸以 <!DOCTYPE 或 <html 开头识别。
+
+五、排障提示
+- manifest 的 command 字段即命令字段；wallpaperSource 必填，其余命令多数无额外参数。
+- CreateWidget 的 scriptFiles 会强制 autoSave=true（外部文件需持久化）；复杂 JS 逻辑建议用 scriptFiles 拆分而非内联大段脚本。
+- ViewWidgetSource 前务必先 QueryDesktop 拿到 widgetId。
+- SetStyleAutomation 建议 intervalMs>=500，persist 默认 false（临时生效）；enabled=false 会停止并回滚运行时样式覆盖。
+- queried manifest/source 一致，无额外配置变量可调。
+Tag: 桌面远程,同步插件,stdin stdout,VCPdesktop,挂件,壁纸,分布式插件

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 320px; font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1b2a; color: #c8d6e5; padding: 16px; }
+.header { text-align: center; margin-bottom: 16px; }
+.header h1 { font-size: 18px; background: linear-gradient(90deg, #4fc3f7, #81c784); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.header .subtitle { font-size: 11px; color: #5a7a9a; margin-top: 4px; }
+.status { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
+.status.connected { background: rgba(129, 199, 132, 0.15); border: 1px solid rgba(129, 199, 132, 0.3); color: #81c784; }
+.status.disconnected { background: rgba(255, 138, 101, 0.15); border: 1px solid rgba(255, 138, 101, 0.3); color: #ff8a65; }
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+.dot.on { background: #81c784; }
+.dot.off { background: #ff8a65; }
+.config { margin-bottom: 10px; }
+.config label { display: block; font-size: 11px; color: #5a7a9a; margin-bottom: 4px; }
+.config input { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(100, 180, 255, 0.2); background: rgba(0, 0, 0, 0.3); color: #c8d6e5; font-size: 13px; outline: none; }
+.config input:focus { border-color: #4fc3f7; }
+.btn { width: 100%; padding: 8px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; margin-bottom: 6px; transition: all 0.2s; }
+.btn-primary { background: linear-gradient(135deg, #1e3a5f, #2d5a87); color: #81d4fa; border: 1px solid rgba(79, 195, 247, 0.3); }
+.btn-primary:hover { background: linear-gradient(135deg, #2d5a87, #3d7ab7); }
+.btn-secondary { background: rgba(255, 255, 255, 0.05); color: #7a9ab5; border: 1px solid rgba(255, 255, 255, 0.1); }
+.btn-secondary:hover { background: rgba(255, 255, 255, 0.1); }
+.footer { text-align: center; font-size: 10px; color: #3a5a7a; margin-top: 12px; }
+.key-status { font-size: 11px; color: #5a7a9a; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🧩 VCPBridge</h1>
+  <div class="subtitle">浏览器 → VCP 数据桥接器</div>
+</div>
+
+<div id="statusBar" class="status disconnected">
+  <div id="statusDot" class="dot off"></div>
+  <span id="statusText">未连接</span>
+</div>
+
+<div class="config">
+  <label>VCP 服务器地址（host:port）</label>
+  <input type="text" id="wsHost" placeholder="localhost:6015">
+</div>
+
+<div class="config">
+  <label>VCP_Key 认证密钥</label>
+  <input type="password" id="vcpKey" placeholder="输入你的 VCP_Key">
+</div>
+
+<div id="keyStatus" class="key-status"></div>
+
+<button class="btn btn-primary" id="connectBtn">连接 / 重连</button>
+<button class="btn btn-secondary" id="feedBtn">📤 投喂当前页面</button>
+
+<div class="footer">VCPBridge v1.1.0 · Phase 1</div>
+
+<script src="popup.js"></script>
+</body>
+</html>

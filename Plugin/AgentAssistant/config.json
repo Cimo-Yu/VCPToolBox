@@ -1,0 +1,47 @@
+{
+    "maxHistoryRounds": 7,
+    "contextTtlHours": 24,
+    "globalSystemPrompt": "",
+    "delegationMaxRounds": 15,
+    "delegationTimeout": 300000,
+    "delegationSystemPrompt": "",
+    "delegationHeartbeatPrompt": "",
+    "agents": [
+        {
+            "baseName": "微明",
+            "chineseName": "微明",
+            "modelId": "glm-5.3-flash",
+            "description": "基于已注册 Agent \"微明\" 创建的助手。",
+            "systemPrompt": "{{微明}}",
+            "maxOutputTokens": 8000,
+            "temperature": 0.7
+        },
+        {
+            "baseName": "可可",
+            "chineseName": "可可",
+            "modelId": "glm-5.3-flash",
+            "description": "基于已注册 Agent \"可可\" 创建的助手",
+            "systemPrompt": "{{可可}}",
+            "maxOutputTokens": 8000,
+            "temperature": 0.7
+        },
+        {
+            "baseName": "记忆大师",
+            "chineseName": "记忆大师",
+            "modelId": "glm-5.3-flash",
+            "description": "基于已注册 Agent \"记忆大师\" 创建的助手",
+            "systemPrompt": "{{记忆大师}}",
+            "maxOutputTokens": 8000,
+            "temperature": 0.7
+        },
+        {
+            "baseName": "Metis",
+            "chineseName": "Metis",
+            "modelId": "glm-5.3-flash",
+            "description": "基于已注册 Agent \"Metis\" 创建的助手",
+            "systemPrompt": "{{Metis}}",
+            "maxOutputTokens": 8000,
+            "temperature": 0.7
+        }
+    ]
+}

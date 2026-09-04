@@ -1,0 +1,42 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——VChat 自动 TTS（原子切片）
+
+一、插件身份
+- name：VChatAutoTTS；displayName：VChat 自动 TTS；version：1.1.0
+- pluginType：renderer（渲染层前端插件）；protocol：无 wire 协议，走前端注入
+- 入口：frontend script=plugin.js + style=plugin.css，经 frontend-plugin-loader 注入主聊天窗口
+- 作者：辉宝（manifest author），README 记作者 辉宝、Nova；manifestVersion=1.0.0
+- 分布式节点插件：属 VCPDistributedServer/Plugin 下前端渲染插件，不监听端口、不暴露 HTTP/WS。
+- 现状：禁用态——manifest 为 plugin-manifest.json.block，启用前须改回 .json 并重启客户端。
+- capabilities.invocationCommands 为空数组：对 AI 不可见，无命令型工具接口。
+
+二、核心能力
+- 在 Agent 的 "语音设置 (Sovits TTS)" 区插入两个开关：自动朗读、朗读代码块。
+- 自动朗读新完成的助手/智能体回复；启动或切换话题时载入的历史消息一律标记已处理，刻意不朗读。
+- 开关按 Agent 独立保存（localStorage 键 vchatAutoTts.settings.v1，per-agent 存 enabled/includeCode），切换 Agent 自动同步。
+- 复用 Agent 已配置的音色 ttsVoicePrimary、语速 ttsSpeed、主副正则与 directorPrompts，经 api.sovitsSpeak 投递。
+- 流式/思考中消息先进 streamingCandidates，等 650ms 渲染稳定后再朗读；MutationObserver 监听消息增删与 class 变化。
+- 关闭 "朗读代码块" 时会剔除 pre/code 与工具气泡、拷贝按钮后取值；保留时纳入正文。
+
+三、配置重点
+- 全部在 UI 层，无 config.env；判断逻辑依赖当前选中项 type==='agent' 及其 id。
+- 调用 api.getAgentConfig(agentId) 取 TTS 配置，无 ttsVoicePrimary 则跳过不朗读。
+- 依赖 window.chatAPI（或 electronAPI）暴露 getAgentConfig、sovitsSpeak，缺接口自动朗读不生效。
+- 控制开关注入在 agentTtsSpeed 之后；控件 disabled 依当前是否选中 Agent 而定。
+- 启用步骤：改回 plugin-manifest.json → 重启客户端，否则 CSS/JS 不加载。
+
+四、调用示例
+- 静态插件，无 invocationCommands，对 AI 不可见；实际为浏览器脚本对原生 IPC 的调用
+  （api.sovitsSpeak({text,voice,speed,msgId,ttsRegex,directorPrompts,voiceSecondary,ttsRegexSecondary})）。占位符触发说明：
+<<<[TOOL_REQUEST]>>>
+「始」
+tool：前端注入脚为插件（plugin.js,sovitsSpeak）——非命令型，占位符
+「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 自动朗读无响应：确认当前选中项 type==='agent'，并确该 Agent 已配置 ttsVoicePrimary；历史消息不朗读属设计。
+- 需 VCPFrontendPlugins 体系已注册前端插件，否则 ID 'vchat-auto-tts' 不生效（重复注入有防重保护）。
+- manifest 与源码无明显冲突；localStorage 维度为 agentId，注意切换 Agent 后各自独立开关。
+
+Tag: VChat,自动TTS,TTS,朗读,渲染插件,禁用态,Agent设置

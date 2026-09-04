@@ -1,0 +1,49 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——OpenHer Persona Observer（原子切片）
+
+一、插件身份
+- name: OpenHerPersona
+- displayName: OpenHer Persona Observer
+- pluginType: hybridservice（direct 协议，timeout 30000ms；requiresContextBridge=true）
+- 入口: entryPoint.type=nodejs，script=OpenHerPersona.js
+- 版本: 0.6.0-observer（manifest）→ 0.6.1-observer（源码 PLUGIN_VERSION），以源码为准
+- 现状: 启用态（存在 plugin-manifest.json）；纯异步观测器模式
+
+二、核心能力
+纯异步 persona 观测/测量插件。绝不注入提示词、不写 brk/HTML hint、不要求 persona_delta 回填、不用墙钟情绪衰减或关键词启发。对每个 agent 消息经 subject-anchored 二级向量轴观测，计算认知/情感/驱力/心理性别测量，应用 soft 耦合，按 agent 队列串行化并发观测，持久化到 openher_axis_* SQLite 供 dashboard/实验。AXIS_DEFINITIONS 覆盖 4 层（gender/cognitive/affective/drive）多轴，每轴含若干子轴锚点文案（anchorText 以 {name} 代入 agentLabel）。COUPLING_RULES + DRIVE_COUNTER_RULES 做轴间软牵引。可调用命令：status、snapshot（status 别名）、reset（重置单 agent 观测向量，不动长期记忆）、explain（说明架构边界），另有 config/save_config/delete/tick 等（tick 已移除，仅返回提示用 status/snapshot）。
+
+三、配置重点（config.env.example / 默认值）
+- OpenHerPersonaEnabled=true（总开关，false 时 processMessages 原样放行）
+- OpenHerPersonaAsyncObservation=true（异步 fire-and-forget 观测队列；false 仅诊断，仍不注入提示词）
+- OpenHerPersonaQueueMaxSize=64（每 Agent 队列上限，超限丢弃最旧）
+- OpenHerPersonaEmbeddingTimeoutMs=2500（向量化超时，锚点冷启动用 4 倍）
+- OpenHerPersonaAnchorTemperature=0.12（源码 DEFAULT 0.08；二级子锚 softmax 温度）
+- OpenHerPersonaStateEma=0.35（状态 EMA 响应率）；源码另有 OpenHerPersonaDriveStateEma=0.78
+- OpenHerPersonaCouplingStrength=0.18（源码 DEFAULT 0.32；soft 杠杆，0=不做层间牵引）
+- OpenHerPersonaDropLegacyState=true（清理旧 openher_persona_* 表/JSON，不迁移）
+- DebugMode=false
+
+四、调用示例
+读取某 agent 当前轴快照（不调 LLM、不改提示词）：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」OpenHerPersona「末」,
+command:「始」status「末」,
+agent:「始」Nova「末」
+<<<[END_TOOL_REQUEST]>>>
+
+重置 agent 观测状态：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」OpenHerPersona「末」,
+command:「始」reset「末」,
+agent:「始」Nova「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 配置真身在 state/openher-persona-config.json（schemaVersion 2，mode=async_observer），经 chokidar 热加载；config.env 在启动时一次性迁移进 JSON。
+- manifest configSchema 把所有键类型标成 string（如 AnchorTemperature:"string"），源码实为 number/boolean，以源码为准。
+- tick 命令已移除（纯异步观测器不再按 tick 刷测量），要查看轴测量一律用 status/snapshot。
+- 依赖 better-sqlite3：若未安装，Database=null，DB 写入静默降级（状态仍回退默认，不落库）。
+- 依赖 ContextBridge 向量能力与 EmbeddingUtils.getEmbeddingsBatch；锚点冷启动较慢（用 4 倍超时）。
+- 仅 reset/delete 改观测状态，不影响 VCP 长期记忆。
+
+Tag: OpenHerPersona,persona观测,异步观测,混合服务,情感轴,心理性别,向量测量,SQLite

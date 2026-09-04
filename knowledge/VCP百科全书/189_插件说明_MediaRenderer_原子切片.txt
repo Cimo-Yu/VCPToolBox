@@ -1,0 +1,54 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——MediaRenderer（原子切片）
+
+一、插件身份
+- name：MediaRenderer
+- displayName：HTML/SVG/程序音乐媒体生成器
+- pluginType：hybridservice（direct 协议，timeout 300000）
+- 入口：MediaRenderer.js（entryPoint.script）
+- 版本：2.3.0；作者 VCPToolBox；requiresAdmin=true（GenerateAudio 强制管理员验证码）
+- 现状：启用态（plugin-manifest.json）
+
+二、核心能力
+- 用 VCP 托管 Chrome 渲染：静态 PNG/JPG/WebP、确定性逐帧 GIF/MP4/WebM；用系统 FFmpeg 编码；独立子进程生成 PCM16 WAV 程序音乐。
+- 源码直引资源：data:、file://、HTTP/HTTPS 图片/视频/字体，插件在 Node 侧安全读取后改写为 Data URI；Anime.js 3.2.2 / Three.js r160 常见 CDN 标签自动改注入本地版本，其他远程脚本禁止。
+- 4 命令（manifest capabilities.invocationCommands）：RenderImage（HTML/SVG→静态图）、RenderAnimation（按 setFrameRenderer 逐帧→GIF/MP4/WebM，非实时录屏）、GenerateCursorTheme（→Windows CUR/ANI 主题 ZIP，需显式 15 核心角色）、GenerateAudio（子进程执行 AI 合成代码→WAV，必须带 requireAdmin 验证码）。
+- 源码 processToolCall 按 command 分派：generateaudio→generateAudio；generatecursortheme→generateCursorTheme；其余（含默认 RenderImage/RenderAnimation）走 executeRenderBatch（串行最多 16 步队列）。
+- 主席资源限制：单资源 50MB/总 100MB/每步 24 资源/源码 2MB；总计 3000 万声道采样数上限。
+
+三、配置重点
+- configSchema 与 defaults：DebugMode=false、AllowPrivateNetworkAssets=true、FfmpegPath=ffmpeg、FfmpegTimeoutMs=180000、MaxAnimationFrames=600、AudioSynthesisTimeoutMs=30000、MaxAudioDurationMs=300000。
+- config.env.example：无第三方 Key；依赖根配置 VCP_BROWSER_RUNTIME_ENABLED=true（经 browserRuntimeManager 取 DevTools WS Endpoint，不调 ChromeBridge）；PROJECT_BASE_PATH/SERVER_PORT/IMAGESERVER_IMAGE_KEY/VarHttpUrl 由 PluginManager 注入。
+- 私网访问（AllowPrivateNetworkAssets）控制 localhost/局域网 HTTP(S) 素材；云元数据地址即使开启也始终阻断。
+
+四、调用示例
+- RenderImage：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」MediaRenderer「末」,
+command:「始」RenderImage「末」,
+html:「始」<div class="card"><img src="https://example.com/photo.png"></div><style>.card{width:100%;height:100%;background:#08111f}</style>「末」,
+width:「始」1024「末」,
+height:「始」1024「末」,
+format:「始」png「末」,
+fileName:「始」card「末」
+<<<[END_TOOL_REQUEST]>>>
+- GenerateAudio（需管理员验证码）：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」MediaRenderer「末」,
+command:「始」GenerateAudio「末」,
+requireAdmin:「始」用户提供的6位管理员验证码「末」,
+durationMs:「始」8000「末」,
+tempo:「始」160「末」,
+code:「始」function synthesize(api){api.addNote({note:'C5',start:0,duration:.2,wave:'square',volume:.2});}「末」,
+fileName:「始」beat「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- GIF/视频报错多为 FFmpeg 缺失：装 ffmpeg 或配置 FfmpegPath 绝对路径；长任务需降 FPS/分辨率或调高 FfmpegTimeoutMs/超时。
+- GenerateAudio 必须由用户提供 6 位管理员验证码（requireAdmin），缺失或错值不会启动子进程；勿用示例数字替代。
+- 渲染卡在加载：复杂/异步资源用 readyMode=signal 并在 `window.__MEDIA_RENDERER__.setReady()` 后返回；静态默认 load。
+- 缩放/安全报错看资源大小与地址校验；私网素材需 AllowPrivateNetworkAssets=true。
+- min 版本注意 opaque：JPG/MP4/H.264 不支持透明，需用 PNG/WebP 或 WebM(yuva420p)。
+- manifest 的 4 命令与源码分派一致；默认命令为 RenderImage（源码 command 缺省值），可省略 command 但规范建议显式。
+
+Tag: MediaRenderer,媒体生成,HTML渲染,FFmpeg,hybridservice,启用态,GIF,GIF动画,GenerateAudio,光标主题

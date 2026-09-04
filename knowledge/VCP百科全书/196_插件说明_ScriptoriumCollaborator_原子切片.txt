@@ -1,0 +1,49 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——ScriptoriumCollaborator（原子切片）
+
+一、插件身份
+- name: ScriptoriumCollaborator ｜ displayName: Scriptorium 协作编辑器
+- pluginType: hybridservice（direct 协议，timeout 330000 秒级=330s，5.5分钟）
+- 入口: nodejs / script ScriptoriumCollaboratorService.js
+- 版本: 3.4.0 ｜ author: VCPToolBox ｜ license: MIT
+- 现状: 启用态（plugin-manifest.json 存在）
+- 分布式节点插件：位于 VCPChat\VCPDistributedServer\Plugin\ScriptoriumCollaborator，直连 Scriptorium 文档内核
+
+二、核心能力
+感知并协作编辑当前 VDOCX/VPPTX 文档、管理高级样式主题包与 SVG 图形/动画资产包、直接创建并落盘完整工程。命令分组：
+读取/感知：ListFonts、GetDocumentInfo、GetRenderedText、GetOutline、GetSection、GetSource、SearchSource、GetViewportSource、GetVisualContext（文本+截图多模态）、GetPrHistory；
+写入（PR 协议，人工审批回执）：SubmitSourcePr、AddSlide、InsertSlide、DeleteSlide、UpdatePresentationConfig、CreateProject；
+样式包：ListStylePacks、GetStylePack、UpsertStylePack、DeleteStylePack；
+SVG资产包：ListSvgAssetPacks、ListSvgAssets、GetSvgAsset、GetSvgAssetPack、UpsertSvgAssetPack、DeleteSvgAssetPack；
+存储：GetStorageInfo。共 27 命令。
+关键范式：VDOCX v2 真源 sourceKind=markdown-hybrid（Markdown-first + Mermaid/LaTeX + 静态 HTML + data-vdoc-island 可编程岛）；VPPTX 用 HTML Scene，页内脚本以注入的 scene 根查询，禁止 document.currentScript 或全局 document。
+
+三、配置重点
+- manifest 无 configSchema；源码未引用 dotenv/process.env（grep 无命中），无 config.env 凭据依赖。
+- 工程落盘路径：AppData/ScriptoriumDocument/VDOCX 与 AppData/ScriptoriumDocument/VPPTX。
+- 内置只读资产：内置样式包 vcp.scriptorium.classics、内置 SVG 包 vcp.scriptorium.basic-shapes（可读不可删/替换）。
+
+四、调用示例
+提交变更走 SubmitSourcePr（maid+summary 必填，三种写法互斥：append / insert+line / target+replace，expectedRevision 建议提供）。
+<<<[TOOL_REQUEST]>>>
+maid:「始」Nova「末」,
+tool_name:「始」ScriptoriumCollaborator「末」,
+command:「始」SubmitSourcePr「末」,
+endpoint:「始」docx「末」,
+sourceKind:「始」markdown-hybrid「末」,
+summary:「始」在文档末尾续写新段落「末」,
+expectedRevision:「始」12「末」,
+append:「始」## 新增小节
+
+这里是续写内容。「末」
+<<<[END_TOOL_REQUEST]>>>
+长文档流程：GetOutline → 按标题层级选关键章节 → GetSection 分章读 → SearchSource 核对细节，禁止整篇拉全文。
+
+五、排障提示
+- manifest 的 command 字段即命令字段；所有写命令同步等待人工/UI 自动允许策略审批，超时返回 PR_RECEIPT_TIMEOUT 但提案保留，可查 GetPrHistory（status: pending/applied/rejected/conflict/failed）。
+- 章节 ID/可见块 key 均为当前修订临时寻址，修订后会变，不得写回正文或当长期对象 ID；修改已有岛必须复用原岛 ID。
+- VPPTX 所有面向 Agent 的 slideIndex 是从 1 开始的人类页码。
+- UpsertStylePack/UpsertSvgAssetPack 为整包原子替换：编辑前必须先 GetStylePack/GetSvgAssetPack 取完整包，否则未包含项被删除；style 的 targets 仅限 inline/block/heading/paragraph。
+- CreateProject 直接落盘不替换当前窗口；默认重名 rename，覆盖需 conflictPolicy=overwrite 且提供 expectedFileHash。
+- AddSlide 只接受 source 整体提交，不再接受 html/css/script 分离参数。
+Tag: 协作编辑器,hybridservice,VDOCX,VPPTX,Markdown,PR协议,Mermaid,LaTeX,SVG资产,样式包,分布式插件

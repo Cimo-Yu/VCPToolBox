@@ -1,0 +1,98 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "TDBnote",
+  "version": "1.0.0",
+  "displayName": "冷知识库写入 (TriviumDB)",
+  "description": "冷知识库写入服务（DailyNote 的冷知识版）。将低频变动的知识条目写入 knowledge/<library>/ 目录，文件落盘后自动触发 TDBKnowledgeManager 的 TriviumDB 入库（Embedding + 向量/图谱索引），供 LightMemo / [[xx知识库]] 占位符检索。与 DailyNote 写热记忆（dailynote/）互补：TDBnote 写冷知识（knowledge/）。",
+  "author": "Roo",
+  "pluginType": "hybridservice",
+  "entryPoint": {
+    "type": "nodejs",
+    "script": "tdbnote.js"
+  },
+  "communication": {
+    "protocol": "direct",
+    "timeout": 300000
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "create",
+        "description": "“创建冷知识”: 向冷知识库写入一条新的知识条目。必须提供 library（目标知识库，即 knowledge/ 下的一级子目录名，也是 TriviumDB 库名）、maid（署名/来源）和 Content。Title 作为文件名语义后缀（强烈建议提供，TriviumDB 的文档节点标题取自文件名）。注意：冷知识条目不使用 Tag 行（检索走 TriviumDB 向量/BM25/图扩散混合管线，不依赖 Tag 体系），Content 原样作为正文写入。library 做精确匹配，不会模糊归类到相近名称的库；写入被排除的库（如 TDBdocs）或不可索引的扩展名时文件仍会落盘但不会入库。\n调用格式:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」TDBnote「末」,\ncommand:「始」create「末」,\nlibrary:「始」VCP知识「末」,\nmaid:「始」小克「末」,\nTitle:「始」VCP超栈追踪机制「末」,\nContent:「始」超栈追踪是VCP的核心技术之一，它配合插件管理器实现Agent的代码热变动和热加载...「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "parameters": [
+          {
+            "name": "library",
+            "description": "目标知识库名，即 knowledge/ 下的一级子目录名（TriviumDB 库名）。必须提供。精确匹配：不匹配任何既有库时将新建同名库。写入后可用 LightMemo 的 [知识库:库名] 语法召回。",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "maid",
+            "description": "知识条目的署名/来源（记录在条目首行，用于溯源）。",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "Title",
+            "description": "知识条目标题。会作为文件名后缀（例如：2026-09-02-22_30_15-VCP超栈追踪机制.md）。强烈建议提供：TriviumDB 的 document 节点标题与向量锚点取自文件名。",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "Content",
+            "description": "知识条目的完整正文内容，原样写入（不要求也不处理 Tag 行）。",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "Date",
+            "description": "条目日期，格式建议为 YYYY-MM-DD。缺省使用系统当前日期。",
+            "required": false,
+            "type": "string"
+          }
+        ]
+      },
+      {
+        "commandIdentifier": "update",
+        "description": "“更新冷知识”: 编辑已存在的知识条目内容。提供要查找的旧内容(target)和替换的新内容(replace)。可选用 library 限定优先搜索范围。安全性检查: target字段长度不能少于15字符。\n调用格式:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」TDBnote「末」,\ncommand:「始」update「末」,\nlibrary:「始」VCP知识「末」,\ntarget:「始」这是知识条目中要被替换掉的旧内容，至少15个字符长。「末」,\nreplace:「始」这是将要写入知识条目的新内容。「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "parameters": [
+          {
+            "name": "library",
+            "description": "可选优先搜索的知识库名。提供后优先在该库中查找要更新的内容。",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "target",
+            "description": "知识条目中需要被查找和替换的旧内容。必须至少包含15个字符。",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "replace",
+            "description": "用于替换target的新内容。",
+            "required": true,
+            "type": "string"
+          }
+        ]
+      },
+      {
+        "commandIdentifier": "list",
+        "description": "“列出知识库”: 查看冷知识库结构。不提供 library 参数时列出全部知识库及其条目数；提供 library 参数时列出该库内全部条目文件（含文件名、大小、修改时间）。更新前建议先 list 确认目标条目状态。\n调用格式:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」TDBnote「末」,\ncommand:「始」list「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "parameters": [
+          {
+            "name": "library",
+            "description": "可选。要列出条目文件的知识库名；缺省则列出全部知识库及条目数统计。",
+            "required": false,
+            "type": "string"
+          }
+        ]
+      }
+    ]
+  },
+  "configSchema": {
+    "DebugMode": "boolean",
+    "TDB_NOTE_EXTENSION": "string",
+    "TDB_NOTE_FUZZY_DIFF": "boolean"
+  }
+}

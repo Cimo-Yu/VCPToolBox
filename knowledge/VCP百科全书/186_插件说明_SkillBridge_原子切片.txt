@@ -1,0 +1,34 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——Skill 技能目录桥接器（原子切片）
+
+一、插件身份
+- name: SkillBridge
+- displayName: Skill 技能目录桥接器
+- pluginType: static
+- protocol: process_stdio，timeout 30000ms
+- 入口: entryPoint.type=nodejs，command=node SkillBridge.js
+- 版本: 1.0.0
+- 现状: 启用态（存在 plugin-manifest.json）
+
+二、核心能力
+静态插件，启动时扫描 SkillBridge/SKILL/ 下各技能目录的 SKILL.md 前置描述（frontmatter 的 description 字段，支持 inline 与折叠 >| 语法），生成可折叠的技能目录索引，写成 skill-index.txt 并同时输出到 stdout，供系统提示词按需感知。暴露占位符 {{VCPSkillBridge}}（systemPromptPlaceholders）。输出用 [===vcp_fold:] 折叠区块标记：header 为 0.0 阈值（恒显示），每个技能条目一个 desc 区块，默认阈值 0.35。条目含 Skill 名与路径（默认 absolute_windows 绝对路径、反斜杠分隔）。SKILL/ 下现含 android-native-dev、frontend-dev、fullstack-dev、gif-sticker-maker、html-ppt-skill、ios-application-dev、minimax-docx、minimax-pdf、minimax-xlsx、pptx-generator、shader-dev 等技能。
+
+三、配置重点（config.env.example → SkillBridge.js）
+- SKILLBRIDGE_HEADER_TEXT=这里是Skill技能目录，若你需要对应技能，请使用文件管理插件的Ink模式读取技能。（作为 0.0 阈值区块内容输出）
+- SKILLBRIDGE_DEFAULT_THRESHOLD=0.35（所有 Skill 索引区块默认全局阈值，需解析为有限数字，否则回落 0.35）
+- SKILLBRIDGE_PATH_MODE=absolute_windows（默认）| relative（相对 Plugin/SkillBridge/）
+- 技能目录多含 scripts/templates/references/resources 等子目录；skills 入口文档统一命名 SKILL.md。
+
+四、调用示例
+静态插件无 AI 可调命令，通过占位符注入系统提示词感知：
+{{VCPSkillBridge}}
+（在系统提示或 user/preset 人设中放入该占位符即触发目录注入；不会走 TOOL_REQUEST）
+
+五、排障提示
+- 目录扫描只认目录（读取 SKILL/<name>/SKILL.md）；某技能无 SKILL.md 时该项 summary 记为"读取失败: <error>"仍入列。
+- description 同时支持 inline 与折叠（>| 缩进块）写法；解析失败回落取正文前 400 字符片段作为 summary。
+- 索引写盘到 skill-index.txt，同时 stdout echo；构建失败输出 fallback 折叠块并置 exitCode=1。
+- 占位符名必须与 manifest 的 systemPromptPlaceholders 中 placeholder 字符串完全一致（{{VCPSkillBridge}}，大小写敏感）。
+- 配置改动写 config.env（loadLocalConfigEnv 读入 process.env，仅当键不存在才覆盖），改后需重新触发构建/重启生效。
+
+Tag: SkillBridge,技能目录,静态插件,折叠索引,SKILL.md,vcp_fold,占位符

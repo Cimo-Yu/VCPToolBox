@@ -1,0 +1,32 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——River Context API Test（原子切片）
+
+一、插件身份
+- name: RiverTestPlugin
+- displayName: River Context API Test
+- pluginType: synchronous（stdio）
+- protocol: stdio，timeout 30000ms
+- 入口: entryPoint.command=node RiverTestPlugin.js
+- 版本: 1.0.0
+- 现状: 禁用态（manifest 文件名是 plugin-manifest.json.block，已折叠）。启用需重命名为 plugin-manifest.json。
+
+二、核心能力
+专门用来测试 river：「始」text「末」 或 river：「始」full「末」 语法的同步插件。从 stdin 读 JSON 参数，检查 args.river_context 是否为数组；若为数组，把收到的全部消息以时间戳命名（context-<ISO时间>.json）持久化到插件目录下 river/ 子文件夹，再返回收到条数、是否收到、收到键等诊断。用于验证 River 上下文 API 是否把 river_context 正确注入插件。
+
+三、配置重点
+- 无 configSchema、无 config.env.example。无任何配置键。
+- 纯 stdio JSON 协议：stdin 传 { river_context: [...] }，stdout 回 {"status","result":{"content":[...],"details":{...}}}（插件源码输出 content 数组格式）。
+
+四、调用示例
+调用语法由 manifest 给出（commandIdentifier=ExecuteTest，命令示例为 river 语法；插件本身读 stdin 的 river_context，命令名仅供调度）：
+river:「始」text「末」
+或
+river:「始」full「末」
+
+五、排障提示
+- manifest 声明 command=ExecuteTest、示例为 river:text/river:full，但源码流程只读 args.river_context 并回显，未实现 command 分发逻辑——manifest 与源码存在不一致，以源码为准：它实质是 river_context 注入的探测持久化器，不执行"命令"。
+- 无 river_context 或非数组时返回 "No river_context received or it is not an array"，并列出收到 args 键以供调试。
+- 读取 stdin 用 fs.readFileSync(process.stdin.fd)，个别环境此调用可能异常，源码对此有容错（空 args 回退空对象）。
+- 该插件为测试专用，禁用态；用途局限，勿在正式链路依赖。
+
+Tag: RiverTestPlugin,River上下文,测试插件,river语法,禁用插件,诊断

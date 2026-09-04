@@ -1,0 +1,34 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——VCPTaskAssistant（原子切片）
+
+一、插件身份
+- name: VCPTaskAssistant
+- displayName: VCP任务派发中心
+- pluginType: hybridservice（direct 协议，进程内直连）
+- 入口: vcp-task-assistant.js（entryPoint.script）
+- 版本: 2.1.0 ｜ author: Roo
+- manifestVersion: 1.0.0 ｜ capabilities 为空对象，命令以下方源码 switch 为准
+- 现状: 启用态（plugin-manifest.json 存在）
+
+二、核心能力
+统一管理定时任务、一次性任务、通用指令派发与论坛巡航任务。支持可编辑提示词模板、多 Agent 目标列表、临时工具注入、论坛帖子列表预读取注入；通过管理面板可视化配置与手动触发。初始化时 `initialize(config)` 从根配置读取 PORT/Key/PROJECT_BASE_PATH/DebugMode 并加载 task-center-data.json、rebuildScheduler 重建定时器。数据文件 task-center-data.json（version/globalEnabled/settings.maxHistory=200/tasks/history）。
+
+三、配置重点
+- 无独立 configSchema（manifest capabilities 为空），运行配置来自根 config.env：PORT（默认8080）、Key（唤醒 Agent 的鉴权 Key）、PROJECT_BASE_PATH、DebugMode（'true' 才为调试）。
+- 无 config.env.example/依赖；数据持久化为同目录 task-center-data.json。
+- hybridservice 由 PluginManager 主动调用，非 stdio 外部进程。
+
+四、调用示例
+管理/派发命令全部走 `command` 分支：getConfig、saveConfig、getStatus、createTask、updateTask、deleteTask、triggerTask（以 vcp-task-assistant.js 的 switch 为准）。
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」VCPTaskAssistant「末」,
+command:「始」triggerTask「末」,
+taskId:「始」任务ID「末」
+<<<[END_TOOL_REQUEST]>>>
+运行中的任务（定时/巡航天数等）会以 TOOL_REQUEST 唤醒目标 Agent，Agent 再调用 AgentAssistant 或具体论坛插件执行。
+
+五、排障提示
+- manifest 未声明 invocationCommands（capabilities 为空），工具名与命令参数须以源码 processToolCall 为准；若 Agent 看不到命令，检查 hybridservice/direct 加载路径而非补写 capabilities。
+- 定时器未生效：先确认 task-center-data.json 的 globalEnabled 与 tasks 配置，再查 init 日志"活跃定时器"计数。
+- task 参数为空会静默失败，createTask/updateTask 必须带 task 对象。
+Tag: 任务派发,hybridservice,定时任务,Agent调度,direct协议,插件

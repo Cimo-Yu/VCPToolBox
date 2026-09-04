@@ -1,0 +1,40 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——VCPTimeLine（原子切片）
+
+一、插件身份
+- name：VCPTimeLine
+- displayName：VCP Agent 时间线
+- pluginType：hybridservice（direct 协议，timeout 300000）
+- 入口：VCPTimeLine.js（entryPoint.type=nodejs）
+- 版本：1.0.0；作者 VCPToolBox；requiresContextBridge=true；hasApiRoutes=false
+- configSchema：{}（配置不在 manifest，走本地 config.json）
+- 现状：启用态（plugin-manifest.json）
+
+二、核心能力
+- 为记忆日记生成按月时间线与一句话摘要，写入 dailynote/<Agent>timeline/<YYYY-MM>.md 与插件目录 timeline_summaries.json。
+- 占位符注入：`[[VCPTimeLine::Agent]]` 注入全量月摘要；`[[VCPTimeLine::Agent:5:0.6]]` 注入语义相关的 Top-k 完整月度时间线（k 与阈值可调）。
+- 检索：请求若带 queryVector 就用 contextBridge.retrieveDiary/searchDiary 在既有 `<Agent>timeline` 向量索引内检索（tagMemo+测地线重排可选），绝不重新向量化 Timeline 文档；仅第一个可信声明（system 或"[系统"开头的 user）被展开，其余占位符清除防递归注入。
+- 源数据发现：discoverMemories 扫描 dailynote 下 `<Agent>`/`公共*`/agentFolders 配置的目录，按日记首行日期作者头归组到月份；支持别名 aliases 与 ignoreFolders/node_modules/.git 排除。
+- 模型调用：callModel 调用本机 http://127.0.0.1:PORT/v1/chat/completions（需服务器 Key 与 config.model），分段汇总/合并，超最大 context 自动 splitByBudget。
+- 附带管理态 API 路由（/vcp-timeline/...）：config、agents、get/saveTimelineFile、compact、summaries、generate-timelines、generate-summaries、discover-aliases、folders；同一 Agent 并发生成返回 409。
+
+三、配置重点
+- 配置在插件目录 config.json（非 manifest），DEFAULT_CONFIG：enabled=true、defaultExpandK=3、defaultThreshold=0.5、model=''（必填否则生成失败）、maxContextTokens=60000、maxOutputTokens=4000、maxConcurrentTasks=3、publicFolderPrefixes=['公共']、ignoreFolders=['node_modules','.git']、summaryPrompt=''、aliases={}、agentFolders={}。
+- 目录无 config.env.example；依赖根 config（PROJECT_BASE_PATH、PORT、Key）与 KNOWLEDGEBASE_ROOT_PATH（可指向 dailynote）。
+- 索引名必须与服务器真实 `<Agent>timeline` 目录名完全一致（Linux 大小写敏感），getTimelineDir 会优先复用已存在的大小写变体目录。
+
+四、调用示例（无标准工具命令，靠占位符/API 触发）
+- 在 agent 上下文书写占位符触发注入（AI 文本）：
+`[[VCPTimeLine::纸子]]`
+`[[VCPTimeLine::纸子:5:0.4]]`（Top-5 月度时间线、阈值 0.4）
+- 生成入口走管理 API，示意 HTTP 调用（POST /vcp-timeline/agents/纸子/generate-timelines，body 可带 overwrite/startMonth/endMonth 与鉴权头），此处为触发语义说明。
+
+五、排障提示
+- 生成失败多因 config.model 未配置或服务器 Key 缺失（callModel 抛"模型未配置"/"服务器 Key 未配置"）。
+- 占位符不展开：检查 enabled、占位符语法与声明消息角色（仅 system 或"[系统"开头的 user 可信）；注入为空时核对 dailynote/<Agent>timeline 索引存在且 queryVector 可用。
+- 并发告警：同 Agent 已运行任务时再次生成返回 code TIMELINE_GENERATION_IN_PROGRESS（HTTP 409）。
+- 日期头解析：源日记须符合 `[YYYY-MM-DD...] - 作者` 首行格式，否则不被归组。
+- registerRoutes 必须保留四形参签名，否则被当旧协议、路由全部注册失败——改动/审计时勿裁参。
+- manifest 无命令、configSchema 空：能力靠占位符注入 + 管理 API，属正常，以源码为准。
+
+Tag: VCPTimeLine,时间线,记忆,占位符,注入,ContextBridge,月度摘要,RAG,生成,启用态

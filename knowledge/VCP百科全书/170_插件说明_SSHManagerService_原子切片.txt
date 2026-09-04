@@ -1,0 +1,38 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——SSHManagerService（原子切片）
+
+一、插件身份
+- name: SSHManagerService；displayName: SSH 连接管理服务；pluginType: service；
+  protocol: direct；入口: SSHManagerService.js（entryPoint.type=nodejs）。
+- version: 2.0.0；author: VCP Team。
+- 现状: 禁用态——本目录 manifest 文件名 plugin-manifest.json.block（已禁），未加载。
+- capabilities 为空，不注册 invocationCommands，为常驻内存服务非工具。
+
+二、核心能力
+- 主进程内常驻的 SSH 连接池管理服务，通过 IPC 为 stdio 插件等提供连接复用（单进程环境启用 usePool）。
+- 初始化门控：hosts.json（Plugin\LinuxShellExecutor\hosts.json）仍为默认模板（MD5= b1d6472e…
+  3f3e）时，服务不启动；无有效 SSH 资产（type=ssh 且 host/username/password 或 privateKeyPath 完整）
+  时静默跳过。两门槛均不满足即不建池不暴露 IPC。
+- IPC：Linux/macOS 用 UDS /tmp/vcp-ssh-manager-<pid>.sock，Windows 用命名管道
+  \\.\pipe\vcp-ssh-manager-<pid>；权限 0600；JSON-RPC 2.0，每请求需带 authToken（进程内随机 32-byte）。
+- JSON-RPC method：execute/testConnection/getStatus/getPoolStats/connect/disconnect/disconnectAll/
+  listHosts/createStreamSession/stream.start/stream.stop/stream.destroy/stream.getStats；流式会话
+  通过 stream.data/stream.error/stream.close 通知推送。
+- 将 sockPath 与 authToken 写入 global.__vcp_ssh_manager_sock / __vcp_ssh_manager_token 供主进程取用；
+  进程退出时清理 socket 与连接池。
+
+三、配置重点
+- 无 configSchema（manifest 未定义）；配置主要来自 hosts.json（含 hosts{} 与 globalSettings）。
+- globalSettings.usePool 由服务强制置 true；globalSettings.warmupHosts 可指定启动预热连接清单。
+- 需在 LinuxShellExecutor\hosts.json 中配置完整 SSH 资产并覆盖默认模板后，服务才会真正启动。
+
+四、调用示例
+- service 类插件经 direct 协议由主进程/其它插件以 JSON-RPC over IPC 间接调用，无 systemPrompt 工具位。
+- 可调用端示例方法（非 DO 块）: { jsonrpc:"2.0", method:"connect", params:{ hostId }) 经 UDS 下发；
+  需要 conn 复用方可正常执行远程命令。禁用态下此调用会失败，需先启用。
+
+五、排障提示
+- 服务"未启动": 检查 hosts.json 是否仍为默认模板(MD5 比对) 或是否配置了合法 SSH 资产；两条件缺一即跳过。
+- RPC 返回 code -32001 = authToken 不匹配；-32000 = sshManager 未初始化(门控未过)；-32603 = 处理异常。
+- 与 manifest 一致性：manifest 声明 protocol 为 direct、capabilities 空，与源码常驻 UDS/JSON-RPC 行为一致。
+Tag: SSH,SSHManagerService,连接池,常驻服务,UDS,JSON-RPC,禁用,hosts

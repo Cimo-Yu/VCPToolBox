@@ -1,0 +1,54 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——AI 代码工程 Worker（原子切片）
+
+一、插件身份
+- name: AICodeWorker
+- displayName: AI 代码工程 Worker
+- pluginType: synchronous（stdio）
+- protocol: stdio，超时 660000ms（约 11 分钟）
+- 入口: entryPoint.type=nodejs，command=node AICodeWorker.js
+- 版本: 1.7.0（manifest）；源码头注释自称 v1.6.0，manifest 领先，以 manifest 为准
+- 现状: 启用态（存在 plugin-manifest.json，无 .block）
+
+二、核心能力
+让 VCP 把耗 token 的代码读写任务交给本地 free 的 opencode CLI 执行，VCP 只下命令、看结果。派发 worker 有 opencode（默认，免费）与 antigravity/agy（Gemini Pro，占配额）两类。模式分 analyze（只出 diff 不落盘）/ patch / write 三种。7 个内置预设：index（函数索引）、read（原文读）、scan（扫目录）、bug（错误根因）、set（改配置值）、append（末尾追加）、create（建/覆写文件）。任务输出落在 JOB_ROOT 下 output/logs/patches/meta 四子目录。2026-06-27 崩服务器事故后加 MAX_CONCURRENT_JOBS 硬保险，opencode 与 agy 共用同一并发计数。
+
+三、配置重点（configSchema → config.env.example）
+- ENABLE_OPENCODE=true；ENABLE_MIMOCODE=false（预留开关，保持关闭）
+- OPENCODE_BIN=opencode；OPENCODE_BASE_URL、OPENCODE_API_KEY 都留空 + OPENCODE_MODEL=opencode/deepseek-v4-flash-free → 走免费模型；两者都填自动切模式B（自己的 key）
+- ALLOWED_PROJECT_ROOTS=/app/VCPToolBox_new（operation 白名单）
+- JOB_ROOT=/app/VCPToolBox_new/Plugin/AICodeWorker/jobs
+- MAX_TASK_CHARS=20000；DEFAULT_TIMEOUT_SEC=600；FILE_SIZE_WARN_KB=200
+- MAX_CONCURRENT_JOBS=1（硬上限，建议勿调大）
+- ALLOW_DANGEROUS_SKIP_PERMISSIONS 已失效（保留兼容，填什么不影响）
+- REDACT_SECRETS=true；PROJECT_CONTEXT=（空）
+- ENABLE_ANTIGRAVITY=false；AGY_BIN（建议绝对路径）；AGY_MODEL=空；AGY_PROXY=http://127.0.0.1:7890（墙内必填，配错=agy 连不上）
+
+四、调用示例
+读取文件内容（preset 语法）：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」AICodeWorker「末」,
+command:「始」run_and_wait「末」,
+preset:「始」read「末」,
+targetPath:「始」/app/VCPToolBox_new/config.env「末」
+<<<[END_TOOL_REQUEST]>>>
+
+分析错误根因：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」AICodeWorker「末」,
+command:「始」run_and_wait「末」,
+preset:「始」bug「末」,
+targetPath:「始」/app/VCPToolBox_new/Plugin/AICodeWorker/AICodeWorker.js「末」,
+error:「始」TypeError: Cannot read property 'trim' of undefined at line 402「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 支持的顶层命令：capabilities、run、run_and_wait、query、listJobs、cancel（源码 main() 分发）。preset 模式走 run_and_wait。
+- free 免费模型走 opencode 官方远程网关，服务器需能访问外网（必要时挂代理），有速率/并发限制，繁忙换一个再试。
+- OPENCODE_MODEL 留空会回退 opencode 付费默认模型（如 gpt-5.x 需 OpenAI key），非免费。
+- 别用"推理模型"（正式输出为空、内容全在 reasoning），opencode 会一直等而卡死。
+- write/patch 模式未检测到绝对路径（/ 开头）会发 error 警告；write 模式缺操作约束词、含危险操作且无 verify 会有 warn。
+- 三模式恒自动加 --dangerously-skip-permissions：无人值守后台进程无交互通道，不加会卡死到超时（不是放宽安全，是修死锁）。
+- manifest 与源码版本号不一致（1.7.0 vs 1.6.0），功能以源码为准。
+
+Tag: AICodeWorker,代码工程Worker,opencode,antigravity,代码分析,patch生成,同步插件

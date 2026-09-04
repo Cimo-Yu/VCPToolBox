@@ -1,0 +1,55 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——AgnesGen（原子切片）
+
+一、插件身份
+- name: AgnesGen
+- displayName: Agnes Image 2.1 Flash 绘图
+- pluginType: synchronous
+- protocol: stdio
+- 入口: node AgnesGen.mjs
+- 版本: 1.0.0
+- manifestVersion: 1.0.0
+- 现状: 启用态（plugin-manifest.json 存在，无 .block）
+
+二、核心能力
+- 调用 Sapiens AI Agnes Image 2.1 Flash 模型做文生图与图生图，默认端点 https://apihub.agnes-ai.com/v1/images/generations。
+- 单命令标识 GenerateImage，通过 command 字段区分三种模式：generate（文生图）、edit（图生图）、compose（多图参考/合成）。未给图自动文生图；给单图自动 edit；给多图自动 compose。
+- 图生图/合成依赖 image 字段（URL/base64/data URI/JSON数组），兼容 image、image_url、image_1/2、image_url_1、image_base64_1 等别名。
+- 生成图片保存至 <PROJECT_BASE_PATH>/image/agnesgen/ 并以 imageserver 图片键拼出可访问URL；showbase64 为 true 时附带 base64 返回。
+- 无 negative_prompt 专用字段：规避内容须写入 prompt。
+
+三、配置重点（configSchema / config.env.example）
+- AGNES_API_KEY: string(必需)，Agnes/Sapiens Bearer Token；源码回退读 SAPIENS_API_KEY。
+- AGNES_API_ENDPOINT: 可选，默认 https://apihub.agnes-ai.com/v1/images/generations。
+- AGNES_MODEL_ID: 可选，默认 agnes-image-2.1-flash。
+- AGNES_DEFAULT_SIZE: 可选，默认 1024x1024。
+- HTTP_PROXY: 可选，如 http://127.0.0.1:7890，留空不用代理；内网地址自动绕过。
+- USE_PUBLIC_URL: 可选，true 走 VAR_HTTPS_URL，false 走 VAR_HTTP_URL（局域网），默认 false。
+- 运行必需注入（源码）：PROJECT_BASE_PATH、SERVER_PORT、IMAGESERVER_IMAGE_KEY、VarHttpUrl（及可选 VarHttpsUrl）。
+
+四、调用示例
+文生图:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」AgnesGen「末」,
+command:「始」generate「末」,
+prompt:「始」A luminous floating city above a misty canyon at sunrise, cinematic realism, wide-angle composition「末」,
+size:「始」1024x768「末」,
+showbase64:「始」false「末」
+<<<[END_TOOL_REQUEST]>>>
+
+图生图:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」AgnesGen「末」,
+command:「始」edit「末」,
+prompt:「始」Transform the scene into a rain-soaked cyberpunk night, preserve the original composition「末」,
+image:「始」https://example.com/input-image.png「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 缺 AGNES_API_KEY 或 SAPIENS_API_KEY 会报 "AGNES_API_KEY environment variable is required"。
+- 缺 PROJECT_BASE_PATH/SERVER_PORT/IMAGESERVER_IMAGE_KEY/VarHttpUrl 时拒绝执行。
+- API 耗时上限约 180s（communication.timeout）；请求内部 AbortSignal 亦为 180000ms。
+- 图片读取支持 URL/data URI/file:// 与裸 base64；file:// 本地缺失返回 FILE_NOT_FOUND_LOCALLY 请求远端抓取。
+- size 校验：adaptive 或 \d{2,5}x\d{2,5}（宽高 64-8192）。
+
+Tag: AgnesGen, synchronous, 文生图, 图生图, 多图合成, AgnesImage2.1Flash, generate, edit, compose, 启

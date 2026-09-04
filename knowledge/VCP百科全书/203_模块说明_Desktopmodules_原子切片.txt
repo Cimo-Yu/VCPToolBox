@@ -1,0 +1,72 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 模块说明——Desktopmodules（原子切片）
+
+一、模块定位
+属于 D:\vcp\VCPChat\ 前端的「虚拟桌面」功能域（VCPdesktop），
+是独立 Electron 渲染窗口，加载桌面画布 Canvas，
+承载桌面图标、Dock 栏、收藏侧栏，
+以及天气/音乐/App 托盘等内置挂件，
+作为 AI 渲染挂件与用户收藏的展示层。
+窗口由 desktop.html 为宿主，
+按 script 标签依依赖顺序装配各子模块，
+所有模块经 window.VCPDesktop 命名空间通信，
+并与主窗口通过 IPC 桥双向交换
+（推送创建/填充挂件、响应远程 RPC 查询）。
+
+二、核心文件（目录内 46 个文件，分层组织）
+宿主层：
+- desktop.html（装配全部 script）、desktop.js（主入口初始化）、desktop.css。
+core/（核心机制）：
+- state.js（全局状态与常量）、theme.js（主题同步）、
+- statusIndicator.js（底部状态指示器）、zIndexManager.js（层级管理）、
+- dragSystem.js（限位拖拽）、widgetManager.js（挂件创建/Shadow DOM/脚本处理）、
+- visibilityFreezer.js（可见性冻结）、wallpaperManager.js（壁纸）、styleAutomation.js、performanceManager.js。
+ui/（交互）：
+- contextMenu.js（右键菜单）、dock.js（Dock 栏）、sidebar.js（收藏侧栏）、
+- saveModal.js（收藏命名）、iconPicker.js、globalSettings.js。
+favorites/：
+- favoritesManager.js（收藏保存/加载/删除/恢复）、thumbnail.js（缩略图捕获）。
+api/（代理）：
+- ipcBridge.js（IPC 监听/RPC 桥）、vcpProxy.js（凭据+Bearer/Basic 代理）、
+- desktopMetrics.js（系统指标封装）。
+builtinWidgets/：
+- weatherWidget.js、musicWidget.js、appTrayWidget.js、newsWidget.js、
+- translateWidget.js、vchatApps.js、performanceMonitorWidget.js、systemMonitorWidget.js。
+
+三、对外接口与协议
+preload（window.desktopAPI || window.electronAPI）：
+- minimizeWindow/maximizeWindow/closeWindow
+- desktopGetCredentials、desktopSaveWidget、desktopCaptureWidget
+- sendDesktopRemoteResponse
+- onDesktopPush、onDesktopStatus、onDesktopRemoteRequest
+- onDesktopWidgetSourceSaved、onDesktopRemoteSetWallpaper
+IPC 推送命令（action 串）：
+- create、append、finalize、replace、remove、clear（主窗口控制挂件流式渲染）。
+远程 RPC 命令：
+- QueryDesktop、QueryDock、ViewWidgetSource、CreateWidget、
+- SetStyleAutomation、GetStyleAutomationStatus。
+vcpAPI 代理：
+- Admin：vcpAPI.fetch('/admin_api/...')（Basic Auth）
+- Chat：vcpPost(messages, options)（Bearer Token，OpenAI /v1/chat/completions）
+
+四、与其他模块或后端的联动
+- 与主聊天窗口：
+  主窗口通过 IPC push 将 AI 生成的挂件 HTML 逐帧推送到桌面画布，
+  桌面亦可响应主窗口 RPC 查询，形成「AI 反控桌面」闭环。
+- 与 VCPDistributedServer：
+  收藏的挂件源码经 desktopSaveWidget
+  持久化到 AppData/DesktopWidgets，侧栏可重新加载。
+- vcpProxy 使挂件脚本无需知道真实 URL/API Key
+  即可安全调用后端（凭据由主进程注入）。
+- Dock 注入 VChat 内部应用（vchatApps）
+  并与 Loom 注册表同步（initLoomRegistrySync）。
+
+五、备注
+- 依赖 desktopGetCredentials 提供 Admin（Basic）与 Chat（Bearer）两种凭据，
+  缺一则对应代理不可用。
+- 挂件脚本在 Shadow DOM 受限执行，安全边界较严。
+- 已知限制：
+  Dock 配置异步加载，
+  vchatApps 需延迟注入（约 500ms）避免覆盖已有配置。
+
+Tag: Desktopmodules,VCPdesktop,虚拟桌面,桌面挂件,Dock,IPC桥,桌面收藏,vcpAPI代理

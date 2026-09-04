@@ -1,0 +1,56 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——AgnesVideoGen（原子切片）
+
+一、插件身份
+- name: AgnesVideoGen
+- displayName: Agnes 视频生成器
+- pluginType: asynchronous
+- protocol: stdio
+- 入口: node AgnesVideoGen.mjs
+- 版本: 1.1.0
+- manifestVersion: 1.0.0
+- 现状: 启用态（plugin-manifest.json 存在，无 .block）
+
+二、核心能力
+- 基于 Agnes Video V2.0 API 的两步式视频生成：submit 提交任务秒级返回 task_id，query 拿 task_id 查询并下载成果。单次最长约 18 秒（441 帧 @24fps）。
+- 命令：submit、query、concat。submit 自动按图片判定模式——无图=文生视频、单图 image=图生视频、多图 images=多图视频、images+mode:keyframes=关键帧动画。
+- query 对 queued/in_progress 返回进度，completed 自动下载保存并返回本地 /files/ 视频链接（走 file 服务而非 images 服务，mp4 走 /files/）。
+- concat 为同步命令，用 ffmpeg concat demuxer + 重编码(libx264/aac) 把 ≥2 个视频合并成一个长片。
+- 生成/拼接结果存 <PROJECT_BASE_PATH>/file/agnesvideogen/。
+
+三、配置重点（configSchema / config.env.example）
+- AGNES_VIDEO_API_KEY: string(必需)，Agnes Bearer Token。
+- AGNES_VIDEO_MODEL: 默认 agnes-video-v2.0。
+- AGNES_VIDEO_DEFAULT_WIDTH / _HEIGHT: 默认 1152 / 768。
+- AGNES_VIDEO_DEFAULT_NUM_FRAMES: 默认 121（须满足 8n+1，121≈5s、241≈10s、441≈18s@24fps）。
+- AGNES_VIDEO_DEFAULT_FRAME_RATE: 默认 24（1-60）。
+- AGNES_VIDEO_MAX_WAIT_SECONDS: config.env.example 提供，默认 480（manifest 未列）。
+- IMAGESERVER_FILE_KEY: 文件服务鉴权密钥，视频 /files/ 路径用（VCP 自动注入）。
+- USE_PUBLIC_URL: 统一在主 config.env 设置（true=对外 / false=内网），默认 false。
+- DebugMode: 布尔，开启后 stderr 输出详细日志，默认 false。
+
+四、调用示例
+submit（文生视频）:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」AgnesVideoGen「末」,
+command:「始」submit「末」,
+prompt:「始」A cyberpunk cat walking through neon-lit rainy streets, slow cinematic tracking shot「末」,
+num_frames:「始」121「末」,
+frame_rate:「始」24「末」
+<<<[END_TOOL_REQUEST]>>>
+
+query:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」AgnesVideoGen「末」,
+command:「始」query「末」,
+task_id:「始」task_YOUR_TASK_ID「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 缺 AGNES_VIDEO_API_KEY 时直接报错退出。
+- query 兼容字段：task_id / taskId / request_id / requestId；提交返回字段取 data.id 或 data.task_id。
+- num_frames 不合法时会自动就近修正到 8n+1 并夹在 9-441。
+- concat 依赖服务器已装 ffmpeg（未装报 ENOENT 提示安装）；至少需 2 个视频 URL，支持 http(s) 与本地路径。
+- 视频服务偶发超时（submit 请求给 90s、下载/query 各给独立超时）；本地存储比远端 agnes URL 更稳定，不依赖远端链接过期。
+
+Tag: AgnesVideoGen, asynchronous, 文生视频, 图生视频, 多图视频, 关键帧, submit, query, concat, ffmpeg, 启

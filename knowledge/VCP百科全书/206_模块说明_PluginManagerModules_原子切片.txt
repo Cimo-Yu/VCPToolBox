@@ -1,0 +1,72 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 模块说明——PluginManagerModules（原子切片）
+
+一、模块定位
+属于 D:\vcp\VCPChat\ 前端的「分布式插件管理」功能域，
+是独立 Electron 渲染窗口（VCP Plugin Manager），
+用于扫描、分类、启停并编辑 VCP 分布式插件，
+管理 `plugin-manifest.json`
+（或 `plugin-manifest.json.block` 禁用态）与 `config.env`。
+窗口由 plugin-manager.html 为宿主，
+按 script 标签加载 plugin-manager.js 并引入 plugin-manager.css。
+插件清单定义在分布式服务器插件目录，
+本窗口作为集中管控面。
+
+二、核心文件（目录内共 3 个文件）
+- plugin-manager.html：窗口骨架。
+  顶部导航含 刷新 与窗口控制；
+  hero 卡片含「分布式服务器」开关
+  （distributed-server-toggle + save-server-toggle-btn）；
+  工具栏含搜索框与 类型/状态 过滤；
+  #summary-dashboard 汇总统计；
+  #plugin-groups 按类型分组展示；
+  modal 含 Manifest / Invocation Commands
+  （capabilities.invocationCommands[].description）/ config.env 三个标签面板。
+- plugin-manager.js：全部交互逻辑。
+  定义插件类型枚举与中文标签、
+  插件扫描/筛选/分组渲染、
+  汇总统计（总/启用/禁用/异常/命令数/含 config.env）、
+  模态编辑（Manifest JSON 即时校验、
+  命令描述编辑同步回 Manifest、config.env 编辑）、
+  启停切换与打开插件目录。
+- plugin-manager.css：卡片/徽标/编辑面板样式。
+
+三、对外接口与协议
+preload（window.utilityAPI || window.electronAPI）：
+- minimizeWindow/maximizeWindow/closeWindow
+- loadSettings/saveSettings、onThemeUpdated
+插件管理专用 IPC：
+- pluginManagerListPlugins()（扫描全部插件）
+- pluginManagerSaveManifest({ folderName, manifest })
+- pluginManagerSaveConfigEnv({ folderName, content })
+- pluginManagerSetPluginEnabled({ folderName, enabled })
+- pluginManagerOpenPluginFolder({ folderName })
+插件类型串：
+- renderer / static / messagePreprocessor / synchronous
+- asynchronous / service / hybridservice（plus unknown）
+主设置字段：
+- enableDistributedServer（分布式服务器全局开关）
+
+四、与其他模块或后端的联动
+- 与 VCPDistributedServer：
+  扫描目录、读写插件 manifest/config.env 与启停
+  均由主进程对接分布式服务，前端只做列表与编辑回写；
+  插件命令（invocationCommands）
+  是后续消息处理器按 commandIdentifier 调度的依据。
+- 与主设置：
+  enableDistributedServer 开关直接读写主 Settings，
+  保存后需重启服务生效。
+- 禁用态通过 manifest 文件名 `.json.block` 表达，
+  前端 state 按 enabled/disabled/invalid（parseError）区分。
+
+五、备注
+- 依赖主进程与预加载脚本实现对应 pluginManager* IPC；
+  未注入时显示「插件管理 IPC 尚未注入」。
+- manifest 编辑期间允许 JSON 不完整（边写边校验），
+  保存时才严格解析。
+- 已知限制：
+  启停只是主进程层面的 flag 切换，
+  热生效与否取决于服务端插件加载时机；
+  异常插件以 parseError 标记并不阻断整个列表。
+
+Tag: PluginManagerModules,插件管理器,分布式插件,plugin-manifest,config.env,插件类型,启用停用

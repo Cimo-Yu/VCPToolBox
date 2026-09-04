@@ -1,0 +1,99 @@
+# VCP HTML/SVG 渲染与程序音乐生成 (MediaRenderer)
+
+使用 VCP 托管 Chrome 与全局 FFmpeg，把 AI 编写的 HTML/SVG 渲染成静态图片、GIF 或视频；也可以在独立 Node.js 子进程中执行 AI 编写的合成代码，直接生成 WAV/PCM16 程序音乐（此路径不启动浏览器、不需要 FFmpeg）。
+
+调用必须输出完整的 <<<[TOOL_REQUEST]>>> 到 <<<[END_TOOL_REQUEST]>>> 工具块；每个参数都用「始」「末」包裹，参数之间用英文逗号分隔，源码整体放在同一对「始」「末」内，不要使用 Markdown 代码围栏。
+
+[===vcp_fold:0.35::desc:静态图片渲染 RenderImage HTML SVG PNG JPG WebP 图片生成 图标 素材 动画库===]
+## 1. 静态图片渲染 (RenderImage)
+HTML/SVG → PNG / JPG / WebP。宽高各 64-4096，总像素不超过 4096×4096。
+
+tool_name:「始」MediaRenderer「末」,
+command:「始」RenderImage「末」,
+html:「始」<!doctype html><style>...</style>...「末」,  // 与 svg 二选一
+width:「始」1024「末」,      // 必需
+height:「始」1024「末」,     // 必需
+format:「始」png「末」,       // png/jpg/webp；透明时默认 png，否则 jpg
+transparent:「始」true「末」,  // 可选；true 只令根画布透明。透明图标必须用 png/webp
+background:「始」#ffffff「末」, // 可选；非透明输出的 Alpha 合成底色
+quality:「始」90「末」,       // 可选；JPG/WebP 质量 1-100
+allowJavaScript:「始」true「末」, // 可选；Canvas 等场景需显式开启
+fileName:「始」my-icon「末」   // 可选；输出文件名主体
+
+### 素材直接写在源码里
+图片、视频、字体直接在源码中写 URL，不需要 assets JSON：
+- `<img src>`、`<video src>`、`<audio src>`、`poster`、CSS `url(...)`、`@font-face`、SVG `href`
+- 支持 `data:`、`file://`、HTTP/HTTPS、VCP 图床 URL；插件在 Node.js 侧安全预取并改写为 Data URI
+- 页面运行时未声明的新网络请求会被阻断；单资源最大 50MB
+
+Anime.js/Three.js：可直接写常见 CDN 全局脚本标签（如 jsDelivr 的 anime.min.js、three.min.js），插件自动改用本地内置版本，分别提供 `window.anime` / `window.THREE`，不会请求 CDN；其他外部脚本一律拒绝执行。
+
+示例：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」MediaRenderer「末」,
+command:「始」RenderImage「末」,
+html:「始」<!doctype html><style>html,body{margin:0;width:100%;height:100%}.stage{height:100%;display:grid;place-items:center}.icon{width:72%;height:72%;border-radius:28%;background:linear-gradient(135deg,#8b5cf6,#22d3ee)}</style><div class="stage"><div class="icon"></div></div>「末」,
+width:「始」512「末」,
+height:「始」512「末」,
+format:「始」png「末」,
+transparent:「始」true「末」,
+fileName:「始」gradient-icon「末」
+<<<[END_TOOL_REQUEST]>>>
+
+[===vcp_fold:0.35::desc:动画 GIF 视频 RenderAnimation FFmpeg 逐帧渲染 MP4 WebM 时间轴 音轨===]
+## 2. 动画 / GIF / 视频 (RenderAnimation)
+按逻辑时间确定性逐帧渲染，再经 FFmpeg 编码为 GIF / MP4 / WebM；不是实时录屏，机器快慢不影响动画时间轴。
+
+tool_name:「始」MediaRenderer「末」,
+command:「始」RenderAnimation「末」,
+html:「始」...「末」,
+width:「始」640「末」,
+height:「始」360「末」,
+format:「始」mp4「末」,       // gif/mp4/webm
+durationMs:「始」5000「末」,   // 可选；100-60000ms
+fps:「始」30「末」,            // 可选；1-60
+transparent:「始」false「末」,  // GIF/WebM 可透明；MP4 必须 false
+readyMode:「始」signal「末」,  // 异步资源初始化完成后再通知
+audioUrl:「始」file:///D:/media/music.mp3「末」, // 可选；MP4/WebM 混流音轨，GIF 不含音频
+fileName:「始」my-anim「末」
+
+页面协议：注册帧函数后调用 setReady()，按绝对 timeMs 更新画面：
+<script>
+window.__MEDIA_RENDERER__.setFrameRenderer(async (timeMs, frameIndex, fps) => {
+    // 根据 timeMs 更新 DOM / Canvas / Anime.js / Three.js 场景
+});
+window.__MEDIA_RENDERER__.setReady();
+</script>
+不要依赖真实时钟或 requestAnimationFrame 的累计增量。GIF 只有索引透明色，复杂半透明动画优先用透明 WebM。
+
+[===vcp_fold:0.35::desc:程序音乐生成 GenerateAudio WAV PCM16 合成代码 synthesize 音色 DSP 节奏 旋律===]
+## 3. 程序音乐生成 (GenerateAudio)
+在独立 Node.js 子进程中运行 AI 编写的合成代码，输出固定 WAV/PCM16；不需要浏览器和 FFmpeg。每次调用必须携带用户提供的 6 位管理员验证码，缺失或错误都不会启动合成，不要猜测或使用示例数字代替。
+
+tool_name:「始」MediaRenderer「末」,
+command:「始」GenerateAudio「末」,
+requireAdmin:「始」用户提供的6位管理员验证码「末」,
+code:「始」function synthesize(api){...}「末」, // 必需，最大 1MB
+durationMs:「始」10000「末」, // 可选；默认 10000
+sampleRate:「始」44100「末」, // 可选；8000-48000
+channels:「始」2「末」,        // 1 或 2
+tempo:「始」120「末」,        // 20-400 BPM
+seed:「始」42「末」,          // 可复现随机数种子
+masterVolume:「始」0.8「末」,  // 0-1
+fadeOutMs:「始」30「末」,     // 尾部淡出
+fileName:「始」eight-bit-theme「末」
+
+code 必须声明 `synthesize(api)`（可 async），直接写入 `api.left` / `api.right` / `api.channelData`：
+- `api.sampleRate` / `duration` / `durationMs` / `channels` / `tempo` / `seed`
+- `api.noteToFrequency('C#5')`、`api.oscillator()`、`api.envelope()`、`api.addNote({note,start,duration,wave,duty,volume,pan,...})`
+- `api.random()` / `api.noise()` / `api.secondsPerBeat` / `api.beatToSeconds()`
+- 也可完全自定义 DSP、算法作曲、鼓机等；插件统一处理非有限值、峰值归一化、主音量、尾部淡出和 WAV 编码
+
+[===vcp_fold:0.35::desc:串行批量渲染 多步批量生成 输出路径 输出格式 showBase64 静态图 GIF 视频 音频===]
+## 4. 串行批量渲染
+数字后缀从 1 开始连续编号（command1/html1/width1、command2/svg2/...），没有后缀的参数是公共默认值，可被每步后缀参数覆盖；最多 16 步，严格按顺序执行，一次调用返回所有图片 URL。
+
+## 输出
+- 静态图/GIF：`image/media-renderer/`
+- MP4/WebM/WAV：`file/media-renderer/`
+- 默认只返回 URL；静态图片可设 showBase64=true 额外返回 Data URI，GIF/视频不内联 Base64

@@ -1,0 +1,50 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——VCPClawMail（原子切片）
+
+一、插件身份
+- name：VCPClawMail
+- displayName：VCP ClawEmail 邮件助手
+- pluginType：hybridservice（direct 协议，timeout 120000）
+- 入口：VCPClawMail.js（entryPoint.type=nodejs）
+- 版本：0.1.0；作者 VCPToolBox
+- 现状：启用态（plugin-manifest.json）；依赖 npm 包 @clawemail/node-sdk（缺省时仅提示、命令报 SDK 未加载）。
+
+二、核心能力
+- 混合插件：常驻轮询 claw.163.com（ClawEmail）邮箱，动态维护公共 `{{VCPClawMailInbox}}` 与 4 个子邮箱 `{{VCPClawMailInboxMail1..4}}` 占位符摘要。
+- 邮件命令（manifest 7 个 + 源码别名）：list_recent(list) 列最近邮件、read_mail(read) 读详情并尽量转图片/文本多模态、send_mail(send) 发送、reply_mail(reply) 回复（SDK 无原生 reply 时报错转 send_mail）、download_attachment(download)、list_folders(folders)、move_to_trash(trash)（软删除，必须 confirm=true）。
+- 子邮箱装配（mail1-mail4）：每个需同时配 User+Agent 才启用；ClawMailSubMailRealtimeAgentDispatch 服务对子邮箱开 WebSocket 即达监听，收件后读取正文/附件并经 AgentAssistant 正常通讯分支投递给绑定 Agent；可用 AsyncDelegation 转异步 task_delegation。
+- 附件：可用 URL/file:// 传入；读取到图片/附件尽量以可继续解析的 URL 或本地缓存路径返回；download_attachment 落 data/attachments 目录。
+- 附加源命令：poll_now 立即轮询、status 返回 SDK/代理/邮箱/缓存/WS 状态。
+
+三、配置重点
+- configSchema 必填：ClawMailKey（ClawEmail API Key，非 npx claw-setup 的临时 auth-url）。其余：ClawMailUsers、ClawMailDefaultUser、ClawMailPollIntervalMs(60000)、ClawMailPollLimit(20)、ClawMailAutoMarkRead(false)、ClawMailSubMail{1..4}User/Agent、ClawMailSubMailProcessedKeep(500)、ClawMailSubMailAutoMaxAttachments(8)、DebugMode。
+- config.env.example 另有关键键：ClawMailRealtimeEnabled=true（禁用则仅低频轮询且子邮箱不触发自动唤醒）、ClawMailProxy（http/https 代理，用于 SDK 与附件下载；兼容系统 HTTPS_PROXY/HTTP_PROXY）、ClawMailWsUrl 覆盖 SDK 默认 WuKongIM 地址。
+- 兼容简写：Mail1/mail1 + AgentName1 + AgentAsyncDelegation1 等也会被识别，但推荐 ClawMailSubMail* 命名。
+
+四、调用示例
+- list_recent：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」VCPClawMail「末」,
+command:「始」list_recent「末」,
+mailbox:「始」mail1「末」,
+limit:「始」10「末」
+<<<[END_TOOL_REQUEST]>>>
+- send_mail：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」VCPClawMail「末」,
+command:「始」send_mail「末」,
+to:「始」someone@example.com「末」,
+subject:「始」测试邮件「末」,
+body:「始」你好，这是来自 VCP 的邮件。「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- "缺少 @clawemail/node-sdk"：进入 Plugin/VCPClawMail 目录运行 npm install。
+- move_to_trash 是软删除且必须 confirm=true，且会识别真实垃圾箱文件夹，识别失败时拒绝执行。
+- reply_mail 无原生 reply 时会报错并提示改用 send_mail（附上原线程信息）。
+- 子邮箱不唤醒 Agent：检查 ClawMailSubMail*User/Agent 是否成对配置且 ClawMailRealtimeEnabled=true；每封附件上限受 ClawMailSubMailAutoMaxAttachments(8) 约束。
+- WebSocket 重复推送靠 ClawMailSubMailProcessedKeep(500) 的 mailId 幂等去重，误删缓存可能重投。
+- 发件正文中的图片可直放 URL，但 http/file 类资源需放 attachments。
+- manifest 命令与源码别名一致；指定 mailbox=mail1..4 时调用对应子邮箱，否则用默认邮箱。
+
+Tag: VCPClawMail,ClawEmail,邮件,hybridservice,启用态,邮箱,占位符,WebSocket,Agent投递,附件

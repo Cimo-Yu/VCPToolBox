@@ -1,0 +1,43 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——VCPWEWallpaper系列（两个插件合并）（原子切片）
+
+一、插件身份
+- 系列由两个插件组成，须配合使用：
+  * name：VCPWEWallpaper；displayName：Wallpaper Engine 壁纸服务；version：0.1.0；pluginType：service；protocol：direct（挂到主 Express，默认5974端口）；入口=nodejs，entryPoint.script=we-wallpaper-service.js；作者 PiCode（核心逻辑移植自 elysia395/dsh-wallpaper-engine, MIT）
+  * name：VCPWEWallpaperUI；displayName：Wallpaper Engine 壁纸；version：0.1.0；pluginType：renderer；protocol：无 wire 协议；入口=frontend script=plugin.js + plugin.css（注入聊天窗口）；播放内核移植自 VChatDynamicWallpaper(辉宝)
+- 双插件均为分布式节点插件：service 提供库存/媒体数据面，renderer 供选择与播放，UI 端硬依赖 service 且需启用分布式服务器。
+- 现状：两者均为禁用态——manifest 均为 plugin-manifest.json.block，启用前需改回 .json 并重启。
+- capabilities.invocationCommands 均为空：service 虽注册 Express 时序接口但对 AI 不可见，均无命令型接口。
+
+二、核心能力
+- service 端：发现本机 WE 安装（Windows 注册表 HKCU\Software\Valve\Steam → libraryfolders.vdf → 多盘 SteamLibrary 探针），枚举官方默认/我的项目/创意工坊三源库存。
+- 四条路由：GET /vcp-we-wallpaper/inventory（JSON，?refresh=1 绕过 5 分钟 LRU 缓存重扫）、/media/:token（视频流 Range）、/preview/:token、/web/:token/*（web 壁纸目录子树托管并注入 WE API 垫片）。
+- 安全模型：media/preview 用 base64url(绝对路径) 逐文件白名单；web 收敛为逐目录白名单+路径归一化（越界403、lstat 拒目录与符号链接、NUL 截断拦截）；未注册 token 一律 404 不暴露文件系统。
+- 类型边界：Video 与 Web 可动态播放；Scene（私有 scene.pkg 3D）与 Application 无法在浏览器渲染，UI 端退化为自带 preview.jpg 静态铺底。
+- UI 端三种形态自动分派：video(<video> 硬解) / web(<iframe> 隔离渲染) / image(静态兜底)；壁纸库网格选择器（预览图+形态徽章+标题搜索+类型过滤+每页24分页）。
+- 轮播：过滤范围内可动态呈现壁纸定时轮换，右键循环调间隔(1/5/15/30/60分钟)，窗口不可见跳过；web 8 秒白屏超时自动降级并记住不再重试；断点续播；窗口不可见挂起视频/卸载iframe。
+- 与辉宝 VChatDynamicWallpaper 互斥：本插件激活单向抑制辉宝（只改内存态，不动其 localStorage）；registry 暴露 {destroy,pause,resume,openPicker,next,setRotate,state,active,kind} 供 VCPGlass 联动。
+
+三、配置重点
+- service 端无 config.env 依赖（纯基础设施，无需配置即可启动）。
+- web 壁纸前置条件：主程序 main.html 的 CSP 必须放通 `frame-src 'self' http://127.0.0.1:5974 http://localhost:5974`，缺则被浏览器拦下、8 秒后降级静态图（插件 <meta> 只能收紧不能放宽，无插件侧替代方案）。
+- UI 端 serverBase 默认 http://127.0.0.1:5974（localStorage 键 vcpWeWallpaper.settings.v1 可改）；video 仅 preload=metadata + Range 流式读（视频壁纸实测平均76.6MB/最大205.5MB，避免全缓存进内存）。
+- 启用顺序：开启分布式服务器 → 启用 VCPWEWallpaper service → 启用 VCPWEWallpaperUI；均需重启客户端生效；WE 垫片(WE 私有 API)仅在 web 壁纸入口 HTML `<head>` 后注入。
+- 库存不会自动更新：前端首次 fetchInventory 后锁在内存，需点选择器"重新扫描"(?refresh=1) 才重扫新订阅壁纸。
+
+四、调用示例
+- 两插件均无 invocationCommands，service 仅注册 Express 时序接口（对 AI 不可见）；UI 为界面操作非命令型。占位符触发说明：
+<<<[TOOL_REQUEST]>>>
+「始」
+tool：GET /vcp-we-wallpaper/inventory?refresh=1（service 库存重扫，非命令型，占位符）
+「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- inventory 返回 503：本机未找到 WE 安装（确认 Steam 与 WE 已装、非默认路径也被库探针覆盖）。
+- web 壁纸白屏：多半依赖外网 CDN（fonts.googleapis.com / html5shiv.googlecode.com）所致，8 秒超时自动降级 preview，属预期降级非故障。
+- web 壁纸被拦：查 main.html CSP 是否放通 frame-src 5974 端口；音频律动壁纸静止是垫片喂全零频谱的已知限制，接真实频谱需后续增强。
+- UI 端 inventory 请求失败：确认分布式服务器已开启且 VCPWEWallpaper 已启用；HTTP 非 503 时按非 503 分支报错。
+- manifest 与源码一致：两插件为 .block 禁用态；service README 记 entryPoint.type=nodejs、源码 we-wallpaper-service.js export initialize+registerRoutes 与之吻合，无冲突。
+
+Tag: WallpaperEngine,壁纸服务,壁纸消化,渲染插件,服务插件,CSP,禁用态

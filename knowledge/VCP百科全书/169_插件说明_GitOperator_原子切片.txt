@@ -1,0 +1,53 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——GitOperator（原子切片）
+
+一、插件身份
+- name: GitOperator；displayName: Git 仓库管理器；pluginType: synchronous；
+  protocol: stdio（通信 timeout 30000ms）；入口: node GitOperator.js（entryPoint.type=nodejs）。
+- version: 1.1.0；author: Nova & hjhjd；requiresAdmin: false。
+- 现状: 启用态。host manifest/source 位于 D:\vcp\Git\（plugin-manifest.json 非 .block）；
+  本指派目录 VCPToolBox\Plugin\GitOperator\ 仅存 config.env 与 debug.log（运行期数据），无 manifest。
+- 注意：VCP 加载器扫描 VCPToolBox\Plugin，而本插件 manifest/源码位于 D:\vcp\Git\,两者路径不一致,见第五节。
+
+二、核心能力
+- 基于 repos.json（defaultProfile + profiles）驱动多仓库 Profile 管理；Profile 结构支持扁平字段或
+  嵌套 push/pull/credentials 对象，源码 resolveProfile 会做字段归一化。
+- 指令覆盖：查询(Status/Log/Diff/BranchList/RemoteInfo/StashList/TagList)、提交(Add/Commit/Pull/Push/
+  Fetch/BranchCreate/Checkout/Merge/Clone)、上游一键同步(SyncUpstream: fetch→stash→merge/rebase→
+  stash pop→push)、危险操作(ForcePush/ResetHard/BranchDelete/Rebase/CherryPick)、Profile 管理
+  (ProfileList/ProfileAdd/ProfileEdit/ProfileRemove)。
+- 支持串行指令：同时传 command1/command2… 及带数字后缀的参数字段即批量顺序执行，遇错误中断。
+- 凭证注入: Push/ForcePush/SyncUpstream 用 injectCredentials 将 token 注入 pushUrl(user= x-access-token)。
+- 输出脱敏: sanitizeOutput 将 token 中间部分替换为 ****（首4+末4字符保留）。
+- 危险操作经 requireAdmin 6位验证码校验，读取 UserAuth\code.bin 真实验证码比对（非仅存在性检查）。
+
+三、配置重点
+- manifest configSchema: PLUGIN_WORK_PATHS（string，default "../../"）——允许 git 操作的工作路径白名单，逗号分隔。
+- 源码仅消费 PLUGIN_WORK_PATHS；GIT_EXECUTABLE/GIT_TIMEOUT/ENABLE_LOGGING/LOG_LEVEL 在 config.env.example
+  中标注"预留",源码 loadEnvConfig 未读取,当前不生效。
+- 指派目录 config.env（Plugin\GitOperator\）实际值: PLUGIN_WORK_PATHS=D:\vcp\VCPChat,D:\vcp\VCPToolBox;
+  GIT_EXECUTABLE=git; GIT_TIMEOUT=30000; ENABLE_LOGGING=true。
+- repos.json 决定 src/dst: pushRemote(默认origin)/pushBranch(默认main)/pullRemote(默认upstream)/
+  pullBranch(默认main)/mergeStrategy(默认merge)。
+
+四、调用示例
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」GitOperator「末」,
+command:「始」Status「末」,
+profile:「始」VCPToolBox「末」
+<<<[END_TOOL_REQUEST]>>>
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」GitOperator「末」,
+command:「始」SyncUpstream「末」,
+profile:「始」VCPToolBox「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 配置位置冲突（来源为准）：本插件 manifest/源码实际在 D:\vcp\Git\，而 VCP 加载器只扫描
+  VCPToolBox\Plugin，Plugin\GitOperator\ 目录无 manifest → 若此插件未被正常注册，根因为路径/部署不一致，
+  而非配置项。启用部署需令 manifest 落入加载器扫描目录。
+- 源码读取 __dirname/config.env（即 D:\vcp\Git\config.env），该文件不存在，故 PLUGIN_WORK_PATHS 实际
+  回落到默认 "../../"；指派目录 Plugin\GitOperator\config.env 的 D:\vcp\... 白名单不会被源码读取（路径不符）。
+- 工作路径校验失败会报"不在允许的工作路径内"，请核对 localPath 落于白名单内。
+- SyncUpstream 冲突时自动 abort/stash pop 并返回冲突文件列表；stash pop 失败需手动处理 stash。
+Tag: Git,GitOperator,仓库管理,repos,上游同步,凭证注入,串行指令,钩子

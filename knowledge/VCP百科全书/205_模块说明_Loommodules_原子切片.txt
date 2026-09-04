@@ -1,0 +1,74 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 模块说明——Loommodules（原子切片）
+
+一、模块定位
+属于 D:\vcp\VCPChat\ 前端的「网页子应用容器」功能域
+（VCP Loom / Arachne 一期），
+将真实远程网页织入 VChat，
+形成拥有独立身份与持久会话（Cookie/缓存）的子应用（LoomAPP）。
+目录内 3 个独立 HTML 页面各司其职：
+- manager.html：应用注册表管理器窗体；
+- shell.html：已启动 LoomAPP 的浏览器外框窗体；
+- device-menu.html：shell 内弹起的设备授权浮层（HID/USB/串口/蓝牙）。
+均通过 window.loomAPI（preload）与主进程通信，
+应用清单用 schemaVersion=1 的 LoomAPP manifest 表达。
+
+二、核心文件（目录内共 3 个文件）
+- manager.html：LoomAPP 管理器。
+  侧栏审计 app 列表（按名称/ID 搜索、运行状态点），
+  编辑区维护单个 app 的
+  身份（id/name/emoji/startUrl/icon/enabled/exposeDrawer/exposeManager）、
+  窗口尺寸与视口（windowWidth/Height、viewportWidth/Height、resizable/autoResize）、
+  请求模拟（profile: desktop/mobile/iphone/custom、userAgent、附加请求头）、
+  导航（allowPopups、openExternalOriginsInBrowser）与
+  注入修正（inject.css、inject.js）；
+  内置 新建/导入/导出/刷新/启动/清除登录/删除 操作。
+- shell.html：LoomAPP 运行外框。
+  顶栏含 后退/前进/主页/刷新/在系统浏览器打开 导航、
+  URL 编辑、设备中心、分享文本按钮及窗口控制；
+  经 api.shellAction 驱动导航并响应 onShellState 回显状态。
+- device-menu.html：设备中心浮层。
+  切换 HID/USB/serial/bluetooth 协议，枚举并请求授权设备，
+  经 api.shellAction('device-request'/'device-select') 与
+  api.onDeviceCandidates 交互。
+
+三、对外接口与协议
+preload（window.loomAPI）：
+- listApps/getApp/createApp/saveApp/deleteApp/openApp/clearSession
+- openAppFolder/reloadRegistry/importApp/exportApp
+- shellAction(name, payload)、shellReady/onShellState
+- onRegistryChanged、onDeviceCandidates
+- minimizeWindow/maximizeWindow/closeWindow
+- getCurrentTheme/onThemeUpdated
+shell action 串：
+- navigate、back、forward、home、reload、open-external
+- share-text、device-menu、device-request、device-select
+LoomAPP manifest 字段：
+- schemaVersion、id、name、startUrl、icon、emoji
+- window{width,height,min/max,resizable}
+- viewport{width,height,autoResize}
+- request{profile,userAgent,headers}
+- navigation{allowPopups,openExternalOriginsInBrowser}
+- injection{css:'inject.css',js:'inject.js'}
+
+四、与其他模块或后端的联动
+- 与主窗口：
+  openApp 启动独立会话窗口；
+  分享文本（share-text）把当前页面已渲染文本送入 VChat 输入框。
+- 与 Desktopmodules：
+  Loom 注册表同步接入桌面 Dock（initLoomRegistrySync），
+  桌面可暴露 LoomAPP 为 VChat 内部应用。
+- 持久化：app 源码目录、独立 session、注册表重载均由主进程维护，
+  管理器只做读写回显。
+- 主题借用全局 styles/themes.css 的 CSS 变量（light-theme 切换）。
+
+五、备注
+- manifest 的 headers 中 Cookie 与 Host 不允许覆写；
+  登录状态由独立持久化 session 自动保存（clearSession 清除）。
+- profile 决定内置 UA，custom 需填自定义 UA；
+  注入脚本在页面加载完成后执行。
+- 已知限制：
+  一期为「管理器 + 浏览器外壳 + 设备中心」的容器雏形，
+  设备协议授权依赖页面端 Web 权限 API 与主进程桥接。
+
+Tag: Loommodules,VCP Loom,LoomAPP,网页容器,持久会话,shell,设备中心,Manifest

@@ -1,0 +1,40 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——VCPToolBridge（原子切片）
+
+一、插件身份
+- name: VCPToolBridge
+- displayName: VCP 工具桥接器
+- pluginType: hybridservice
+- protocol: direct
+- 入口: entryPoint.script = "index.js"；hasApiRoutes: true
+- 版本: 1.0.0；author: Gugu_Kilo
+- 现状: 启用态（plugin-manifest.json 生效）；功能开关 Bridge_Enabled 默认 false（bridge-config 电源未开）。
+
+二、核心能力
+- 将 VCP 原生工具向外部（如 AIO Hub）导出：元数据同步 + 远程执行。
+- 通过 Monkey Patch 劫持 WebSocketServer.handleDistributedServerMessage，拦截两类消息：
+  · get_vcp_manifests → 筛选可导出插件（非分布式、排除黑名单与关键词），回发 vcp_manifest_response。
+  · execute_vcp_tool → 调 PluginManager.processToolCall 远程执行，回发 vcp_tool_result；异步任务记录 taskId→serverId 映射以便事件回调回传。
+- 订阅 pluginManager 的 vcp_log/vcp_info/plugin_async_callback 事件，把进度与异步结果转发给对应 AIO 客户端。
+- 内置工具命令 GetStatus（查桥接状态）。
+
+三、配置重点（configSchema）
+- Bridge_Enabled: boolean，默认 false —— 是否启用桥接功能。
+- Excluded_Tools: string，默认 "VCPLog,VCPInfo,VCPToolBridge" —— 不导出工具黑名单（调用名逗号分隔）。
+- Excluded_Display_Keywords: string，默认 "[AIO]" —— 不导出显示名关键词（含即排除，防循环）。
+- config.env.example 同构（Bridge_Enabled=false / Excluded_Tools=VCPLog,VCPInfo,VCPToolBridge / Excluded_Display_Keywords="[AIO]"）。
+
+四、调用示例（命令 GetStatus）
+<<<[TOOL_REQUEST]>>>
+maid:「始」你的署名「末」,
+tool_name:「始」VCPToolBridge「末」,
+command:「始」GetStatus「末」
+<<<[END_TOOL_REQUEST]>>>
+（返回 status/hooked/config，用于确认桥接是否装上。）
+
+五、排障提示
+- Bridge_Enabled=false 时事件监听与消息劫持均短路直通，GetStatus 仍可用但不导工具。
+- 需 require('../../Plugin.js') 拿到 PluginManager；若 WebSocketServer.handleDistributedServerMessage 非函数则 Hook 失败（console.error 报警，回退原处理器）。
+- 异步任务不回传：确认 taskId 映射已写入（execute 返回带 taskId 才注册），且 vcp_log/vcp_info/plugin_async_callback 事件被触发。
+
+Tag: VCPToolBridge,工具桥接,WebSocket,AIO Hub,hook,Blend,GetStatus,分布式

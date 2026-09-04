@@ -1,0 +1,48 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——PluginManager（原子切片）
+
+一、插件身份
+- name: PluginManager；displayName: 插件管理器；pluginType: hybridservice；
+  protocol: direct（timeout 60000ms）；入口: PluginManager.js（entryPoint.type=nodejs）。
+- version: 1.0.0；author: VCPToolBox；requiresAdmin: true（每命令都要求6位管理员验证码）。
+- 现状: 启用态——plugin-manifest.json 存在（非 .block）。
+
+二、核心能力
+- VCP 元插件：以 direct 直连注入方式复用核心 PluginManager（dependencies.pluginManager，必要时回退
+  require('../../Plugin.js')），就地操作插件注册表与热重载。
+- 查询：ListPlugins 列出启用/禁用本地工具与云端/分布式工具总数及明细；
+  GetPluginDetail 返回指定插件 manifest/指令/描述/占位符/来源。
+- 变更：EnablePlugin / DisablePlugin 将 plugin-manifest.json(.block) 互换并触发重载；仅限本地
+  synchronous/asynchronous/static 插件,禁用态用 .block 命名表达;受保护核心插件、service/hybridservice/
+  messagePreprocessor、云端/分布式插件不可由此启停。
+- ReloadPlugins 手动热重载并回传当前消息预处理器顺序。
+- 鉴权：_validateAdmin 比对 args.requireAdmin（或 adminCode/authCode）与 context.decryptedAuthCode，
+  缺失/不符即抛错（ADMIN_AUTH_UNAVAILABLE / ADMIN_AUTH_FAILED）。
+
+三、配置重点
+- manifest 无 configSchema 键。源码读取可选 initialConfig.DebugMode（字符串/布尔）开 debug 日志。
+- 所有命令共享参数: requireAdmin（必需,6位验证码）；GetPluginDetail/EnablePlugin/DisablePlugin 另需
+  pluginName；command 固定（亦兼容 action/commandIdentifier 别名）。
+
+四、调用示例
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」PluginManager「末」,
+command:「始」ListPlugins「末」,
+requireAdmin:「始」123456「末」
+<<<[END_TOOL_REQUEST]>>>
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」PluginManager「末」,
+command:「始」GetPluginDetail「末」,
+pluginName:「始」PlaceholderExplorer「末」,
+requireAdmin:「始」123456「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 返回 ADMIN_AUTH_FAILED: 验证码与主服务器配置的解密验证码不一致；ADMIN_AUTH_UNAVAILABLE:
+  主服务器未配置可用的管理员验证码。
+- 无法启用/禁用某插件: 检查其 pluginType — 仅 synchronous/asynchronous/static 本地插件可切换；
+  service/hybridservice/messagePreprocessor 及云端、受保护核心插件被源码与 manifest 明确拒绝(只读)。
+- manifest 与源码一致：manifest 声明 requireAdmin:true 且 capability 命令均需 requireAdmin，
+  源码 processToolCall 开头统一 _validateAdmin，二者吻合，无需提示冲突。
+- 若直连 pluginManager 依赖缺失，源码回退 require('../../Plugin.js')，仍取不到则命令将失败。
+Tag: PluginManager,插件管理,热重载,元插件,管理员鉴权,hybridservice,注册表

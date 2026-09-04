@@ -1,0 +1,52 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——AnySearch（原子切片）
+
+一、插件身份
+- name: AnySearch
+- displayName: AnySearch 实时搜索插件
+- pluginType: synchronous
+- protocol: stdio
+- 入口: node AnySearch.js
+- 版本: 3.0.1
+- compatibility.nodeVersion: >=14.0.0
+- 现状: 启用态（plugin-manifest.json 存在，无 .block）
+
+二、核心能力
+- 联网实时搜索 + 网页正文提取（Markdown）。能力级隐式路由：搜索固定走结构化 REST；目录查询/正文提取/维护同步走 MCP。
+- 命令（invocationCommands 标识 AnySearch）：search、batch_search 走编译+并发+裁剪路径；get_sub_domains、extract 走 MCP。
+- 自由路线编排：query1..5 / sub_domain1..5 / zone1..5 / params1..5 / max_results1..5 每路继承顶层默认，1-5 路单次调用真并发。
+- 子系统能力：query=搜索，queries=批量(≥1 且事件 1-5 条, | 分隔)，url=正文提取（command 可省略）。
+- 垂直领域目录见 manifest invocationCommands 描述（general/finance/academic/legal/health/business/security/code/energy/travel/gaming/resource/social_media/ip/environment/agriculture/film 等）。
+- 输出约束：跨路线按 canonical URL 硬去重、合并来源路线；搜索文本≤20,000 字符；extract 内容≤50,000 字符。
+
+三、配置重点（configSchema / config.env.example）
+- ANYSEARCH_API_KEY: 可选，不配时匿名访问（额度较低）；多 Key 逗号分隔、每次随机选一个；默认空。
+- ANYSEARCH_SEARCH_ENDPOINT: 默认 https://api.anysearch.com/v1/search（搜索/批量走此 REST）。
+- ANYSEARCH_MCP_ENDPOINT: 默认 https://api.anysearch.com/mcp（get_sub_domains/extract/同步走此）。
+- ANYSEARCH_ENDPOINT: 兼容别名，等同 ANYSEARCH_MCP_ENDPOINT。
+- ANYSEARCH_TIMEOUT_MS: 默认 30000，范围 1000-40000（宿主 45000ms，留清理余量）。
+- 目录内 sync.js 为手动维护脚本（node Plugin/AnySearch/sync.js），非插件入口。
+
+四、调用示例
+垂直搜索:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」AnySearch「末」,
+query:「始」Jinja2 2.4.1 已知漏洞与修复建议「末」,
+sub_domain:「始」security.vuln「末」,
+params:「始」type=package,value=PyPI:jinja2@2.4.1「末」,
+max_results:「始」5「末」
+<<<[END_TOOL_REQUEST]>>>
+
+网页正文提取:
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」AnySearch「末」,
+url:「始」https://example.com/article「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 参数合法性：query 有即搜索、queries 即批量、url 即提取；queries 与编号字段不能混用。
+- zone 仅能填 cn 或 intl（非国家代码）；不适用的 params 不要传，用 command=get_sub_domains, domain=域 实时查目录。
+- manifest 与源码一致；参数按 manifest 中 invocationCommands 描述及 README v3.0.1 对齐（自由路线、去重、超时上限）。
+- 错误经 stdout JSON 返回并 exit 0（防止宿主当作崩溃）；非 JSON 响应 token 脱敏，不回显完整 headers/鉴权。
+
+Tag: AnySearch, synchronous, 实时搜索, 垂直搜索, 批量搜索, 正文提取, REST, MCP, 自由路线, 启

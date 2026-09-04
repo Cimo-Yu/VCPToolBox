@@ -1,0 +1,73 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 模块说明——Tavernmodules（原子切片）
+
+一、模块定位
+属于 D:\vcp\VCPChat\ 前端的「高级回复」功能域
+（高级回复 / VCPChatTarven），
+不是独立窗口，而是注入到主聊天渲染端的可复用管理器脚本。
+TavernManager 维护一套「注入规则」
+（系统提示词尾部/用户消息尾部/上下文注入），
+由主聊天流程读取并应用到每次请求。
+渲染端提供两套 UI：
+- 依附在发送按钮旁的浮窗（逐条开关规则）；
+- 规则管理模态窗（增删改查、拖拽排序）。
+触发入口是聊天发送按钮的右键菜单（contextmenu），
+依赖宿主页对 TavernManager/TavernRulesEngine 的引用。
+
+二、核心文件（目录内共 2 个文件）
+- tavern-manager.js：唯一逻辑文件。
+  定义 TavernManager 对象（window.TavernManager），
+  含会话存储装载/保存（store: {version:1, rules:[]}）、
+  浮窗构建与定位、
+  规则开关（防连点并发保存）、
+  管理模态（列表 + 编辑面板 + Sortable.js 长按拖拽排序）、
+  规则的新建/编辑/删除，
+  以及给主聊天流程用的查询接口：
+  getActiveRulesForScope(scope)
+  （过滤 global/agent/group 作用域的启用规则）。
+- tavern.css：全部样式。
+  浮窗（.tavern-popover，z-index 5000）、规则行、Switch、
+  类型/作用域标签（system/user/context，global/agent/group）、
+  管理布局、拖拽 ghost/chosen 样式等。
+
+三、对外接口与协议
+规则模型字段（store.rules[]）：
+- id、name、type（system_suffix / user_suffix / context_inject）
+- scope（global / agent / group）、enabled、content、wrap
+- isBuiltin（官方预置）、source（'user'/'official'）
+- context_inject 额外含 role（user/assistant）与 depth（0=最后一条之后）
+preload（window.chatAPI || window.electronAPI）：
+- tavernGetRules()、tavernSaveRules(store)
+运行期依赖接口：
+- window.TavernRulesEngine（createDefaultRule）
+- window.Sortable（序列排序，缺失时仅告警）
+- window.uiHelperFunctions（showToastNotification / showConfirmDialog）
+包裹协议：
+- 默认注入加 [本信息由VCPChat客户端注入] ... [临时注入结束]；
+  规则 wrap=false 时裸注入。
+
+四、与其他模块或后端的联动
+- 与主聊天渲染端：
+  TavernManager 注入到主窗口，
+  聊天发送流程调用 getActiveRulesForScope
+  获取当前作用域激活规则并应用到请求；
+  本模块是无后端的纯前端规则状态（经 IPC 持久化）。
+- 官方预置规则（isBuiltin）与用户规则共存，
+  官方规则同样可编辑/排序/删除，
+  修改直接保存回官方规则文件。
+- context_inject 按 role 把内容插入到指定深度的消息流中
+  （assistant=AI 侧，user=用户侧）。
+
+五、备注
+- 依赖 Sortable.js（未加载时仅告警、不支持拖拽排序）
+  与 TavernRulesEngine（缺失时用本地兜底生成默认规则）。
+- 保存失败会把开关回滚并 Toast 提示；
+  规则开关修改经 saveStore 整体替换 this.store，
+  回调内必须重查最新 rule 引用，
+  避免闭包持有「游魂对象」导致不持久化。
+- 已知限制：
+  非标准窗口无独立 preload 场景下走
+  window.chatAPI || window.electronAPI，
+  若均未注入则保护性降级为空 rules。
+
+Tag: Tavernmodules,高级回复,注入规则,TavernManager,规则管理,上下文注入,system_suffix,user_suffix

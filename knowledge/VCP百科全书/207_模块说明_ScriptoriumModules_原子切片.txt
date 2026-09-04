@@ -1,0 +1,87 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 模块说明——ScriptoriumModules（原子切片）
+
+一、模块定位
+属于 D:\vcp\VCPChat\ 前端的「AI-native 可编程文档与演示创作」功能域
+（Scriptorium / 共笔文坊），
+是独立 Electron 渲染窗口，
+提供 VDOCX（Markdown 主导的混合连续流文稿）与
+VPPTX（HTML Scene 演示）两类工程的全套创作系统：
+源码保持型渲染编辑、连续流/放映/源码/CSS 四工作面、
+可编程岛、SVG/字体资产、文脉版本与 Agent 协作者端口。
+窗口宿主为 scriptorium.html，
+scriptorium.js 装配并冻结所有 window.ScriptoriumXxx 浏览器模块
+（按依赖顺序加载）。
+
+二、核心文件（目录内 55 个文件，关键者如下）
+宿主/装配：
+- scriptorium.html（script 按依赖序）、scriptorium.js（装配与控制器编排）、scriptorium.css。
+工程模型：
+- vdoc-core.js（基础工程模型）、
+- vdoc-container.js（v2 ZIP 容器与内容寻址 vdoc-resource://media|fonts/<sha256>）、
+- vdoc-hybrid-compiler.js（混合编译器 vdoc-hybrid-compiler/3）。
+编辑/渲染：
+- scriptorium-flow-editor.js（渲染态源码事务、Selection/IME/剪切粘贴）、
+- scriptorium-flow-renderer.js（连续流渲染与局部 patch）、
+- scriptorium-deck-editor.js、scriptorium-deck-renderer.js、
+- scriptorium-pagination.js（运行态快照分页）、
+- scriptorium-render-coordinator.js、scriptorium-dom-selection.js、scriptorium-input-sync.js。
+文档/持久层：
+- scriptorium-document-store.js、scriptorium-session.js、scriptorium-library.js、
+- scriptorium-lineage-store.js（文脉/快照/回溯）、
+- scriptorium-pr-diff.js（双重差异）、scriptorium-edit-history.js。
+Agent/协作：
+- scriptorium-agent-port.js（浏览器侧 Agent 端口 v5，响应 onAgentRequest）、
+- scriptorium-pretext-bridge.js、scriptorium-programmable-content.js（可编程内容审查）。
+样式/SVG/媒体/检索：
+- scriptorium-style-ui.js、scriptorium-formatting.js、scriptorium-svg-assets.js、
+- scriptorium-media.js、scriptorium-network-fonts.js、scriptorium-find.js、scriptorium-navigation.js、
+- scriptorium-export.js / flow/ deck-export.js、
+- vdoc-style-library.js、vdoc-svg-asset-library.js。
+其余：scriptorium-runtime.js、scriptorium-render-primitives.js、scriptorium-rendered-text.js、
+scriptorium-source-editor.js、scriptorium-shell.js、scriptorium-settings.js 等（共 47 个 .js）。
+
+三、对外接口与协议
+preload（window.scriptoriumAPI）：
+- chooseOpen/chooseImport/readPath、readExternalResource
+- resolveFontStylesheet/resolveFontUrl、save/exportRichDocument
+- listDocumentLibrary/listRecent
+- loadStylePacks/saveStylePacks、loadSvgAssetPacks/saveSvgAssetPacks
+- listSystemFonts、loadAgentsList/loadUserAvatar/loadAgentAvatar
+- getCurrentTheme/onThemeUpdated、onOpenPathRequest
+- minimizeWindow/maximizeWindow/closeWindow、windowReady
+- onAgentCheckpointProposed/onAgentRequest/respondAgentRequest
+Agent 协作者命令（插件 ScriptoriumCollaborator，端口 v5）：
+- ListFonts、GetDocumentInfo、GetRenderedText、GetOutline、GetSection
+- GetSource、SearchSource、GetViewportSource、GetVisualContext、GetPrHistory
+- SubmitSourcePr、AddSlide、InsertSlide、DeleteSlide、UpdatePresentationConfig
+- CreateProject、GetStorageInfo
+工作/安全协议：
+- 写操作一律进入 PR（target/replace + startLine + requestId + expectedRevision，
+  双重并发检查）；事务串 {from,to,expected,insert}。
+- 样式包/资产包管理需 maid 署名与幂等 requestId。
+- 安全：scrub HTML/CSS、CDN 本地化（Anime.js/Three.js）、
+  未知公网脚本降级为审计声明、JS 规则 allow/warn/refuse、Electron 隔离。
+
+四、与其他模块或后端的联动
+- 与 VCPDistributedServer：
+  完整编辑态依赖分布式服务的工程容器、PR 审批、
+  Agent 端口（ScriptoriumCollaboratorService.js）；
+  导出 HTML 则脱离编辑服务器自运行。
+- 与 VCPChat 主程序：由「文坊」入口或托盘菜单启动；
+  插件调用可请求打开窗口并等待 Agent 端口就绪。
+- 与主题系统：借用全局 themes.css 变量；
+  Agent 视觉上下文可与桌面截图协同。
+
+五、备注
+- VDOCX/VPPTX 是 v2 ZIP 自有格式，不与 DOCX/PPTX 二进制兼容；
+  Office 导入仅语义/静态转换。
+- 编辑不变量：editableSourceText === 原始源码片段，
+  映射不成立即拒绝编辑；
+  派生 DOM（KaTeX/Mermaid SVG/Canvas）永不写回真源。
+- 已知边界：markdown-hybrid 非纯 Markdown；
+  分页器不等价 Word 排版引擎；
+  VPPTX 尚未具备完整演示软件的图层/参考线能力；
+  脚本审查是纵深防御非形式化沙箱。
+
+Tag: ScriptoriumModules,共笔文坊,VDOCX,VPPTX,可编程文档,源码保持编辑,Agent端口,文脉,PR审批

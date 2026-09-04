@@ -1,0 +1,42 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——VCP Mobile Sync Service（原子切片）
+
+一、插件身份
+- name：VCPMobileSync；displayName：VCP Mobile Sync Service；version：1.4.0
+- pluginType：service（后端服务插件）；protocol：direct（直连主进程，自注册 Express 路由 + WebSocket 服务）
+- 入口：entryPoint.script = index.js（Node 服务）；无 "manifestVersion" 字段；作者 Nova
+- 分布式节点插件：VCPChat 桌面端专属同步服务插件，向 VCPMobile 手机端提供双向增量同步 API。
+- 现状：启用态（plugin-manifest.json 生效；默认按中央 CDS 模式运行）
+- configSchema：MobileSyncToken(string·必填) / MobileSyncPort(integer·默认5975) / MobileSyncUseCentralIndex(boolean·默认开)
+
+二、核心能力
+- 桌面 ↔ 手机端双向增量同步数据面：Agent/Group 配置 DTO、Topic 元数据、消息历史、头像二进制、消息内附件元数据；附件二进制留在各端本机 CAS 不跨端。
+- 三阶段增量协议 V2：Phase1 Reconcile 轻量索引扫描；Phase2 Double-Hash Merkle 差分（configHash+contentHash fast-path 直跳/detailed-path 细比）；Phase3 NDJSON 流式吞吐防 OOM。
+- 双模式后端：中央(CDS)默认，由 VCP-CDS 维护 AppData/databases/chat_data.sqlite3，插件只做配置/附件物理读写；关闭则用独立 sync_state_v2.db（owners/topics/messages/attachment_index/avatar_index/history_source_state 复合身份索引）。
+- 数据防线：Tombstone 拦截防幽灵回流（删除须带完整身份+deletedAt）；进程内路径锁 + 写意图锁防 Watcher 死循环；来源 SHA-256 校验 + 唯一临时文件原子替换写 history.json；stableStringify 防跨语言哈希分裂。
+- WebSocket 握手固定协议 1.4：VERSION_CHECK → VERSION_ACK，未知帧/缺字段/ok:false 终止当前 attempt；日志 3-Tier、logonly 30 份自动轮转。
+
+三、配置重点
+- 在插件目录复制 config.env.example → config.env，配 mobileSyncToken（必填，缺失启动即 throw "MobileSyncToken must be configured"）与 MobileSyncPort（WS 默认 5975）。
+- 依赖 better-sqlite3 原生驱动：需在桌面根目录 `pnpm install better-sqlite3` 后 `pnpm exec electron-rebuild --only better-sqlite3` 对齐 Electron ABI，否则启动 ABI 报错。
+- 中央模式由 CDS 独占历史监听与消息墓碑；显式 MobileSyncUseCentralIndex=false 才启 chokidar 文件监听并落 sync_state_v2.db（仅重启后的新 session 生效）。
+- 放行防火墙 5975(WS)入站；手机端填 HTTP(5974)+WS(5975)+Token；协议精确匹配，桌面/Mobile 成对升级成对回滚。
+- AppData 路径取 projectBasePath(VCPDistributedServer)上一级的 AppData；WS 在索引完成后才开放端口。
+
+四、调用示例
+- manifest 无 invocationCommands，对 AI 不可见；协议以 HTTP+WS 帧驱动。WS 帧：SYNC_MANIFEST_REQUEST(manifestType=owner/avatar)、SYNC_TOPIC_DIFF_REQUEST、SYNC_MESSAGE_DIFF_REQUEST、PHASE_START/PHASE_COMPLETED、VERSION_CHECK、SYNC_ENTITY_DELETE。HTTP 端点（Bearer Token 鉴权）示例：
+<<<[TOOL_REQUEST]>>>
+「始」
+tool：POST /api/mobile-sync/entities/pull（application/json，items≤1000，拉实体 DTO）占位符
+「末」
+<<<[END_TOOL_REQUEST]>>>
+- 其他端点：POST /entities/push（幂等键 X-Idempotency-Key、≤10000 项）、POST /messages/pull、POST /messages/push（NDJSON 流式）、GET /avatars/pull、POST /avatars/push（raw≤20MiB）。统一错误外壳 {code,origin,stage,kind,retry,failedTopicIds}。
+
+五、排障提示
+- 401 Unauthorized：两端 MobileSyncToken 大小写不一致；Bearer 头不匹配即拒。
+- 无法连接：分布式服务器高级功能未开启（须重启客户端拉起后台服务）、防火墙未放行 5975 入站、不在同一局域网。
+- better-sqlite3 ABI 报错：桌面根目录 electron-rebuild --only better-sqlite3 重新编译对齐。
+- owner_metadata PHASE_START 先 reconcile 再 ACK；CDS 畸形"成功"响应在桌面边界转 SYNC_PROTOCOL_INVALID/desktop_cds，属协议护栏非缺陷。
+- manifest 无 manifestVersion 与源码读 plugin-manifest.json.version 用于 VERSION_ACK 一致，无冲突。
+
+Tag: VCPMobileSync,移动同步,双向同步,增量同步,服务插件,NDJSON,Merkle,WebSocket,CDS

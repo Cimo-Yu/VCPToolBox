@@ -1,0 +1,42 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——VChat 动态壁纸（原子切片）
+
+一、插件身份
+- name：VChatDynamicWallpaper；displayName：VChat 动态壁纸；version：1.1.0
+- pluginType：renderer（渲染层前端插件）；protocol：无 wire 协议，走前端注入 + 原生 IPC 目录选择
+- 入口：frontend script=plugin.js + style=plugin.css，经 frontend-plugin-loader 注入主聊天窗口
+- 作者：辉宝（manifest author），README 记作者 辉宝、Nova；与 VCPDesktop 壁纸系统相互独立
+- 分布式节点插件：属 VCPDistributedServer/Plugin 下前端渲染插件，不监听端口。
+- 现状：禁用态——manifest 为 plugin-manifest.json.block，启用前须改回 .json 并重启客户端。
+- capabilities.invocationCommands 为空：对 AI 不可见，无命令型工具接口。
+
+二、核心能力
+- 在聊天窗口代理名右侧提供紧凑胶片控制栏：左键展开/收起，右键选择视频文件夹。
+- 三种播放模式 cycle：顺序(sequence)、随机(random)、单曲循环(loop)；上一、播放/暂停、下一、静音、音量（滑块+滚轮可调）。
+- 支持 mp4/webm/mov/mkv/avi，按名称播放所选文件夹顶层视频；video.loop= playAt 按文件为对象/URL 两种来源处理。
+- 隐藏壁纸(board visible) 时暂停并显示当前主题壁纸，再次显示按记住的进度恢复；播放失败自动跳下一项。
+- 全部状态自动持久化到 localStorage 键 vchatDynamicWallpaper.settings.v1（含 directoryPath、index、currentTime、playing、mode、muted、volume、collapsed、enabled、wallpaperVisible）。
+- "全局设置 → 快捷操作 → 启用动态壁纸" 开关（section-quick-actions 注入全局控制位）。
+
+三、配置重点
+- 依赖 window.chatAPI（或 electronAPI）暴露 selectVchatWallpaperDirectory 原生目录选择接口，缺接口无法选目录/启动报错。
+- 状态默认：muted=true、volume=0.5、mode='sequence'、enabled=true、wallpaperVisible=true；failedIndexes 记录坏项。
+- 对象 URL 用 URL.revokeObjectURL 释放；beforeunload 捕获播放进度；invalid URL 走 createObjectURL。
+- 播放模式切到 loop 才设 video.loop；error 事件累加 failedIndexes，全失败则停切换并打断自动循环。
+- 启用步骤：改回 plugin-manifest.json → 重启客户端，否则 CSS/JS 不加载。
+
+四、调用示例
+- 静态插件，无 invocationCommands，对 AI 不可见；实际为浏览器脚本对原生 IPC selectVchatWallpaperDirectory 的调用。占位符触发说明：
+<<<[TOOL_REQUEST]>>>
+「始」
+tool：前端注入脚本 plugin.js（selectVchatWallpaperDirectory）——自动读取目录，非命令型，占位符
+「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- 无法选择文件夹：确认原生接口 selectVchatWallpaperDirectory 存在，缺则日志报 "原生目录选择接口不可用"。
+- 目录视频全不可播：failedIndexes 满则停止自动切换并 console.error("所选目录…均无法播放")，需更换文件夹。
+- 浏览器拒绝自动播放会降 playing 并警告；需点一次播放或改自动播放策略。
+- manifest 与源码无明显冲突；注意默认 muted=true、volume 0.5（非 0 即视为有声）。
+
+Tag: VChat,动态壁纸,壁纸,视频播放,渲染插件,禁用态,文件夹

@@ -1,0 +1,44 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——VirusTotalAnalyzer（原子切片）
+
+一、插件身份
+- name: VirusTotalAnalyzer ｜ displayName: VirusTotal 查毒分析插件
+- pluginType: asynchronous（协议 stdio，timeout 300000）｜ Python 实现
+- 入口: python vt_analyzer.py（entryPoint.command；无 entryPoint.type 默认按 python）
+- 版本: 1.0.0 ｜ author: Kilo Code
+- 现状: 启用态（plugin-manifest.json 存在）
+- 分布式节点插件：位于 VCPChat\VCPDistributedServer\Plugin\VirusTotalAnalyzer
+
+二、核心能力
+使用 VirusTotal API v3 做文件查毒分析；先按文件 Hash 查报告，无报告则上传扫描；支持批量（command1/filePath1 递增后缀）。3 个命令：
+AnalyzeFile（filePath 必需，forceUpload 默认 false；异步）、GetReport（仅按 hash 查询，同步）、BatchAnalyze（混用 AnalyzeFile/GetReport，commandN/filePathN 后缀）。
+分析完成会经 CALLBACK_BASE_URL/<PLUGIN>/<req_id> 回调上报，并通过 webSocketPush（messageType: vt_analysis_status，targetClientType: VCPLog）推送状态。Python 依赖：requests、python-dotenv；日志写 VTAnalyzer.log。
+
+三、配置重点（configSchema 声明）
+- VT_API_KEY（string，required，必填）— VirusTotal API Key；config.env.example 提供（获取 https://www.virustotal.com/gui/my-apikey）。
+- 运行期还读 CALLBACK_BASE_URL（源码 os.getenv，未在 configSchema 声明）；缺少 VT_API_KEY 时主函数报错退出。
+- vt_analyzer.py 用 load_dotenv(config.env) 加载同目录 config.env。
+
+四、调用示例
+AnalyzeFile 是异步任务；调用成功须在回复中包含占位符原文：{{{{VCP_ASYNC_RESULT::VirusTotalAnalyzer::{req_id}}}}}
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」VirusTotalAnalyzer「末」,
+command:「始」AnalyzeFile「末」,
+filePath:「始」C:/path/to/file.exe「末」
+<<<[END_TOOL_REQUEST]>>>
+批量：
+<<<[TOOL_REQUEST]>>>
+tool_name:「始」VirusTotalAnalyzer「末」,
+command1:「始」GetReport「末」,
+filePath1:「始」file:///C:/1.exe「末」,
+command2:「始」AnalyzeFile「末」,
+filePath2:「始」file:///C:/2.exe「末」
+<<<[END_TOOL_REQUEST]>>>
+
+五、排障提示
+- manifest 的 commandIdentifier 即命令字段（AnalyzeFile/GetReport/BatchAnalyze）；filePath 支持 file:// 与普通路径，仅允许 file/无协议来源。
+- 本地文件缺失返回 code=FILE_NOT_FOUND_LOCALLY（LocalFileNotFoundError）。连续缺少整个批次命令会报 "No valid AnalyzeFile commands found"。
+- 上传轮询：≤32MB 直传 /files；>32MB 走 /files/upload_url 大文件上传；分析轮询 max_retries=20×retry_interval=15s，超时抛 "病毒分析超时"。
+- 异步：后台线程处理完后回落回调；若 CALLBACK_BASE_URL 未配置，回调失败但不影响日志/结果。
+- configSchema 仅声明 VT_API_KEY，CALLBACK_BASE_URL 为源码额外读取项——配置时两者都需确保（否则异步回调/结果回收异常）。
+Tag: 病毒查毒,异步插件,Python,VirusTotal,哈希扫描,webSocketPush,文件分析

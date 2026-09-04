@@ -1,0 +1,43 @@
+[2026-09-02] - DeepSeek
+[VCP百科全书] 插件说明——ContextFoldingV2（原子切片）
+
+一、插件身份
+- name: ContextFoldingV2
+- displayName: 上下文语义折叠V2
+- pluginType: messagePreprocessor
+- protocol: direct
+- 入口: ContextFoldingV2.js（entryPoint.script）
+- 版本: 1.0.0
+- requiresContextBridge: true
+- 现状: 启用态（plugin-manifest.json 存在，无 .block）；行为依赖 ContextBridge + FoldingStore(经 RAGDiaryPlugin) 注入
+
+二、核心能力
+- 基于向量语义相似度，对正文中远距离、低相关性的 AI 输出做摘要折叠，降低 Token 消耗并保留上下文连贯性。
+- 系统提示词放入激活占位符即启：{{ContextFoldingV2}} 或 [[ContextFoldingV2]]；可带阈值覆盖 [[ContextFoldingV2:0.6]]。
+- 仅处理 depth>=minDepth 的 assistant 块；取最新真实 user+AI 加权平均作上下文参考向量，相似度<动态阈值才折叠。
+- 动态阈值 = base + lWeight*L − sWeight*S（L 逻辑深度/高→更激进，S 语义宽度/高→保守），夹在 thresholdRange 内。
+- 摘要经异步队列限流生成（指数退避 1s/3s/9s），三级安全验证（结构/内容/<1000字/拒绝词）后替换；低于阈值时异步触发，暂以 '' 占位不回传原长文本。
+- 支持尾缀 OneRing 来源标记剥离与 VCP_RAG_BLOCK 内激活符豁免；热参数经 rag_params.json 的 ContextFoldingV2 段实时热载。
+
+三、配置重点（configSchema / config.env）
+- FOLDING_SUMMARY_MODEL: configSchema 默认 gemini-2.0-flash-lite；源码缺省回退 gemini-3.1-flash-lite-preview；config.env 现配 glm-5.3-flash（2026-09-01 注：本地网关余额后改用）。
+- FOLDING_MIN_DEPTH: 默认 3（系统强制最低 2，最近 2 条 AI 回复永不折叠）。
+- FOLDING_SIMILARITY_LOW: 默认 0.3；FOLDING_SIMILARITY_HIGH: 默认 0.5（manifest 声明，运行时动态阈值主要读 rag_params.json 热参）。
+- FOLDING_SUMMARY_SYSTEM_PROMPT / FOLDING_SUMMARY_USER_PROMPT: config.env（{CONTENT} 为内容占位）。
+- FOLDING_MAX_RETRIES: config.env 默认 3；FOLDING_SUMMARY_MAX_CONCURRENT: config.env 默认 5。
+- 依赖全局 API_URL / API_Key 做摘要 LLM 调用；摘要长度上限 4000 字符输入截断。
+
+四、调用示例（静态/占位符式触发，非命令）
+ContextFoldingV2 无 invocationCommands，属 messagePreprocessor：在系统提示词写入如下占位符即激活（带阈值覆盖）——
+- [[ContextFoldingV2]] ：按默认基准折叠
+- [[ContextFoldingV2:0.6]] ：本会话阈值基准覆盖为 0.6（越高越激进折叠）
+（等价双花括号 {{ContextFoldingV2}} 亦可，但可能被 messageProcessor 替换，源码注记推荐双方括号最安全）
+
+五、排障提示
+- 无 ContextBridge 或 foldingStore 时折叠不可用（initialize 提前 return，enabled 保持 false），日志提示"ContextBridge 未注入"。
+- 摘要生成依赖全局 API_URL/API_Key；缺失时日志报未配置，折叠写回不成功。摘要模型余额不足（如 402）会导致全部 summary 失败。
+- manifest 与源码差异：configSchema 仅列 4 键；源码还读 FOLDING_SUMMARY_SYSTEM_PROMPT/USER_PROMPT/MAX_RETRIES/MAX_CONCURRENT；模型默认值 manifest(gemini-2.0-flash-lite) ≠ 源码回退(gemini-3.1-flash-lite-preview)，以源码为准。
+- 热参数 rag_params.json 的 ContextFoldingV2 覆盖启动默认（thresholdBase 0.50 / range [0.40,0.60] / lWeight、sWeight 0.05 / contextWeights [0.7,0.3]）。
+- 文本<10 字符或摘要就绪/失败超限的块跳过；pending 态未处理则本次不折叠、等待重试。
+
+Tag: ContextFoldingV2, messagePreprocessor, direct, 上下文折叠, 语义相似度, 摘要, Token优化, ContextBridge, FoldingStore, 启用态

@@ -4,13 +4,17 @@
 这里收纳了 VCP 强大的联网检索、网页爬取及深度研究工具。
 
 ## 1. 语义穿透联网检索 (VSearch)
-首选联网引擎。支持语义级检索范围与多关键词并发搜索，适合获取多角度观点。
+首选联网引擎。简单搜索只需填写完整的 SearchTopic，由搜索 AI 自行理解和扩展意图；不要为简单搜索强行拆分关键词。
 tool_name:「始」VSearch「末」,
-SearchTopic:「始」探讨AI在医疗诊断中的最新应用「末」,
-Keywords:「始」AI medical diagnosis 2024, 深度学习 医疗影像 突破, transformer models in healthcare「末」,
+SearchTopic:「始」OpenAI 最近发布了哪些新模型「末」,
+SearchMode:「始」grounding「末」,  //可选：'grounding' (Gemini-Google搜索-快)、'grok' (Grok推理级搜索-缓慢-支持舆论媒体搜索-注意偏见)、'tavily'、'kimisearch'
 ShowURL:「始」false「末」,
 ink:「始」mark_history「末」 //可选，是否将检索结果写入history.json
 //SearchMode 可选，建议不填：留空时插件会自动选用本机已配置好的后端。确实需要点名时可填 'grounding'(Gemini-Google搜索-快) / 'grok'(Grok推理级搜索-缓慢-支持舆论媒体搜索-注意偏见) / 'tavily'(Tavily外部检索) / 'kimisearch'(Kimi Search外部检索)；点名一个没配置的后端会直接报错。
+
+深度研究需要控制多个检索分支时，才额外提供 Keywords；用逗号或换行分隔：
+SearchTopic:「始」探讨AI在医疗诊断中的最新应用「末」,
+Keywords:「始」AI medical diagnosis 2026, 深度学习医疗影像突破, transformer models in healthcare「末」,
 [===vcp_fold:0.5===]
 
 [===vcp_fold:0.35::desc:UrlFetch 网页抓取 爬取网页正文 读取链接内容 打开这个网址 网页快照 jina转markdown 读取在线文件 读本地文件===]

@@ -304,6 +304,7 @@ Thumbs.db
 rust-vexus-lite/target/
 Plugin/DailyNoteSearcher/src/target/
 Plugin/CodeSearcher/src/target/
+Plugin/PaperReader/paperreader-rs/target/
 
 # ==== 分布式开发 ====
 VCPDistributedServer

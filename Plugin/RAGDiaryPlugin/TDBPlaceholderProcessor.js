@@ -309,7 +309,8 @@ class TDBPlaceholderProcessor {
             topK: fetchK,
             expandDepth: 1,
             minScore: 0.1,
-            hybridAlpha: 0.65,
+            // 混合权重可配（0~1，越大向量占比越高；1.0≈纯向量，口语卡库实测 Hit@1 更高）
+            hybridAlpha: Math.min(1, Math.max(0, parseFloat(process.env.TDB_KNOWLEDGE_HYBRID_ALPHA) || 0.65)),
             expand: useExpand
         });
 

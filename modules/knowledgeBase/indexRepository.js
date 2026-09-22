@@ -292,7 +292,14 @@ class IndexRepository {
         }
 
         const load = async () => {
-            await this.waitForCoordinatorIdle(options);
+            // 索引加载是只读操作，且批处理自身的 applyChunkDelta 也依赖这条加载链。
+            // 若加载等待 JS 批处理结束（isProcessing）而批处理又在等加载，就会循环死锁；
+            // 因此加载的协调器等待必须绕过 JS 处理门，调用方仍可用 options 覆盖。
+            await this.waitForCoordinatorIdle({
+                allowJsProcessing: true,
+                allowJsDeleteProcessing: true,
+                ...options
+            });
             this.recoveryActive = true;
             this.onRecoveryStateChange(true);
             try {

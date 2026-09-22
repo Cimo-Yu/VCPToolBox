@@ -1,7 +1,6 @@
 {
   "manifestVersion": "1.0.0",
   "name": "VSearch",
-  "version": "1.1.0",
   "displayName": "VSearch 语义并发搜索器",
   "description": "一个极简、高效的语义级并发搜索引擎。支持多种搜索后端（Grounding、Grok、Tavily、KimiSearch），针对特定主题和关键词进行深度检索，返回高质量的参考资料。",
   "author": "VCP",
@@ -10,6 +9,7 @@
     "type": "nodejs",
     "command": "node VSearch.js"
   },
+  "version": "1.1.1",
   "communication": {
     "protocol": "stdio",
     "timeout": 300000

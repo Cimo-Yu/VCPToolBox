@@ -61,7 +61,10 @@ const DEBUG = process.env.DebugMode === 'true';
 const USE_CHAT_COMPLETIONS_MODE = process.env.USE_CHAT_COMPLETIONS_MODE === 'true';
 
 // 重试配置
-const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '2', 10);
+// 默认 4 次重试（共 5 次尝试）。重型出图（大尺寸 + quality high）很容易被
+// Cloudflare 的 100s 源站超时切成 524，而那道墙在客户端无法修改，
+// 重试是唯一能扛过去的手段，所以给足次数；可在 config.env 里覆盖。
+const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '4', 10);
 const RETRY_BASE_DELAY_MS = parseInt(process.env.RETRY_BASE_DELAY_MS || '2000', 10);
 
 // 单次 API 请求超时（毫秒）：默认 10 分钟。
@@ -337,19 +340,40 @@ function httpRequest(url, options = {}, body = null) {
 
 /**
  * 带指数退避重试的 HTTP 请求包装器
- * 对 429 (Rate Limit) 和 503 (Service Unavailable) 自动重试
+ * 对网络层错误（超时/连接中断）与可重试状态码（408/425/429/5xx）自动重试。
+ * 上游渠道偶发抖动很常见，重试耗尽的最后一次才把错误抛给调用方。
  * 
  * @param {string} url - 完整请求 URL
  * @param {object} options - 请求选项
  * @param {string|Buffer|null} body - 请求体
  * @returns {Promise<{statusCode: number, headers: object, body: string}>}
  */
-async function httpRequestWithRetry(url, options = {}, body = null) {
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        const response = await httpRequest(url, options, body);
+// 5xx 全部纳入重试：除上游偶发 500/502/503 外，还有 Cloudflare 的 520/522/524/525 等超时类错误
+function isRetryableStatus(statusCode) {
+    return statusCode === 408 || statusCode === 425 || statusCode === 429 || statusCode >= 500;
+}
 
-        // 对可重试的状态码进行指数退避重试
-        if ((response.statusCode === 429 || response.statusCode === 503) && attempt < MAX_RETRIES) {
+async function httpRequestWithRetry(url, options = {}, body = null) {
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        const isLastAttempt = attempt === MAX_RETRIES;
+
+        let response;
+        try {
+            response = await httpRequest(url, options, body);
+        } catch (error) {
+            // 网络超时/连接中断也属于瞬时故障，同样进入退避重试
+            lastError = error;
+            if (isLastAttempt) throw error;
+            const delay = RETRY_BASE_DELAY_MS * Math.pow(3, attempt);
+            debugLog(`Request error (${error.message}), retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+        }
+
+        // 对可重试的状态码进行指数退避重试；最后一次直接返回响应，保留原始错误体供上层报错
+        if (isRetryableStatus(response.statusCode) && !isLastAttempt) {
             const delay = RETRY_BASE_DELAY_MS * Math.pow(3, attempt); // 2s → 6s → 18s
             debugLog(`Received ${response.statusCode}, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
             await new Promise(r => setTimeout(r, delay));
@@ -358,8 +382,9 @@ async function httpRequestWithRetry(url, options = {}, body = null) {
 
         return response;
     }
+
     // 理论上不会到达这里，但以防万一
-    return httpRequest(url, options, body);
+    throw lastError || new Error('HTTP request failed after retries');
 }
 
 /**

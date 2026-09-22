@@ -23,6 +23,22 @@
     "file": "ContactToolBox.txt",
     "description": "该收纳箱收纳了各种通讯、社交、消息推送，话题管理，日程管理，日常小工具相关的工具，用于动态向 Agent 提供说明。"
   },
+  "VCPLocalDeepWikiToolBox": {
+    "file": "LocalDeepWiki.txt",
+    "description": "本地代码知识库与架构透镜（LocalDeepWiki）：查看源码、函数实现、行号切片、代码查阅、代码问答、排错调试、报错分析、超时分析、白皮书母带、架构分析、编译与巡检工具箱，按需动态折叠展开。"
+  },
+  "LocalDeepWikiToolBox": {
+    "file": "LocalDeepWiki.txt",
+    "description": "本地代码知识库与架构透镜（LocalDeepWiki）：查看源码、函数实现、行号切片、代码查阅、代码问答、排错调试、报错分析、超时分析、白皮书母带、架构分析、编译与巡检工具箱，按需动态折叠展开。"
+  },
+  "DeepWikiToolBox": {
+    "file": "LocalDeepWiki.txt",
+    "description": "本地代码知识库与架构透镜（LocalDeepWiki）：查看源码、函数实现、行号切片、代码查阅、代码问答、排错调试、报错分析、超时分析、白皮书母带、架构分析、编译与巡检工具箱，按需动态折叠展开。"
+  },
+  "VCPDeepWikiToolBox": {
+    "file": "LocalDeepWiki.txt",
+    "description": "本地代码知识库与架构透镜（LocalDeepWiki）：查看源码、函数实现、行号切片、代码查阅、代码问答、排错调试、报错分析、超时分析、白皮书母带、架构分析、编译与巡检工具箱，按需动态折叠展开。"
+  },
   "VarDailyNoteGuide": {
     "file": "Dailynote.txt",
     "description": "日记指南：创建、更新、Tag 设计与查询整理（动态折叠展开）"

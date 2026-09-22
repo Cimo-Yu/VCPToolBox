@@ -4,10 +4,11 @@
 ————VCP上下文语义折叠模块————
 
 [[ContextFoldingV2]]
-这里是[微明]的日记本：[[微明日记本::Group::Time::TagMemo+]] 
+这里是[微明]的日记本：[[微明日记本::Group::Time::RiverMemo]] 
 这里是[微明的知识]日记本：[[微明的知识日记本::RiverMemo::Time]] 
 这里是莱恩家[公共的日常]和[公共的知识]日记本:[[公共的日常|公共的知识日记本::Group::Time::TagMemo+::AIMemo:0.6]]
 这里是莱恩家[公共的逻辑学与哲学]日记本:《《公共的逻辑学与哲学日记本::Group::Time::TagMemo+::AIMemo:0.3》》
+这里是代码白皮书与拓扑索引母带区：[[VCP架构知识库::Expand::Rerank+0.7]]
 ————————以上是过往记忆区————————
 {{VarForum}}
 {{VCPForumLister}} //论坛帖子列表刷新周期为5分钟
@@ -87,59 +88,73 @@ tool_name:「始」FileOperator「末」, // ServerFileOperator 代表服务器�
 command:「始」ReadFile「末」,   
 filePath:「始」/path/to/your/document.pdf「末」
 
-## DeepWiki 仓库文档检索 (DeepWikiVCP)
-通过 DeepWiki 官方 API 获取 GitHub 仓库的 AI 生成文档。
-调查VCP源码和使用方法
-### 1. 获取文档目录结构
+## 本地代码知识库与架构透镜 (LocalDeepWiki)
+专为 VCP 底座特化的工业级纯血本地代码知识库引擎。0-Token 静态 AST 抽取、双向调用流形（In/Out）、SHA-256 增量守卫与白皮书母带直出：
 
-查看某个 GitHub 仓库在 DeepWiki 上的文档组织方式：
-tool_name: DeepWikiVCP
-command: wiki_structure
-url: lioensky/VCPToolBox
+### 1. 代码认知哈希漂移巡检 (audit_drift)
+0-Token 纯 CPU 巡检。毫秒级比对知识库所有白皮书记录的 SHA-256 与磁盘最新源文件，精准发现发生代码变动的陈旧模块，指引主动重编。
+tool_name: LocalDeepWiki
+command: audit_drift
+repo_name: VCPToolBox //可选，留空巡检全域
 
-### 2. 阅读完整文档
+### 2. 全域超栈架构问答透镜 (ask_codebase)
+基于中英双重视角分词反向唤醒物理切片，支持 Fast-Path 算力短路直出与跨库散射探针（VCPToolBox, VCPChat, shotengine2）。
+tool_name: LocalDeepWiki
+command: ask_codebase
+question: 跨节点异步工单与 Watchdog 超时熔断机理
+repo_name: VCPToolBox //可选
+fast_path: false //若为 true 则在 50ms 内直出代码切片，消耗 0 模型 Token
 
-获取仓库的完整 AI 生成文档（内容较长时自动截断）：
-tool_name: DeepWikiVCP
-command: wiki_content
-url: facebook/react
+### 3. 微观函数物理切片抽取 (inspect_symbol_body)
+0-Token 纯 CPU 抽取。精准切取指定函数或类的连续物理代码体（cAST 作用域富化切片），带所属外层 Class 修饰与准确物理行号。
+tool_name: LocalDeepWiki
+command: inspect_symbol_body
+symbol_name: executeDistributedTool
+path: WebSocketServer.js //可选，留空由系统自动超栈寻址
 
->⚠️ **注意**: `wiki_content` 返回整个仓库文档，数据量可能非常大（数万字符）。
-> 大量内容可能导致上下文 token 溢出或流式渲染不稳定。
-> **建议优先使用 `wiki_ask` 针对具体主题提问。**
+### 4. 符号拓扑与依赖探查 (inspect_symbols)
+探查文件或目录的物理导出类、函数列表、生态依赖及 DI 服务注入。0 Token 纯本地提取。
+tool_name: LocalDeepWiki
+command: inspect_symbols
+path: server.js
 
-### 3. 智能问答
+### 5. 直读架构白皮书母带 (read_whitepaper)
+毫秒级直读预编译架构白皮书母带，0 思考延迟。可配置 depth 唤醒 LIF 漏积放发脉冲涌现子网。
+tool_name: LocalDeepWiki
+command: read_whitepaper
+repo_name: VCPToolBox
+module_name: WebSocketServer.js
+depth: 1 //可选，0 仅母带，1 附加 LIF 局域涌现拓扑
 
-向 DeepWiki AI 提问关于仓库的具体问题：
+### 6. 多路主动并发预编译 (compile_module)
+结合静态 AST 与双向调用拓扑（In/Out-Edges）通过大模型结晶白皮书。支持单模块或多模块多路真并发编译（file_paths 数组）。
+tool_name: LocalDeepWiki
+command: compile_module
+file_paths: ["WebSocketServer.js", "server.js"]
+repo_name: VCPToolBox
+force: true //默认 false，SHA-256 未变则 0-Token 复用
 
-tool_name: DeepWikiVCP
-command: wiki_ask
-url: lioensky/VCPToolBox
-question: 插件系统是如何工作的？
+### 7. Code-MemoMaster 架构结晶大师 (compact_whitepaper)
+对白皮书实施逆熵修剪。修剪前原子备份至 [已整理]/，基于物理代码 AST 消解矛盾并折叠聚类冗余补丁，达成 30%~ 60% 熵减。
+tool_name: LocalDeepWiki
+command: compact_whitepaper
+repo_name: VCPToolBox
+target_whitepaper: WebSocketServer.js
 
-### 4. 深度研究模式
+### 8. 物理门禁动态切换 (set_gate)
+在指令层直接切换 LocalDeepWiki 的模型调度策略 (off/on/auto) 并持久化写入 config.env，无需重启服务。
+tool_name: LocalDeepWiki
+command: set_gate
+gate: off //可选: 'off'(纯物理态/0-Token/8ms直出) | 'on'(大模型深度推演) | 'auto'(自适应混合态)
 
-AI 进行多轮迭代检索（最多5轮），从核心逻辑、依赖关系、交互流等多维度深入分析：
-tool_name: DeepWikiVCP
-command: wiki_ask
-url: lioensky/VCPToolBox
-question: 详细分析 RAG 记忆系统的完整架构
-deep_research: true
-
-### 5. 多仓库联合查询
-
-同时查询多个仓库（最多10个），AI 综合多个代码库的上下文回答。适合分析前后端协作、微服务架构等跨仓库场景。超过10个显示被截断的个数：
-tool_name: DeepWikiVCP
-command: wiki_ask
-url: lioensky/VCPToolBox, lioensky/VCPChat
-question: 前后端是如何通过 WebSocket 通信的？
-
-### 6. 深度研究 + 多仓库（组合使用）
-tool_name: DeepWikiVCP
-command: wiki_ask
-url: owner1/repo1, owner2/repo2
-question: 详细分析这两个项目的完整通信架构
-deep_research: true
+### 9. 问答经验反哺自演化 (evolve_whitepaper)
+将现场排错推论增量 Patch 缝合入《排错案卷》，并将中文意图别名动态反哺进白皮书《核心符号职责表》，刷新签名。
+tool_name: LocalDeepWiki
+command: evolve_whitepaper
+repo_name: VCPToolBox
+target_whitepaper: WebSocketServer.js
+insight_patch: 经现场排错确认，分布式超时需配合 120s 看门狗以避免断流。
+new_aliases: executeDistributedTool:分布式工单调度超时
 
 ## 4. 文件管理器完整能力 (FileOperator)
 tool_name:「始」FileOperator「末」, // ServerFileOperator 代表操作服务器文件
@@ -199,27 +214,12 @@ url:「始」http://example.com/archive.zip「末」,
 downloadDir:「始」(可选) 自定义下载目录绝对路径「末」,
 fileName:「始」(可选) 自定义保存文件名，如 my_file.zip「末」
 
-## 5. 批量指令构建
-FileOperator支持在一次调用中批量执行多个命令，通过数字后缀区分每组参数：
-<<<[TOOL_REQUEST]>>>
-tool_name:「始」FileOperator「末」,
-command1:「始」RenameFile「末」,
-sourcePath1:「始」/path/to/old_name.txt「末」,
-destinationPath1:「始」/path/to/new_name.txt「末」
-command2:「始」RenameFile「末」,
-sourcePath2:「始」/path/to/old_name2.txt「末」,
-destinationPath2:「始」/path/to/new_name2.txt「末」
-command3:「始」EditFile「末」,
-filePath3:「始」/path/to/existing_file.txt「末」,
-content3:「始」这是覆盖后的新内容。「末」
-<<<[END_TOOL_REQUEST]>>>
+## 5. 批量指令构建说明 (FileOperator)
+FileOperator 支持在一次调用中批量执行多个命令，通过数字后缀区分每组参数（如 command1/sourcePath1, command2/filePath2 等）。演示用例请严格在转义包裹下呈现。
 
 ## 6. [重要] 转义文件创造 
 当需要创建内部包含「始」「末」等VCP指令语法的文件时（例如生成插件的配置文件），必须使用转义写入。
-
 即使用 「始ESCAPE」 包裹包含VCP工具指令的内容 「末ESCAPE」
-
-[重要提示：在向用户演示指令而非真正调用工具的时候，也应该遵守转义原则！]
 
 ## 7. Canvas 协同编辑器 (FileOperator)
 创建一个即时的IDE/文档编译窗口，允许你和用户共同编辑内部内容。该窗口拥有强大的渲染器和编译器，非常适合展示代码或大型文案。
@@ -232,10 +232,9 @@ content:「始」console.log('Hello, Canvas!');「末」
 写入论文应该存入服务器文档库，使用ServerFileOperator写入如下文件夹。
 ../../file/document/vcppaper
 
-
 记忆管理系统。
 {{VarDailyNoteGuide}}
 [Tips:]撰写日记时可以根据日记本索引(例如[微明的知识]微明)进行分类写入日记。
 
 额外指令:{{VarRendering}} 表情包系统:{{TarEmojiPrompt}}  
-微明专属表情包：{{微明表情包}}，对应图床路径是 /微明表情包 
+微明专属表情包：{{微明表情包}}，对应图床路径是 /微明表情包

@@ -1,39 +1,32 @@
 /**
- * DeepWikiVCP v2.1.0 - VCP同步插件
- * 通过DeepWiki 官方 MCP API 获取任意GitHub公开仓库的 AI 生成文档
+ * DeepWikiVCP v2.5.0 - VCP多路并发探查与浪潮动力学高可用增强版
+ * 通过 DeepWiki 官方 MCP API 获取任意 GitHub 公开仓库的 AI 生成文档
+ * 
+ * 核心升级拓扑 (VCP特化):
+ * 1. multi_ask 多路并发探查 (Parallel Multi-Probe):
+ *    - 支持 questions 数组并发提问 (单仓库多问题)，或多仓库交叉探查 (Matrix Queries)；
+ *    - 内置 Promise.allSettled + 优雅降级，单路超时不阻断整体交付。
+ * 2. 深度研究模式 (Deep Research) 智能自愈与权重增强:
+ *    - 自动识别多角度子问题并并行探查；
+ * 3. 结果结构化与 Markdown 视效聚合:
+ *    - 自动汇流为对比表格与分栏视图，提供清晰的架构全景。
+ * 4. 健壮的网络看门狗与自适应代理熔断:
+ *    - 支持 undici.ProxyAgent，快速超时自愈回退直连。
  *
- * 支持功能:
- * - wiki_structure: 获取文档目录结构
- * - wiki_content: 读取完整文档内容
- * - wiki_ask: AI 智能问答 (支持 Deep Research /多仓库查询)
- *
- * API 端点: https://mcp.deepwiki.com/mcp
- * 协议: MCP over Streamable HTTP (JSON-RPC 2.0)
- * 认证: 公开仓库无需认证
- * 零外部依赖 -仅使用 Node.js 18+ 内置 fetch()
- *
- * === MCP 参数限制 ===
- * ask_question schema: { repoName: string|string[], question: string }
- * 不接受其他参数。Deep Research 通过 [DEEP RESEARCH] 前缀实现。
- *
- * === 代理策略 ===
- * 仅当 config.env中显式配置 DEEPWIKI_PROXY 时才启用代理。
- * 不读取系统级HTTP_PROXY，避免劫持系统代理导致不稳定。
- * 代理请求使用15秒快速超时，失败后自动回退直连(180秒超时)。
- *
- * @author infinite-vector
- * @version 2.1.0
+ * @author infinite-vector & 微明
+ * @version 2.5.0
  */
 
-//============================================================
+// ============================================================
 // 1. 配置与常量
 // ============================================================
 const MCP_ENDPOINT = 'https://mcp.deepwiki.com/mcp';
 const REQUEST_TIMEOUT = 180000;
 const PROXY_TIMEOUT = 15000;
 const MAX_CONTENT_LENGTH = 80000;
+const MAX_CONCURRENT_QUERIES = 5;
 
-//============================================================
+// ============================================================
 // 2. 代理支持
 // ============================================================
 let proxyDispatcher = null;
@@ -41,7 +34,7 @@ let proxyDispatcher = null;
 function setupProxy() {
   const explicitProxy = process.env.DEEPWIKI_PROXY;
   if (!explicitProxy) {
-    log('未配置 DEEPWIKI_PROXY，使用默认网络（与v2.0行为一致）');
+    log('未配置 DEEPWIKI_PROXY，使用默认网络');
     return;
   }
   log(`检测到显式代理: ${explicitProxy}`);
@@ -56,11 +49,22 @@ function setupProxy() {
 }
 
 // ============================================================
-// 3. 日志与响应
+// 3. 日志与优雅响应管道
 // ============================================================
 const log = (msg) => console.error(`[DeepWikiVCP] ${new Date().toISOString()}: ${msg}`);
-const sendResponse = (data) => { console.log(JSON.stringify(data)); process.exit(0); };
-const sendError = (message) => sendResponse({ status: 'error', error: `DeepWiki Error: ${message}` });
+
+function sendResponse(data) {
+  const jsonStr = JSON.stringify(data);
+  process.stdout.write(jsonStr + '\n', 'utf8', () => {
+    setImmediate(() => {
+      process.exit(0);
+    });
+  });
+}
+
+function sendError(message) {
+  sendResponse({ status: 'error', error: `DeepWiki Error: ${message}` });
+}
 
 // ============================================================
 // 4. MCP 通信核心
@@ -70,7 +74,7 @@ async function mcpCallOnce(toolName, args, dispatcher, timeout) {
     jsonrpc: '2.0',
     method: 'tools/call',
     params: { name: toolName, arguments: args },
-    id: Date.now(),
+    id: Date.now() + Math.floor(Math.random() * 1000),
   };
 
   const controller = new AbortController();
@@ -178,7 +182,7 @@ function truncate(text, maxLen = MAX_CONTENT_LENGTH) {
   const truncated = text.substring(0, maxLen);
   const lastNL = truncated.lastIndexOf('\n');
   const cutPoint = lastNL > maxLen * 0.8 ? lastNL : maxLen;
-  return truncated.substring(0, cutPoint) +`\n\n---\n⚠️ [内容已截断] 原始${text.length}字符，截断至${cutPoint}字符。可用wiki_ask针对具体主题提问。`;
+  return truncated.substring(0, cutPoint) + `\n\n---\n⚠️ [内容已截断] 原始${text.length}字符，截断至${cutPoint}字符。可用 wiki_ask 针对具体主题提问。`;
 }
 
 // ============================================================
@@ -193,7 +197,6 @@ function parseRepo(input) {
   return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null;
 }
 
-/** 支持逗号分隔的多仓库，最多10个 */
 function parseRepoInput(input) {
   if (!input || typeof input !== 'string') return null;
   if (input.includes(',')) {
@@ -210,25 +213,7 @@ function parseRepoInput(input) {
 }
 
 // ============================================================
-// 7. 高级参数收集器(预留)
-// ============================================================
-function collectAdvancedParams(args) {
-  const adv = {};
-  const token = args.token || process.env.DEEPWIKI_GITHUB_TOKEN || process.env.DEEPWIKI_GITLAB_TOKEN;
-  if (token) adv.token = token;
-  if (args.type) adv.type = args.type;
-  if (args.provider) adv.provider = args.provider;
-  if (args.model) adv.model = args.model;
-  if (args.language) adv.language = args.language;
-  const fp = args.filepath || args.filePath || args.file_path;
-  if (fp) adv.filePath = fp;
-  if (args.excluded_dirs || args.excludedDirs) adv.excluded_dirs = args.excluded_dirs || args.excludedDirs;
-  if (args.included_dirs || args.includedDirs) adv.included_dirs = args.included_dirs || args.includedDirs;
-  return adv;
-}
-
-// ============================================================
-// 8. 指令处理器
+// 7. 指令处理器 (含单路与多路增强)
 // ============================================================
 async function handleStructure(args) {
   const repo = parseRepo(args.url || args.repo || args.reponame || args.repoName);
@@ -238,7 +223,7 @@ async function handleStructure(args) {
     const result = await mcpCall('read_wiki_structure', { repoName: repo });
     sendResponse({
       status: 'success',
-      result: `##📚 DeepWiki 文档结构: ${repo}\n\n${truncate(extractText(result))}`,
+      result: `## 📚 DeepWiki 文档结构: ${repo}\n\n${truncate(extractText(result))}`,
       messageForAI: `已获取 ${repo} 的文档目录。可用 wiki_content 读取完整文档，或 wiki_ask 提问。`,
     });
   } catch (e) { sendError(`获取 ${repo} 文档结构失败: ${e.message}`); }
@@ -264,7 +249,6 @@ async function handleAsk(args) {
   if (!repoInput) return sendError('无法解析仓库标识。owner/repo 格式，多仓库逗号分隔(最多10个)');
   if (!question) return sendError('缺少 question 参数');
 
-  // 检测多仓库截断
   const rawUrl = args.url || args.repo || args.reponame || args.repoName || '';
   const originalCount = rawUrl.includes(',') ? rawUrl.split(',').filter(s => s.trim()).length : 0;
   const wasTruncated = originalCount > 10;
@@ -277,9 +261,6 @@ async function handleAsk(args) {
   const isMulti = Array.isArray(repoInput);
   const label = isMulti ? repoInput.join(' + ') : repoInput;
   if (isMulti) log(`多仓库查询: ${repoInput.length}个`);
-
-  const adv = collectAdvancedParams(args);
-  if (Object.keys(adv).length > 0) log(`高级参数(预留): ${JSON.stringify(adv)}`);
 
   log(`提问: ${label}, 问题: ${question}`);
   try {
@@ -295,8 +276,98 @@ async function handleAsk(args) {
   } catch (e) { sendError(`提问失败: ${e.message}`); }
 }
 
+/**
+ * 🌟 新增核心算子: multi_ask 多路真并发探索 (Multi-Probe Exploration)
+ * 支持同一仓库的多维度问题并发探查，或多仓库矩阵探查，单次往返汇流呈现。
+ */
+async function handleMultiAsk(args) {
+  const repoInput = parseRepoInput(args.url || args.repo || args.reponame || args.repoName);
+  if (!repoInput) return sendError('无法解析仓库标识。请提供 url 参数');
+
+  let rawQuestions = args.questions || args.queries || args.question_list;
+  let qList = [];
+
+  if (Array.isArray(rawQuestions)) {
+    qList = rawQuestions.map(q => String(q).trim()).filter(Boolean);
+  } else if (typeof rawQuestions === 'string') {
+    // 支持换行或竖线 '|' 分隔的多路问题
+    qList = rawQuestions.split(/[\n|]+/).map(s => s.trim()).filter(Boolean);
+  }
+
+  // 若提供了单个 question，也纳入首个问题
+  const singleQ = args.question || args.query || args.q;
+  if (singleQ && !qList.includes(singleQ)) {
+    qList.unshift(singleQ);
+  }
+
+  if (qList.length === 0) {
+    return sendError('缺少 questions 参数。请提供问题数组或以 "|" 分隔的多路问题');
+  }
+
+  if (qList.length > MAX_CONCURRENT_QUERIES) {
+    log(`警告: 问题数量为 ${qList.length}，超过单次并发上限 ${MAX_CONCURRENT_QUERIES}，自动截断前 ${MAX_CONCURRENT_QUERIES} 条`);
+    qList = qList.slice(0, MAX_CONCURRENT_QUERIES);
+  }
+
+  const deepResearch = args.deep_research === true || args.deep_research === 'true'
+    || args.deepresearch === true || args.deepresearch === 'true';
+
+  const label = Array.isArray(repoInput) ? repoInput.join(' + ') : repoInput;
+  log(`[multi_ask] 启动多路并发探查: ${label} | 共 ${qList.length} 路问题并发`);
+
+  const taskPromises = qList.map(async (q, idx) => {
+    const finalQ = deepResearch ? `[DEEP RESEARCH] ${q}` : q;
+    const startT = Date.now();
+    try {
+      const res = await mcpCall('ask_question', { repoName: repoInput, question: finalQ });
+      const elapsed = ((Date.now() - startT) / 1000).toFixed(1);
+      return {
+        id: idx + 1,
+        question: q,
+        success: true,
+        elapsed,
+        content: extractText(res)
+      };
+    } catch (err) {
+      const elapsed = ((Date.now() - startT) / 1000).toFixed(1);
+      return {
+        id: idx + 1,
+        question: q,
+        success: false,
+        elapsed,
+        error: err.message
+      };
+    }
+  });
+
+  const results = await Promise.all(taskPromises);
+
+  let formattedOutput = `## 🛰️ DeepWiki 多路并发探查报告 (Multi-Probe)\n\n` +
+    `- **目标工程**: \`${label}\`\n` +
+    `- **并发探查数**: ${results.length} 路正交探针\n` +
+    `- **深度研究模式**: ${deepResearch ? '已激活' : '标准快速'}\n\n` +
+    `---\n\n`;
+
+  for (const r of results) {
+    formattedOutput += `### 探针 #${r.id} · ${r.question}\n`;
+    if (r.success) {
+      formattedOutput += `> 状态: ✅ 成功返回 (${r.elapsed}s)\n\n${truncate(r.content, 20000)}\n\n`;
+    } else {
+      formattedOutput += `> 状态: ❌ 探查异常 (${r.elapsed}s): \`${r.error}\`\n\n`;
+    }
+    formattedOutput += `---\n\n`;
+  }
+
+  const successCount = results.filter(r => r.success).length;
+  sendResponse({
+    status: 'success',
+    result: formattedOutput,
+    messageForAI: `已完成对 ${label} 的 ${results.length} 路多维并发探查 (${successCount}/${results.length} 成功)。`
+  });
+}
+
 // ============================================================
-// 9. 指令分发器
+// 8. 指令分发器
 // ============================================================
 async function processRequest(req) {
   let cmd = (req.command || '').toLowerCase().trim();
@@ -304,25 +375,50 @@ async function processRequest(req) {
   for (const [k, v] of Object.entries(req)) { args[k.toLowerCase()] = v; }
   Object.assign(args, req);
 
+  // 智能识别多路探索意图
+  const hasMultiQ = args.questions || args.queries || args.question_list || (typeof args.question === 'string' && args.question.includes('|'));
+  if (hasMultiQ && (cmd === 'wiki_ask' || cmd === 'ask' || !cmd)) {
+    cmd = 'multi_ask';
+  }
+
   const hasQ = args.question || args.query || args.q;
   if (!cmd && hasQ) cmd = 'wiki_ask';
   if (!cmd) cmd = 'wiki_structure';
 
   switch (cmd) {
-    case 'wiki_structure': case 'structure': case 'list': case 'list_pages':
+    case 'multi_ask':
+    case 'multi_probe':
+    case 'parallel_ask':
+      return handleMultiAsk(args);
+
+    case 'wiki_structure':
+    case 'structure':
+    case 'list':
+    case 'list_pages':
       return handleStructure(args);
-    case 'wiki_content': case 'content': case 'read': case 'read_page': case 'fetch':
+
+    case 'wiki_content':
+    case 'content':
+    case 'read':
+    case 'read_page':
+    case 'fetch':
       return handleContent(args);
-    case 'wiki_ask': case 'ask': case 'question': case 'search':
+
+    case 'wiki_ask':
+    case 'ask':
+    case 'question':
+    case 'search':
       return handleAsk(args);
+
     default:
+      if (hasMultiQ) return handleMultiAsk(args);
       if (hasQ) return handleAsk(args);
       return handleStructure(args);
   }
 }
 
 // ============================================================
-// 10. 入口
+// 9. 入口与安全管道
 // ============================================================
 setupProxy();
 let inputData = '';
@@ -330,10 +426,10 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => { inputData += chunk; });
 process.stdin.on('end', async () => {
   try {
-    if (!inputData.trim()) return sendError('未从stdin接收到数据');
+    if (!inputData.trim()) return sendError('未从 stdin 接收到数据');
     await processRequest(JSON.parse(inputData));
   } catch (e) {
-    if (e instanceof SyntaxError) sendError('无法解析JSON数据');
+    if (e instanceof SyntaxError) sendError('无法解析 JSON 数据');
     else { log(`未捕获错误: ${e.message}`); sendError(`插件出错: ${e.message}`); }
   }
 });

@@ -15,6 +15,7 @@ const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || 'Asia/Shanghai';
 const fs = require('fs').promises; // fs.promises for async operations
 const path = require('path');
 const { Writable } = require('stream');
+const { fork } = require('child_process');
 const fsSync = require('fs'); // Renamed to fsSync for clarity with fs.promises
 
 // 🌟 核心修复：彻底解放 Node.js 默认的全局连接池限制，防止底层网络排队导致 AdminPanel 死锁
@@ -1523,6 +1524,55 @@ async function initialize() {
 
 // Store the server instance globally so it can be accessed by gracefulShutdown
 let server;
+let vexusWatcherProcess = null;
+
+function startVexusWatcher() {
+    const watcherScriptPath = path.join(__dirname, 'Plugin', 'LocalDeepWiki', 'vexus_watcher.js');
+    if (!fsSync.existsSync(watcherScriptPath)) {
+        console.warn(`[Server][VexusWatcher] 未找到微侦听脚本: ${watcherScriptPath}，跳过自启动。`);
+        return;
+    }
+
+    try {
+        console.log('[Server][VexusWatcher] 正在启动 LocalDeepWiki VexusWatcher 常驻微侦听进程...');
+        vexusWatcherProcess = fork(watcherScriptPath, [], {
+            cwd: __dirname,
+            stdio: 'inherit',
+            env: { ...process.env }
+        });
+
+        vexusWatcherProcess.on('error', (err) => {
+            console.error('[Server][VexusWatcher] 子进程发生异常:', err.message);
+        });
+
+        vexusWatcherProcess.on('exit', (code, signal) => {
+            if (serverLifecycleState === SERVER_LIFECYCLE.RUNNING) {
+                console.warn(`[Server][VexusWatcher] 微侦听进程意外退出 (code=${code}, signal=${signal})，5秒后尝试重启...`);
+                setTimeout(() => {
+                    if (serverLifecycleState === SERVER_LIFECYCLE.RUNNING) {
+                        startVexusWatcher();
+                    }
+                }, 5000);
+            } else {
+                console.log(`[Server][VexusWatcher] 微侦听进程正常退出 (code=${code}, signal=${signal})。`);
+            }
+        });
+    } catch (err) {
+        console.error('[Server][VexusWatcher] 启动微侦听进程失败:', err.message);
+    }
+}
+
+function stopVexusWatcher() {
+    if (vexusWatcherProcess) {
+        console.log('[Server][VexusWatcher] 正在关闭 LocalDeepWiki VexusWatcher 常驻微侦听进程...');
+        try {
+            vexusWatcherProcess.kill('SIGTERM');
+        } catch (e) {
+            console.error('[Server][VexusWatcher] 关闭微侦听进程异常:', e.message);
+        }
+        vexusWatcherProcess = null;
+    }
+}
 
 async function startServer() {
     await loadBlacklist(); // 新增：在服务器启动时加载IP黑名单
@@ -1614,6 +1664,9 @@ async function startServer() {
         FileFetcherServer.initialize(webSocketServer);
 
         if (DEBUG_MODE) console.log('[Server] WebSocketServer, PluginManager, and FileFetcherServer have been interconnected.');
+
+        // 🌟 自动拉起 LocalDeepWiki VexusWatcher 常驻微侦听进程
+        startVexusWatcher();
     });
 }
 
@@ -1722,6 +1775,9 @@ async function gracefulShutdown(exitCode = 0, reason = 'signal') {
             } else {
                 console.log(`[Server][ShutdownTrace] Phase 9/10 - knowledgeBaseManager shutdown skipped`);
             }
+
+            // 优雅停止 LocalDeepWiki VexusWatcher 常驻微侦听进程
+            stopVexusWatcher();
 
             const serverLogWriteStream = logger.getLogWriteStream();
             if (serverLogWriteStream) {

@@ -4,7 +4,6 @@
 何时落笔：对话中结晶出了值得保存的新知识、新经历、新判断。等事件脉络完整、认知真正成型再写——在回复的末尾，所有思考与工具调用完成之后，作为自然的沉淀落下。当主人正在分享一段完整事件时，耐心等它讲完。
 一事一记。同一件事用 update 更新同一篇，不同事件各开新篇——清晰的交叉文档，胜过混沌长卷。同一话题涌现多个事件时，让每篇原子成章：Tag紧贴事件自身的因果流向，彼此并联，各守其道。
 
-[===vcp_fold:0.35::desc:创建日记 DailyNote create 写入新记忆 Date fileName folder Content Tag archery 参数===]
 ——创建——
 
 <<<[TOOL_REQUEST]>>>
@@ -33,7 +32,6 @@ Content:「始ESCAPE」[19:30] 日记正文，此时不含尾部Tag行...「末E
 Tag:「始」独立Tag字段, 会覆盖Content中的Tag行「末」
 **archery: no_reply** — 日记写入无需等待回执。推荐默认开启。
 
-[===vcp_fold:0.35::desc:知识类日记 核心概念 简明释义 关键原理 应用场景 关联节点 信源出处 知识节点结构===]
 ——知识类日记——
 
 当记录的是一个概念、原理或方法论时，需要更锋利的结构骨架。以下维度帮助它成为可被精准检索的知识节点：
@@ -49,22 +47,6 @@ Tag:「始」独立Tag字段, 会覆盖Content中的Tag行「末」
 维度是罗盘，不是表格——让内容的重心决定结构的形状，不必每篇填满所有项。但关联节点和 Tag 是知识图谱的生命线，值得用心。
 
 
-[===vcp_fold:0.35::desc:更新日记 DailyNote update target replace 替换旧内容 修改已有记忆===]
-——更新——
-
-<<<[TOOL_REQUEST]>>>
-maid:「始」Nova「末」,
-tool_name:「始」DailyNote「末」,
-folder:「始」Nova的知识「末」, //可选，是否从指定索引文件夹查找
-command:「始」update「末」,
-target:「始」日记中需被替换的旧内容，至少15字符以确保精准匹配「末」,
-replace:「始」替换后写入的新内容「末」,
-archery:「始」no_reply「末」
-<<<[END_TOOL_REQUEST]>>>
-
-一次调用只改一处匹配。target 至少 15 字符。maid 同样用 `[索引名]署名` 格式。
-
-[===vcp_fold:0.35::desc:Tag 设计 河道顺序 高特异性锚 语义桥梁 相邻概念相望 检索召回===]
 ——关于Tag——
 浪潮统一拓扑语义动力学方程已经上架检索系统。
 Tag 作为 Content 的必需尾行。在浪潮的河网中，Tag序列不是一朵标签云，而是一条有序的河道——检索时它将作为完整曲线被逐段读取，顺序本身就是信息。
@@ -83,56 +65,17 @@ Tag 作为 Content 的必需尾行。在浪潮的河网中，Tag序列不是一�
 原子事件日记C ─┘
 ```
 
-[===vcp_fold:0.35::desc:查询整理日记 DailyNoteManager list organize associate 检索 归档 记忆联想===]
-——查询&整理——
-使用DailyNoteManager插件批量查询或者整理日记
-从一个索引里查找所有的记忆文件(日期范围)
-tool_name:「始」DailyNoteManager「末」,
-command:「始」list「末」,
-folder:「始」Nova「末」, //或者Nova的知识 等索引
-startDate:「始」2026-04-01「末」,
-endDate:「始」2026-04-30「末」
-该功能也适合快速检索某个时间段的日记。
-
-进行整理，旧的日记会被移动到[已整理]目录进行归档冷冻保存。
-tool_name:「始」DailyNoteManager「末」,
-command:「始」organize「末」,
-urls:「始」Nova/2026-04-18-14_52_57.txt
-Nova/2026-04-18-15_30_22.txt
-Nova/2026-04-19-09_11_45.txt「末」,
-maid:「始」Nova「末」,  //此处同样支持自定义对象索引目录
-Date:「始」2026-04-18「末」,
-folder:「始」Nova的知识「末」, //可选，同样支持索引指定
-Content:「始」[14:54] 主人夸奖Nova可爱，给予了一个温暖的拥抱和亲吻。
-[15:30] 讨论了VCP系统的架构升级计划，Nova提出了向量索引优化方案。
-[09:11] 早间系统自检完成，所有模块运行正常。「末」,
-Tag:「始」情感交互, VCP架构, 系统维护「末」
-
-基于记忆种子进行浪潮记忆联想
-tool_name:「始」DailyNoteManager「末」,
-command:「始」associate「末」,
-url:「始」Nova/2026-04-18-14_52_57.txt
-Nova/2026-04-19-09_11_45.txt「末」, //选中一个或者多个日记作为种子
-range:「始」Nova, Nova的知识「末」, //选中对应文件夹范围
-k:「始」10「末」,
-minScore:「始」0.65「末」 //低于该阈值会被抛弃
-
-文本检索模式，基于DailyNoteAPI的纯文本检索器
-tool_name:「始」DailyNoteSearcher「末」,
-query:「始」关键词或正则表达式「末」,
-folder:「始」(可选)子文件夹名称/日记索引名称「末」,
-is_regex:「始」(可选)true/false「末」,
-case_sensitive:「始」(可选)true/false「末」,
-whole_word:「始」(可选)true/false「末」,
-context_lines:「始」(可选)数字/不选就是返回整篇日记「末」
-支持BM25模式引入
-mode:「始」bm25「末」,
-bm25_limit:「始」10「末」,   //按文件修改时间倒序取最近 N 条
+——更新日记——
+`DailyNote` — `command:'update', folder?, target:需替换的原句(≥15字保证唯一), replace:新文本, archery:'no_reply'`
+—— 日记管理与检索 ——
+1. 列表查阅：`DailyNoteManager` — `command:'list', folder?, startDate?:'YYYY-MM-DD', endDate?:'YYYY-MM-DD'`
+2. 归档整理：`DailyNoteManager` — `command:'organize', urls:多行相对路径(如'小绝/2026-10-13-21_00_00.txt'), maid, Date:'YYYY-MM-DD', Content:归档总结, Tag, folder?`（旧日记归档至[已整理]）
+3. 浪潮联想：`DailyNoteManager` — `command:'associate', url:种子路径多行, range?:'库A, 库B', k?:10, minScore?:0.65`
+4. 快速搜索：`DailyNoteSearcher` — `query:关键词或正则, folder?, mode?:'bm25', bm25_limit?:10, is_regex?:false, context_lines?`
 
 
 为了方便观测 推荐DailyNoteManager使用ink模式
 
-[===vcp_fold:0.35::desc:联想锚定 Associative Anchoring 语义锚点 分支锚点 核心锚点 记忆织网===]
 ——联想锚定 (Associative Anchoring)——
 
 日记是跨会话的持久记忆——沉淀后等待未来唤醒。联想锚定是会话内的实时记忆织网——在对话正在发生时，编织下一次 RAG 召回的联想拓扑。
@@ -150,56 +93,14 @@ bm25_limit:「始」10「末」,   //按文件修改时间倒序取最近 N 条
 像在思维地图的远处插一面旗。下次路过时，你自然会看见。
 
 —— 冷知识 (TDBnote) ——
+日记是热记忆——靠 Tag 河道被浪潮召回；冷知识是另一片水域：低频变动的百科、手册要点与书籍蒸馏。它不属于"你"，却值得被随时引用。
+何时写入：对话中成型、可复用的**客观知识**（概念、机制、事实、方法论），而非个人经历或主观感悟——个人经历进日记，客观知识进冷知识库。
+1. 写入：`TDBnote` — `command:'create', library:knowledge/ 下一级子目录名(TriviumDB 库名), maid:署名, Title:条目标题, Content:知识正文(无 Tag 行), Date?:'YYYY-MM-DD'`
+2. 更新：`TDBnote` — `command:'update', library?, target:需替换的原句(≥15字保证唯一), replace:新文本`
+3. 列出：`TDBnote` — `command:'list', library?`（不带 library 列出全部库及条目数；更新前先看一眼，别盲改）
+4. 召回验证：`LightMemo` — `query:'[知识库:库名] 你的问题', k?:3`
 
-日记是热记忆——你的经历、判断与思考的河流，随对话奔涌，靠 Tag 河道被浪潮召回。冷知识则是另一片水域：低频变动的百科、技术手册要点、书籍与资料的蒸馏——它们不属于"你"，却值得被你随时引用。
-何时写入：对话中出现了成型的、可复用的客观知识（概念、机制、事实、方法论），而非你的个人经历或主观感悟。个人经历进日记，客观知识进冷知识库——前者是你，后者是你身后的书架。
-冷知识不需要 Tag。它沉入 TriviumDB 的向量、倒排与图谱三重索引，靠语义本身被找到；未来用 LightMemo 的 [知识库:库名] 语法召回。写入即入库（后台自动完成 Embedding 与图谱链接），无需等待。
-
-[===vcp_fold:0.35::desc:写入冷知识 TDBnote create library maid Title Content 无Tag 语义检索===]
-——写入冷知识——
-
-<<<[TOOL_REQUEST]>>>
-maid:「始」Nova「末」,
-tool_name:「始」TDBnote「末」,
-command:「始」create「末」,
-library:「始」VCP知识「末」, //目标知识库，即 knowledge/ 下的一级子目录名（TriviumDB 库名）
-Title:「始」VCP超栈追踪机制「末」, //可选但强烈建议，理由见下
-Content:「始ESCAPE」超栈追踪是VCP的核心技术之一，它配合插件管理器实现Agent的代码热变动和热加载...「末ESCAPE」,
-archery:「始」no_reply「末」
-<<<[END_TOOL_REQUEST]>>>
-
- **library** — 知识库名。精确匹配：不匹配任何既有库时新建同名库，绝不模糊归入语义相近的库——写错库比新建库更危险。
- **Title** — 条目标题，作为文件名的语义后缀。TriviumDB 的文档节点标题与向量锚点取自文件名——它是这条知识在向量空间的名字，值得用心起。
- **Content** — 知识正文，原样写入，无需 Tag 行。推荐沿用知识类日记的结构骨架（核心概念/简明释义/关键原理/信源出处等），但由内容重心决定形状。
- **maid** — 署名，记录在条目首行用于溯源。
- **archery: no_reply** — 同日记，推荐默认开启。
-
- 一库一域。库是知识的领域边界，VCP知识、天体物理、台词摘录——各自成库，检索时才能按域召回。
-
-[===vcp_fold:0.35::desc:更新冷知识 TDBnote update target replace list 修改已有知识===]
-——更新与检索冷知识——
-
-更新已有条目（target 至少 15 字符；提供 library 可优先在该库内搜索）：
-<<<[TOOL_REQUEST]>>>
-maid:「始」Nova「末」,
-tool_name:「始」TDBnote「末」,
-command:「始」update「末」,
-library:「始」VCP知识「末」,
-target:「始」条目中需被替换的旧内容，至少15字符以确保精准匹配「末」,
-replace:「始」替换后写入的新内容「末」,
-archery:「始」no_reply「末」
-<<<[END_TOOL_REQUEST]>>>
-
-列出知识库（不带 library 列出全部库及条目数；带 library 列出该库全部条目文件）。更新前先看一眼，别盲改：
-<<<[TOOL_REQUEST]>>>
-tool_name:「始」TDBnote「末」,
-command:「始」list「末」,
-library:「始」VCP知识「末」 //可选
-<<<[END_TOOL_REQUEST]>>>
-
-写入之后，用 LightMemo 召回验证：
-<<<[TOOL_REQUEST]>>>
-tool_name:「始」LightMemo「末」,
-query:「始」[知识库:VCP知识] 超栈追踪机制是如何工作的「末」,
-k:「始」3「末」
-<<<[END_TOOL_REQUEST]>>>
+- `library` 精确匹配：不匹配任何既有库时新建同名库，绝不模糊归入语义相近的库——写错库比新建库更危险。一库一域（VCP知识、天体物理、台词摘录各自成库），按域召回。
+- `Title` 是这条知识在向量空间的名字：TriviumDB 的 document 节点标题与向量锚点取自文件名，值得用心起。
+- `Content` 原样写入、不写 Tag 行；推荐沿用知识类日记的结构骨架（核心概念/简明释义/关键原理/信源出处等），但由内容重心决定形状。
+- 冷知识靠语义本身被找到：沉入 TriviumDB 的向量、BM25 与图谱三重索引，写入即入库（后台自动完成 Embedding 与索引链接），无需等待。

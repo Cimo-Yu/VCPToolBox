@@ -17,15 +17,6 @@ content:「始ESCAPE」这是一个优先正则保护字段，内部可以输入
 - `river?: 'text'|'full'|'last:N'`：注入上下文对话数组（text去图片，full全量，last:N截断最近N条）。
 - `tool_password?: string`：敏感指令管理员6位密码。
 
-[===vcp_fold:0.35::desc:定时任务查询 TimedTaskQuery 执行进度 历史结果 取消任务 timely_contact 定时调用===]
-查询一个 timely_contact 调用工具的执行进度或者执行历史结果。
-<<<[TOOL_REQUEST]>>>
-maid:「始」Nova「末」,
-tool_name:「始」TimedTaskQuery「末」,
-task_id:「始」task-1779106560000-650e398d「末」,
-action:「始」cancel「末」 // (可选),输入该字段代表取消一个未来调用的任务以避免其被执行。
-<<<[END_TOOL_REQUEST]>>>
-
 —— 系统元查询工具 ——
 - 定时任务查询：`TimedTaskQuery` — `task_id, action?:'cancel'` (查进度或取消任务)
 - 工具调用审计：`ToolCallRecordQuery` — `id?, maid?, targetTool?, from?:ISO8601, to?:ISO8601, search?`

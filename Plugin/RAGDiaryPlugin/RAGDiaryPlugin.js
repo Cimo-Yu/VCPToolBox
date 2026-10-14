@@ -4892,6 +4892,17 @@ class RAGDiaryPlugin {
             return documents.slice(0, originalK);
         }
 
+        // 🛡️ 防御：RerankUrl 可能是非空但不可解析的占位符/畸形值（如模板残留的 "your url"）。
+        // 下方 new URL() 抛出的 TypeError 位于 try 块之外，会直接冒泡中断整个日记检索。
+        // 这里提前解析并校验，非法则优雅跳过 Rerank，返回既有检索顺序。
+        let rerankUrl;
+        try {
+            rerankUrl = new URL('v1/rerank', this.rerankConfig.url).toString();
+        } catch {
+            console.warn(`[RAGDiaryPlugin] Rerank URL "${this.rerankConfig.url}" 不是有效的绝对 URL，跳过 Rerank。`);
+            return documents.slice(0, originalK);
+        }
+
         // ✅ 新增：断路器模式防止循环调用
         const circuitBreakerKey = `rerank_${Date.now()}`;
         if (!this.rerankCircuitBreaker) {
@@ -4924,7 +4935,7 @@ class RAGDiaryPlugin {
             console.log(`[RAGDiaryPlugin] Query truncated to ${queryTokens} tokens`);
         }
 
-        const rerankUrl = new URL('v1/rerank', this.rerankConfig.url).toString();
+        // rerankUrl 已在函数入口处解析并校验（非法 URL 已在守卫处提前返回）。
         const headers = {
             'Authorization': `Bearer ${this.rerankConfig.apiKey}`,
             'Content-Type': 'application/json',

@@ -445,7 +445,26 @@ class LightMemoPlugin {
         // --- 第二阶段：向量精排 ---
         let queryVector = await this.getSingleEmbedding(actualQuery);
         if (!queryVector) {
-            throw new Error("查询内容向量化失败。");
+            // 🛡️ 向量服务瞬态不可用（上游 503 / 渠道抖动）时优雅降级，避免整个回忆功能硬崩。
+            // 依次尝试：① 退化为纯 BM25 关键词召回；② 无 BM25 候选时返回可读提示。
+            console.warn('[LightMemo] 查询内容向量化失败，尝试降级处理。');
+            const bm25Fallback = topByKeyword
+                .filter(c => (Number(c.bm25Score) || 0) > 0)
+                .sort((a, b) => (b.bm25Score || 0) - (a.bm25Score || 0))
+                .slice(0, normalizedK)
+                .map(c => ({
+                    ...c,
+                    vectorScore: 0,
+                    hybridScore: c.bm25Score,
+                    tagBoostInfo: null,
+                    degraded: 'bm25_only'
+                }));
+            if (bm25Fallback.length > 0) {
+                console.warn(`[LightMemo] 已降级为纯 BM25 关键词召回（${bm25Fallback.length} 条）。`);
+                return this.formatResults(bm25Fallback, query);
+            }
+            console.error('[LightMemo] 查询内容向量化失败，且无 BM25 候选可降级。');
+            return `关于"${query}"，向量检索服务暂时不可用（查询内容向量化失败），请稍后重试。`;
         }
         // 保留原始查询坐标；TagMemo 增强后 queryVector 会被替换，四层影子读出需要同时观察 q 与 q'。
         const originalQueryVector = queryVector instanceof Float32Array
@@ -1774,6 +1793,17 @@ class LightMemoPlugin {
             return documents.slice(0, originalK);
         }
 
+        // 🛡️ 防御：RerankUrl 可能是非空但不可解析的占位符/畸形值（如模板残留的 "your url"）。
+        // 下方 new URL() 抛出的 TypeError 位于 try 块之外，会直接冒泡中断整个记忆检索。
+        // 这里提前解析并校验，非法则优雅跳过 Rerank，返回既有检索顺序。
+        let rerankUrl;
+        try {
+            rerankUrl = new URL('v1/rerank', this.rerankConfig.url).toString();
+        } catch {
+            console.warn(`[LightMemo] Rerank URL "${this.rerankConfig.url}" 不是有效的绝对 URL，跳过 Rerank。`);
+            return documents.slice(0, originalK);
+        }
+
         // Rerank API 要求 query/documents 均为非空字符串；undefined 数组项会被
         // JSON.stringify 转成 null，部分服务会以 “input cannot be null” 拒绝整批。
         const normalizedQuery = String(query ?? '').trim();
@@ -1800,7 +1830,7 @@ class LightMemoPlugin {
 
         console.log(`[LightMemo] Starting rerank for ${validDocuments.length} documents.`);
 
-        const rerankUrl = new URL('v1/rerank', this.rerankConfig.url).toString();
+        // rerankUrl 已在函数入口处解析并校验（非法 URL 已在守卫处提前返回）。
         const headers = {
             'Authorization': `Bearer ${this.rerankConfig.apiKey}`,
             'Content-Type': 'application/json',

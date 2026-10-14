@@ -13,6 +13,33 @@ const EMBEDDING_AUDIT_LOG_ENABLED = String(process.env.EMBEDDING_AUDIT_LOG_ENABL
 const EMBEDDING_AUDIT_LOG_DIR = path.join(__dirname, 'DebugLog');
 const EMBEDDING_AUDIT_LOG_FILE = path.join(EMBEDDING_AUDIT_LOG_DIR, 'embeddinglog');
 
+// 🌟 瞬态错误重试配置：应对上游网关间歇性 503 / 429 / 网络抖动。
+// 历史行为是单模型零重试——一次瞬态失败即整批永久失败，把向量服务放大成完全不可用。
+function _readIntEnv(name, fallback, min) {
+    const parsed = parseInt(process.env[name], 10);
+    const value = Number.isFinite(parsed) ? parsed : fallback;
+    return min === undefined ? value : Math.max(min, value);
+}
+
+const EMBEDDING_MAX_RETRIES = _readIntEnv('EMBEDDING_MAX_RETRIES', 3, 0);
+const EMBEDDING_RETRY_BASE_DELAY = _readIntEnv('EMBEDDING_RETRY_BASE_DELAY', 800, 50);
+const EMBEDDING_RETRY_MAX_DELAY = _readIntEnv('EMBEDDING_RETRY_MAX_DELAY', 8000, EMBEDDING_RETRY_BASE_DELAY);
+
+/** 判断 HTTP 状态码是否属于可重试的瞬态错误。 */
+function _isTransientStatus(status) {
+    return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
+
+/** 判断一次 embedding 失败是否值得重试：带状态码者按码判定，其余视为网络层抖动。 */
+function _isRetriableError(error) {
+    if (!error) return false;
+    const match = /API Error (\d{3})/.exec(error.message || '');
+    if (match) {
+        return _isTransientStatus(parseInt(match[1], 10));
+    }
+    return true;
+}
+
 /**
  * 将成功向量化的原文写入独立审计日志。
  * 日志写入失败不会影响正常的向量化流程，也不会进入服务器日志系统。
@@ -73,104 +100,127 @@ function _getEmbeddingModelCandidates(config = {}) {
 /**
  * 内部函数：发送单个批次
  */
-async function _sendBatch(batchTexts, config, batchNumber) {
+/**
+ * 单次批次请求：发起一次 embedding API 调用并解析响应。
+ * 重试与备援模型调度由 _sendBatch 负责，本函数只做「一次尝试」。
+ */
+async function _attemptBatch(batchTexts, config, model, batchNumber) {
     const { default: fetch } = await import('node-fetch');
-    const modelCandidates = _getEmbeddingModelCandidates(config);
-    const baseDelay = 1000;
+    const requestUrl = `${config.apiUrl}/v1/embeddings`;
+    const requestBody = { model, input: batchTexts };
 
-    for (let attempt = 1; attempt <= modelCandidates.length; attempt++) {
-        const model = modelCandidates[attempt - 1];
-        try {
-            const requestUrl = `${config.apiUrl}/v1/embeddings`;
-            const requestBody = { model, input: batchTexts };
-            
-            // 动态读取并强制传递维度，剥离对大模型默认维度的依赖
-            const dim = parseInt(process.env.VECTORDB_DIMENSION, 10);
-            if (!isNaN(dim)) {
-                requestBody.dimensions = dim;
-            }
-            
-            const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` };
-
-            const response = await fetch(requestUrl, {
-                method: 'POST',
-                headers: requestHeaders,
-                body: JSON.stringify(requestBody)
-            });
-
-            const responseBodyText = await response.text();
-
-            if (!response.ok) {
-                if (response.status === 429) {
-                    const waitTime = Math.min(5000 * attempt, 15000);
-                    console.warn(`[Embedding] Batch ${batchNumber} model "${model}" rate limited (429). Switching fallback in ${waitTime / 1000}s...`);
-                    await new Promise(r => setTimeout(r, waitTime));
-                    continue;
-                }
-                throw new Error(`API Error ${response.status}: ${responseBodyText.substring(0, 500)}`);
-            }
-
-            let data;
-            try {
-                data = JSON.parse(responseBodyText);
-            } catch (parseError) {
-                console.error(`[Embedding] JSON Parse Error for Batch ${batchNumber}:`);
-                console.error(`Response (first 500 chars): ${responseBodyText.substring(0, 500)}`);
-                throw new Error(`Failed to parse API response as JSON: ${parseError.message}`);
-            }
-
-            // 增强的响应结构验证和详细错误信息
-            if (!data) {
-                throw new Error(`API returned empty/null response`);
-            }
-
-            // 检查是否是错误响应
-            if (data.error) {
-                const errorMsg = data.error.message || JSON.stringify(data.error);
-                const errorCode = data.error.code || response.status;
-                console.error(`[Embedding] API Error for Batch ${batchNumber}:`);
-                console.error(`  Error Code: ${errorCode}`);
-                console.error(`  Error Message: ${errorMsg}`);
-                console.error(`  Hint: Check if embedding model "${model}" is available on your API server`);
-                throw new Error(`API Error ${errorCode}: ${errorMsg}`);
-            }
-
-            if (!data.data) {
-                console.error(`[Embedding] Missing 'data' field in response for Batch ${batchNumber}`);
-                console.error(`Response keys: ${Object.keys(data).join(', ')}`);
-                console.error(`Response preview: ${JSON.stringify(data).substring(0, 500)}`);
-                throw new Error(`Invalid API response structure: missing 'data' field`);
-            }
-
-            if (!Array.isArray(data.data)) {
-                console.error(`[Embedding] 'data' field is not an array for Batch ${batchNumber}`);
-                console.error(`data type: ${typeof data.data}`);
-                console.error(`data value: ${JSON.stringify(data.data).substring(0, 200)}`);
-                throw new Error(`Invalid API response structure: 'data' is not an array`);
-            }
-
-            if (data.data.length === 0) {
-                console.warn(`[Embedding] Warning: Batch ${batchNumber} returned empty embeddings array`);
-            }
-
-            const sortedData = data.data.sort((a, b) => a.index - b.index);
-            const successfullyVectorizedTexts = sortedData
-                .filter(item => item && item.embedding && Number.isInteger(item.index) && item.index >= 0 && item.index < batchTexts.length)
-                .map(item => batchTexts[item.index]);
-
-            await _writeEmbeddingAuditLog(successfullyVectorizedTexts);
-
-            // 简单的 Log，证明并发正在跑
-            // console.log(`[Embedding] ✅ Batch ${batchNumber} completed (${batchTexts.length} items) via ${model}.`);
-
-            return sortedData.map(item => item.embedding);
-
-        } catch (e) {
-            console.warn(`[Embedding] Batch ${batchNumber}, Model "${model}" failed (${attempt}/${modelCandidates.length}): ${e.message}`);
-            if (attempt === modelCandidates.length) throw e;
-            await new Promise(r => setTimeout(r, baseDelay * attempt));
-        }
+    // 动态读取并强制传递维度，剥离对大模型默认维度的依赖
+    const dim = parseInt(process.env.VECTORDB_DIMENSION, 10);
+    if (!isNaN(dim)) {
+        requestBody.dimensions = dim;
     }
+
+    const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` };
+
+    const response = await fetch(requestUrl, {
+        method: 'POST',
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody)
+    });
+
+    const responseBodyText = await response.text();
+
+    if (!response.ok) {
+        throw new Error(`API Error ${response.status}: ${responseBodyText.substring(0, 500)}`);
+    }
+
+    let data;
+    try {
+        data = JSON.parse(responseBodyText);
+    } catch (parseError) {
+        console.error(`[Embedding] JSON Parse Error for Batch ${batchNumber}:`);
+        console.error(`Response (first 500 chars): ${responseBodyText.substring(0, 500)}`);
+        throw new Error(`Failed to parse API response as JSON: ${parseError.message}`);
+    }
+
+    // 增强的响应结构验证和详细错误信息
+    if (!data) {
+        throw new Error(`API returned empty/null response`);
+    }
+
+    // 检查是否是错误响应
+    if (data.error) {
+        const errorMsg = data.error.message || JSON.stringify(data.error);
+        const errorCode = data.error.code || response.status;
+        console.error(`[Embedding] API Error for Batch ${batchNumber}:`);
+        console.error(`  Error Code: ${errorCode}`);
+        console.error(`  Error Message: ${errorMsg}`);
+        console.error(`  Hint: Check if embedding model "${model}" is available on your API server`);
+        throw new Error(`API Error ${errorCode}: ${errorMsg}`);
+    }
+
+    if (!data.data) {
+        console.error(`[Embedding] Missing 'data' field in response for Batch ${batchNumber}`);
+        console.error(`Response keys: ${Object.keys(data).join(', ')}`);
+        console.error(`Response preview: ${JSON.stringify(data).substring(0, 500)}`);
+        throw new Error(`Invalid API response structure: missing 'data' field`);
+    }
+
+    if (!Array.isArray(data.data)) {
+        console.error(`[Embedding] 'data' field is not an array for Batch ${batchNumber}`);
+        console.error(`data type: ${typeof data.data}`);
+        console.error(`data value: ${JSON.stringify(data.data).substring(0, 200)}`);
+        throw new Error(`Invalid API response structure: 'data' is not an array`);
+    }
+
+    if (data.data.length === 0) {
+        console.warn(`[Embedding] Warning: Batch ${batchNumber} returned empty embeddings array`);
+    }
+
+    const sortedData = data.data.sort((a, b) => a.index - b.index);
+    const successfullyVectorizedTexts = sortedData
+        .filter(item => item && item.embedding && Number.isInteger(item.index) && item.index >= 0 && item.index < batchTexts.length)
+        .map(item => batchTexts[item.index]);
+
+    await _writeEmbeddingAuditLog(successfullyVectorizedTexts);
+
+    return sortedData.map(item => item.embedding);
+}
+
+/**
+ * 内部函数：发送单个批次（带瞬态错误重试与备援模型降级）。
+ *
+ * 相比历史实现的关键改进：每个模型不再只尝试一次。上游网关的 503/渠道抖动
+ * 属于瞬态错误，同模型指数退避重试即可救回；硬错误（非瞬态 4xx）才切换到下一个备援模型。
+ */
+async function _sendBatch(batchTexts, config, batchNumber) {
+    const modelCandidates = _getEmbeddingModelCandidates(config);
+    const totalRounds = Math.max(1, EMBEDDING_MAX_RETRIES + 1);
+    let lastError = null;
+
+    for (let round = 0; round < totalRounds; round++) {
+        let sawRetriable = false;
+
+        for (const model of modelCandidates) {
+            try {
+                return await _attemptBatch(batchTexts, config, model, batchNumber);
+            } catch (e) {
+                lastError = e;
+
+                if (_isRetriableError(e)) {
+                    sawRetriable = true;
+                    const delay = Math.min(EMBEDDING_RETRY_BASE_DELAY * Math.pow(2, round), EMBEDDING_RETRY_MAX_DELAY);
+                    console.warn(
+                        `[Embedding] Batch ${batchNumber}, Model "${model}" transient failure ` +
+                        `(round ${round + 1}/${totalRounds}): ${e.message} — retry in ${delay}ms`
+                    );
+                    await new Promise(r => setTimeout(r, delay));
+                } else {
+                    console.warn(`[Embedding] Batch ${batchNumber}, Model "${model}" hard failure (not retriable): ${e.message}`);
+                }
+            }
+        }
+
+        // 整轮都没有出现可重试错误，说明都是硬错误，继续重试没有意义。
+        if (!sawRetriable) break;
+    }
+
+    throw lastError || new Error(`Batch ${batchNumber}: all embedding attempts exhausted.`);
 }
 
 /**

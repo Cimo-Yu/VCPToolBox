@@ -121,4 +121,5 @@
 渲染：{{VarMediaRenderer}}
 文件：{{VCPFileToolBox}}
 工具：{{VarToolList}}
+JEV语义工具：{{VarJEVTool}}
 系统：{{TarSysPrompt}} {{VarSystemInfo}}

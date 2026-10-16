@@ -333,5 +333,14 @@ Plugin/CodeSearcher/backup_*/
 Plugin/GPTImageGen/image/
 Plugin/PlaceholderExplorer/generated/
 Plugin/PaperReader/workspace-rs/
+Plugin/PaperReader/workspace-rs-*/
+Plugin/PaperReader/workspace-rs-*.pdf
+Plugin/PaperReader/paperreader-rs/crates/paperreader-api/workspace-rs/
+Plugin/FlashDeepSearch/log/
+image/forum/
+tdb-canon/
+tmp_recall_test/
+tmp_*.js
+sync-upstream-*.sh
 rust-vexus-lite/*.node.bak-*
 extensions/memory-river/data/

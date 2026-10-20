@@ -208,17 +208,30 @@ test('tag consistency checks refresh threshold only after successful commit', as
 
 test('Memo unavailability degrades to scoped KNN but unrelated errors remain visible', async () => {
     const kb = require('../KnowledgeBaseManager');
-    const execute = Object.getPrototypeOf(kb).executeNativeRiverQuery;
+    const prototype = Object.getPrototypeOf(kb);
+    const execute = prototype.executeNativeRiverQuery;
     for (const stage of ['prepare', 'joint']) {
+        let released = 0;
         const owner = {
             config: { dimension: 2, nativeRiverQueryEnabled: true },
+            releaseMemoObservation: prototype.releaseMemoObservation,
+            tagIndex: {
+                releaseMemoObservation(handle) {
+                    assert.equal(handle, 'audit-observation');
+                    released++;
+                    return true;
+                }
+            },
             async _getOrLoadDiaryIndex() {},
             async getFileIdsByDiaries() { return [1, 2]; },
             async prepareUnifiedMemoObservation() {
                 if (stage === 'prepare') {
                     throw Object.assign(new Error('stale'), { code: 'MEMO_ARTIFACT_UNAVAILABLE' });
                 }
-                return { artifact: { artifactSig: 'old' } };
+                return {
+                    artifact: { artifactSig: 'old' },
+                    observationHandle: 'audit-observation'
+                };
             },
             riverMemoEngine: { async rerank() {
                 throw new Error('KNOWLEDGE_STORE_DERIVED_DEPENDENCY_CONFLICT');
@@ -236,6 +249,7 @@ test('Memo unavailability degrades to scoped KNN but unrelated errors remain vis
         });
         assert.equal(result.diagnostics.degraded, true);
         assert.equal(result.results[0].retrievalEngine, 'knn');
+        assert.equal(released, stage === 'joint' ? 1 : 0);
         owner.prepareUnifiedMemoObservation = async () => { throw new Error('database corrupt'); };
         await assert.rejects(execute.call(owner, { vector: [1, 0] }, {
             diaryNames: ['test']

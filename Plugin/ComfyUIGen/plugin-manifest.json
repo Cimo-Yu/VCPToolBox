@@ -134,15 +134,15 @@
     "schemaVersion": 1,
     "enabled": true,
     "category": "媒体娱乐",
-    "jevDescPrompt": "通过本地或远程 ComfyUI 运行自定义节点工作流，生成高质量二次元与写实插画。",
-    "jevPrompt": "用户要求使用 ComfyUI 生图时选择 ComfyUIGenerateImage。支持在 [] 中指定工作流模板名（如 [工作流:AnimaEZGen]）或 LoRA 权重；未指明工作流时沿用默认配置。",
-    "agentPrompt": "当需要调用 ComfyUI 运行高级生图工作流时，使用 {媒体娱乐} 中的 `ComfyUIGen`，提示词放入【主要内容】，工作流或负面词放入 []（如 [工作流:AnimaEZGen]、[负面:blurry]）：\nJEV:「始」请使用 {媒体娱乐} 中的 `ComfyUIGen`，生成插画【1girl, silver hair, blue eyes, cinematic anime】[工作流:AnimaEZGen]。「末」",
+    "jevDescPrompt": "通过本地或远程 ComfyUI 运行自定义节点工作流（含 Qwen Image 2.1 文生图、单图编辑与双图联合合成），生成高质量插画与写实图像。",
+    "jevPrompt": "用户要求使用 ComfyUI 生图或改图时选择 ComfyUIGenerateImage。支持在 [] 中指定工作流模板名（如 [工作流:qwen21gen]、[工作流:qwen21edit]、[工作流:qwen21edit2in1]、[工作流:AnimaEZGen]）、参考图 URL 及采样参数；未指明工作流时沿用默认配置。",
+    "agentPrompt": "当需要调用 ComfyUI 运行高级生图或 Qwen Image 2.1 编辑工作流时，使用 {媒体娱乐} 中的 `ComfyUIGen`，提示词放入【主要内容】，工作流、参考图或参数放入 []（如 [工作流:qwen21gen]、[工作流:qwen21edit]、[工作流:qwen21edit2in1]、[http://.../a.png]）：\nJEV:「始」请使用 {媒体娱乐} 中的 `ComfyUIGen`，生成插画【商业二次元展会海报，兔娘女仆】[工作流:qwen21gen]。「末」",
     "defaultCommand": "ComfyUIGenerateImage",
     "commands": [
       {
         "commandIdentifier": "ComfyUIGenerateImage",
-        "description": "调用 ComfyUI 工作流生成高质量图像",
-        "aliases": ["ComfyUI生图", "运行工作流", "工作流生图", "Comfy生图"],
+        "description": "调用 ComfyUI 工作流生成或编辑高质量图像",
+        "aliases": ["ComfyUI生图", "运行工作流", "工作流生图", "Comfy生图", "Qwen改图", "双图合成"],
         "injectCommand": false,
         "parameters": {
           "prompt": {
@@ -150,7 +150,7 @@
             "required": true,
             "source": "primary",
             "maxLength": 1500,
-            "description": "详细正面提示词或英文标签"
+            "description": "详细正面提示词、自然语言排版描述或编辑指令"
           },
           "workflow": {
             "type": "text",
@@ -158,10 +158,22 @@
             "prefixes": ["工作流", "模板", "workflow"],
             "maxLength": 60
           },
+          "image": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["图1", "原图", "参考图", "image", "image_1"],
+            "maxLength": 1000
+          },
+          "image_2": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["图2", "场景图", "副图", "image_2"],
+            "maxLength": 1000
+          },
           "negative_prompt": {
             "type": "text",
             "source": "constraints",
-            "prefixes": ["负面", "排除"],
+            "prefixes": ["负面", "排除", "negative"],
             "maxLength": 500
           },
           "lora_name": {
@@ -169,6 +181,36 @@
             "source": "constraints",
             "prefixes": ["lora", "LoRA", "模型"],
             "maxLength": 100
+          },
+          "width": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["宽", "宽度", "width"],
+            "maxLength": 16
+          },
+          "height": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["高", "高度", "height"],
+            "maxLength": 16
+          },
+          "steps": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["步数", "steps"],
+            "maxLength": 16
+          },
+          "cfg": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["cfg", "CFG"],
+            "maxLength": 16
+          },
+          "resolution": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["分辨率", "resolution"],
+            "maxLength": 16
           }
         }
       }

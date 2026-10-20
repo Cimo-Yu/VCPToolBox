@@ -1110,15 +1110,26 @@ class JevToolCallExp {
             }
             args[name] = value;
         };
+        let urlIndex = 0;
         for (const [name, param] of textParams) {
             if (param.source === 'primary') {
                 const textVal = parsed.primary.length > 0 ? parsed.primary.join('\n') : (parsed.imageUrls[0] || '');
                 assignText(name, param, textVal);
             } else if (param.source === 'url') {
-                const urlVal = parsed.imageUrls[0] || (IMAGE_URL_RE.test(parsed.primary[0] || '') ? parsed.primary[0] : '');
+                let urlVal = parsed.imageUrls[urlIndex] || '';
+                if (!urlVal && urlIndex === 0 && IMAGE_URL_RE.test(parsed.primary[0] || '')) {
+                    urlVal = parsed.primary[0];
+                }
+                urlIndex += 1;
                 assignText(name, param, urlVal);
             } else if (param.prefixes.length > 0) {
-                assignText(name, param, this._takePrefixedConstraint(constraints, param.prefixes, consumed));
+                let constraintVal = this._takePrefixedConstraint(constraints, param.prefixes, consumed);
+                if (!constraintVal && (name === 'image' || name === 'image_1') && parsed.imageUrls[0]) {
+                    constraintVal = parsed.imageUrls[0];
+                } else if (!constraintVal && name === 'image_2' && parsed.imageUrls[1]) {
+                    constraintVal = parsed.imageUrls[1];
+                }
+                assignText(name, param, constraintVal);
             }
         }
         const freeText = textParams.find(([, param]) => param.source === 'constraints' && param.prefixes.length === 0);

@@ -634,23 +634,34 @@ class RAGDiaryPlugin {
         const ghostTags = [];
         if (!tags || tags.length === 0) return ghostTags;
 
-        const db = this.vectorDBManager?.db;
-        const checkStmt = db ? db.prepare('SELECT vector FROM tags WHERE name = ?') : null;
-        const dim = this.vectorDBManager?.config?.dimension || 3072;
+        const getTagVector = typeof this.vectorDBManager?.getTagVectorByName === 'function'
+            ? this.vectorDBManager.getTagVectorByName.bind(this.vectorDBManager)
+            : null;
 
         const tagsToEmbed = [];
         const tagResults = new Array(tags.length).fill(null);
 
-        // 1. 先查数据库（看是否是已有正规军）
-        tags.forEach((tagName, index) => {
-            if (checkStmt) {
-                try {
-                    const row = checkStmt.get(tagName);
-                    if (row && row.vector) {
-                        tagResults[index] = new Float32Array(row.vector.buffer, row.vector.byteOffset, dim);
+        // 1. 通过 Rust 高层接口读取已有 Tag 向量。
+        if (getTagVector) {
+            const nativeVectors = await Promise.all(
+                tags.map(async (tagName) => {
+                    try {
+                        return await getTagVector(tagName);
+                    } catch (_) {
+                        return null;
                     }
-                } catch (e) { /* ignore */ }
-            }
+                })
+            );
+            nativeVectors.forEach((vector, index) => {
+                if (vector) {
+                    tagResults[index] = vector instanceof Float32Array
+                        ? vector
+                        : new Float32Array(vector);
+                }
+            });
+        }
+
+        tags.forEach((tagName, index) => {
             if (!tagResults[index]) {
                 tagsToEmbed.push({ name: tagName, index });
             }
@@ -1369,6 +1380,15 @@ class RAGDiaryPlugin {
 
     // processMessages 是 messagePreprocessor 的标准接口
     async processMessages(messages, pluginConfig) {
+        const run = () => this._processMessagesWithMemoScope(messages, pluginConfig);
+        return typeof this.vectorDBManager?.withMemoObservationScope === 'function'
+            ? this.vectorDBManager.withMemoObservationScope(run)
+            : run();
+    }
+
+    async _processMessagesWithMemoScope(messages, pluginConfig) {
+        const ownedMemoObservations = new Set();
+        let systemMessageTasks = [];
         try {
             // 📝 纯文本快速路径：
             // 当虚拟 system 消息仅包含 {{xx日记本}} / {{xx日记本::LastN}} / {{xx日记本::BM25}} 直接引入占位符时，
@@ -1614,17 +1634,24 @@ class RAGDiaryPlugin {
             );
             const globalProcessedDiaries = new Set(); // 在最外层维护一个 Set
             const requestCache = this._createRequestCache(); // 🌟 单轮请求级缓存：chunks/time/fullDoc/diaryScore/tagBoost
+            requestCache.ownedMemoObservations = ownedMemoObservations;
             if (this.riverThinkingConfig?.enabled && targetSystemMessageIndices.some(index =>
                 /\[\[VCP元思考[^\]]*\]\]/.test(this._extractTextFromContent(messages[index].content))
             )) {
+                const ready = [false, true].map(() => {
+                    let resolve;
+                    const promise = new Promise(done => { resolve = done; });
+                    return { promise, resolve };
+                });
                 requestCache.riverThinking = {
                     config: this.riverThinkingConfig,
                     observations: [],
-                    deferred: []
+                    deferred: [],
+                    ready
                 };
             }
             // 🌟 优化：并发处理所有目标 system 消息，显著提升多日记本场景下的 Rerank 速度
-            await Promise.all(targetSystemMessageIndices.map(async (index) => {
+            systemMessageTasks = targetSystemMessageIndices.map(async (index) => {
                 console.log(`[RAGDiaryPlugin] Processing system message at index: ${index}`);
                 const systemMessage = newMessages[index];
 
@@ -1655,17 +1682,22 @@ class RAGDiaryPlugin {
                     systemMessage.content,
                     () => processedContent
                 );
-            }));
-
-            // 所有日记门控和检索结束后再执行元思考，不等待自身造成死锁。
-            // 观测只保留在本请求；禁止单例 lastObservation 串会话。
+            });
+            // 元思考只等待同类查询的感应就绪，而非 RiverMemo 读出完成。
+            // 独立快照只含日记任务，禁止元思考等待自身造成死锁。
+            let deferredTasks = [];
             if (requestCache.riverThinking) {
-                const deferredResults = await Promise.all(
-                    requestCache.riverThinking.deferred.map(async task => ({
-                        token: task.token,
-                        result: await task.run()
-                    }))
-                );
+                requestCache.riverThinking.diaryTasks = Promise.allSettled(systemMessageTasks.slice());
+                deferredTasks = requestCache.riverThinking.deferred.map(async task => ({
+                    token: task.token,
+                    result: await task.run()
+                }));
+                systemMessageTasks.push(...deferredTasks);
+            }
+            await Promise.all(systemMessageTasks);
+
+            if (requestCache.riverThinking) {
+                const deferredResults = await Promise.all(deferredTasks);
                 for (const { token, result } of deferredResults) {
                     for (const index of targetSystemMessageIndices) {
                         newMessages[index].content = this._replaceTextInContent(
@@ -1762,6 +1794,11 @@ class RAGDiaryPlugin {
                 }
             });
             return safeMessages;
+        } finally {
+            await Promise.allSettled(systemMessageTasks);
+            for (const prepared of ownedMemoObservations) {
+                this.vectorDBManager?.releaseMemoObservation?.(prepared);
+            }
         }
     }
 
@@ -1881,7 +1918,12 @@ class RAGDiaryPlugin {
                         requestCache?.riverThinking ? {
                             config: requestCache.riverThinking.config,
                             getObservation: async () => {
-                                const eligible = requestCache.riverThinking.observations
+                                const thinking = requestCache.riverThinking;
+                                await Promise.race([
+                                    thinking.ready[Number(useGroup)].promise,
+                                    thinking.diaryTasks
+                                ]);
+                                const eligible = thinking.observations
                                     .filter(entry => entry.useGroup === useGroup)
                                     .sort((a, b) => a.scope.localeCompare(b.scope));
                                 return eligible[0]?.prepared || null;
@@ -3181,9 +3223,18 @@ class RAGDiaryPlugin {
                             maxTransitionRecords: requestCache.riverThinking.config.maxTransitionRecords
                         }
                     );
+                    requestCache.ownedMemoObservations?.add(thinkingObservation);
                 } catch (error) {
                     console.warn('[RAGDiaryPlugin] River thinking observation unavailable:', error.message);
                 }
+            }
+            if (thinkingObservation) {
+                requestCache.riverThinking.observations.push({
+                    scope: `${dbScopeKey}:${modifiers}`,
+                    useGroup,
+                    prepared: thinkingObservation
+                });
+                requestCache.riverThinking.ready?.[Number(useGroup)]?.resolve();
             }
             const nativeResult =
                 await this.vectorDBManager.executeNativeRiverQuery(
@@ -3221,13 +3272,7 @@ class RAGDiaryPlugin {
                         enabled: true
                     }
                 );
-            if (thinkingObservation && nativeResult?.artifactSig === thinkingObservation.artifact.artifactSig) {
-                requestCache.riverThinking.observations.push({
-                    scope: `${dbScopeKey}:${modifiers}`,
-                    useGroup,
-                    prepared: thinkingObservation
-                });
-            }
+            // 观测在原生读出前发布，元思考与 RiverMemo 均只读借用。
             candidates = this._filterContextDuplicates(
                 (nativeResult.results || []).map(item => ({
                     ...item,
@@ -3744,18 +3789,10 @@ class RAGDiaryPlugin {
                 .map(name => String(name || '').trim())
                 .filter(Boolean)
         )];
-        const allowedFileIds = [];
-        const db = this.vectorDBManager.db;
-        if (db?.prepare && normalizedDiaryNames.length > 0) {
-            const placeholders = normalizedDiaryNames.map(() => '?').join(',');
-            const rows = db.prepare(
-                `SELECT id FROM files WHERE diary_name IN (${placeholders})`
-            ).all(...normalizedDiaryNames);
-            rows.forEach(row => {
-                const id = Number(row.id);
-                if (Number.isFinite(id)) allowedFileIds.push(id);
-            });
-        }
+        const allowedFileIds = normalizedDiaryNames.length > 0
+            && typeof this.vectorDBManager.getFileIdsByDiaries === 'function'
+            ? await this.vectorDBManager.getFileIdsByDiaries(normalizedDiaryNames)
+            : [];
         if (allowedFileIds.length === 0) {
             const error = new Error('RiverMemo 无法建立显式日记本文件权限作用域');
             error.code = 'RIVERMEMO_EMPTY_PERMISSION_SCOPE';
@@ -4284,7 +4321,9 @@ class RAGDiaryPlugin {
             .sort((a, b) => new Date(b.date) - new Date(a.date));
 
         if (typeof this.vectorDBManager?.getDiaryDateIndex === 'function') {
-            const indexedMetas = normalizeMetas(this.vectorDBManager.getDiaryDateIndex(dbName));
+            const indexedMetas = normalizeMetas(
+                await this.vectorDBManager.getDiaryDateIndex(dbName)
+            );
             requestCache?.diaryDateIndex?.set(dbName, indexedMetas);
             return indexedMetas;
         }

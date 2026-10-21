@@ -172,9 +172,6 @@ dailynote/*
 !dailynote/VCP桌面知识/**
 !dailynote/VCP开发/
 !dailynote/VCP开发/**
-# 拆书蒸馏写入地 (cangjie-skill 阶段 6; 2026-08-14 勘正: 缺白名单导致 rg/grep 整目录静默跳过)
-!dailynote/纸子的知识/
-!dailynote/纸子的知识/**
 ip_blacklist.json
 /VectorStore
 /VectorStoreTDB/
@@ -309,6 +306,8 @@ rust-vexus-lite/crates/vcp-tdb-index/target/
 Plugin/DailyNoteSearcher/src/target/
 Plugin/CodeSearcher/src/target/
 Plugin/PaperReader/paperreader-rs/target/
+AdminPanel-Vue/dist
+
 
 # ==== 分布式开发 ====
 VCPDistributedServer
@@ -323,29 +322,6 @@ Plugin/.backup/
 # ==== 开发SDK ====
 Plugin/VCPQQBotServer/bot-node-sdk-main
 开发日志/
-
-# ==== 本机运行产物与备份（2026-09-04 理清）====
-/bin/
-/file/
-/.superpowers/
-__pycache__/
-Plugin/ChromeBridge/managed-profile-probe/
-Plugin/ChromeBridge/managed-profile-cft-probe/
-Plugin/CodeSearcher/backup_*/
-Plugin/GPTImageGen/image/
-Plugin/PlaceholderExplorer/generated/
-Plugin/PaperReader/workspace-rs/
-Plugin/PaperReader/workspace-rs-*/
-Plugin/PaperReader/workspace-rs-*.pdf
-Plugin/PaperReader/paperreader-rs/crates/paperreader-api/workspace-rs/
-Plugin/FlashDeepSearch/log/
-image/forum/
-tdb-canon/
-tmp_recall_test/
-tmp_*.js
-sync-upstream-*.sh
-rust-vexus-lite/*.node.bak-*
-extensions/memory-river/data/
 
 # Local native artifact archives; retain outside disposable build caches.
 /.vcp-native-archive/

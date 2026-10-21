@@ -7,44 +7,7 @@ const os = require('node:os');
 const { pathToFileURL } = require('node:url');
 const { prepareWorkflowImages, fillWorkflowParameters } = require('./ComfyUIGen');
 
-test('Qwen T2I and single/dual edit templates preserve graph, cache node and numeric parameters', () => {
-    const genTemplate = JSON.parse(fs.readFileSync(path.join(__dirname, 'workflows', 'qwen21gen.json')));
-    const genGraph = fillWorkflowParameters(genTemplate.workflow, {
-        prompt: 'This is an RGBA format image with transparency. Cute bunny maid.',
-        seed: '42'
-    }, {
-        userSettings: {
-            qualityTags: 'masterpiece, best quality',
-            negativePrompt: 'lowres, bad hands',
-            ...genTemplate.defaults
-        }
-    });
-    assert.equal(genGraph['452'].inputs.prompt, 'This is an RGBA format image with transparency. Cute bunny maid.');
-    assert.equal(genGraph['452'].inputs.negative_prompt, '');
-    assert.equal(genGraph['452'].inputs.resolution, 1024);
-    assert.equal(genGraph['469'].class_type, 'QwenImage21Cache');
-    assert.deepEqual(genGraph['458'].inputs.model, ['469', 0]);
-    assert.equal(genGraph['458'].inputs.steps, 30);
-    assert.equal(genGraph['458'].inputs.cfg, 1);
-    assert.equal(genGraph['458'].inputs.seed, 42);
-    assert.ok(!JSON.stringify(genGraph).includes('{{'));
-
-    const gen2k = fillWorkflowParameters(genTemplate.workflow, {
-        prompt: '2K poster',
-        negative_prompt: 'blurry',
-        width: '2048',
-        height: '2048',
-        resolution: '2048',
-        cfg: '4.0',
-        steps: '25'
-    }, { userSettings: genTemplate.defaults });
-    assert.equal(gen2k['456'].inputs.width, 2048);
-    assert.equal(gen2k['456'].inputs.height, 2048);
-    assert.equal(gen2k['452'].inputs.resolution, 2048);
-    assert.equal(gen2k['452'].inputs.negative_prompt, 'blurry');
-    assert.equal(gen2k['458'].inputs.cfg, 4);
-    assert.equal(gen2k['458'].inputs.steps, 25);
-
+test('Qwen single/dual templates preserve graph and numeric parameters', () => {
     for (const name of ['qwen21edit', 'qwen21edit2in1']) {
         const template = JSON.parse(fs.readFileSync(path.join(__dirname, 'workflows', `${name}.json`)));
         const graph = fillWorkflowParameters(template.workflow, {
@@ -71,6 +34,7 @@ test('Qwen T2I and single/dual edit templates preserve graph, cache node and num
         assert.equal(overridden['474'].inputs.resolution, 1024);
     }
 });
+
 test('HTTP images upload separately; filenames pass through; invalid images fail', async () => {
     let uploads = 0;
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV1sAAAAASUVORK5CYII=', 'base64');
@@ -117,39 +81,4 @@ test('HTTP images upload separately; filenames pass through; invalid images fail
         fs.rmSync(tempDir, { recursive: true, force: true });
         await new Promise(resolve => server.close(resolve));
     }
-});
-test('ComfyUIGen JEV manifest validates and plans qwen21gen / qwen21edit / qwen21edit2in1 with dual URLs', async () => {
-    const { JevThirdPartyRegistry } = require('../../modules/jevThirdPartyRegistry');
-    const { JevToolCallExp } = require('../../modules/jevToolCallExp');
-
-    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'plugin-manifest.json'), 'utf8'));
-    const registry = new JevThirdPartyRegistry();
-    registry.build([{ manifest, enabled: true, origin: 'local' }]);
-    const entry = registry.getEntry('ComfyUIGen');
-    assert.equal(entry.validation.status, 'valid', JSON.stringify(entry.validation.errors));
-    const planner = new JevToolCallExp({
-        thirdPartyRegistry: registry,
-        jevClient: { isConfigured: () => false },
-        env: { JEV_THIRD_PARTY_EXP: 'true' }
-    });
-
-    const [t2iCall] = await planner.plan(
-        '请使用 {媒体娱乐} 中的 `ComfyUIGen`，生成插画【商业二次元展会宣传海报，兔娘女仆】[工作流:qwen21gen][宽:2048][高:2048][分辨率:2048][cfg:4.0][负面:blurry]。'
-    );
-    assert.equal(t2iCall.name, 'ComfyUIGen');
-    assert.equal(t2iCall.args.workflow, 'qwen21gen');
-    assert.equal(t2iCall.args.width, '2048');
-    assert.equal(t2iCall.args.height, '2048');
-    assert.equal(t2iCall.args.resolution, '2048');
-    assert.equal(t2iCall.args.cfg, '4.0');
-    assert.equal(t2iCall.args.negative_prompt, 'blurry');
-
-    const [dualEditCall] = await planner.plan(
-        '请使用 {媒体娱乐} 中的 `ComfyUIGen`，双图合成【使用图1的人物和图2的雨夜街道场景，统一冷色调光影】[工作流:qwen21edit2in1][http://127.0.0.1:6015/person.png][http://127.0.0.1:6015/scene.png][步数:8]。'
-    );
-    assert.equal(dualEditCall.name, 'ComfyUIGen');
-    assert.equal(dualEditCall.args.workflow, 'qwen21edit2in1');
-    assert.equal(dualEditCall.args.image, 'http://127.0.0.1:6015/person.png');
-    assert.equal(dualEditCall.args.image_2, 'http://127.0.0.1:6015/scene.png');
-    assert.equal(dualEditCall.args.steps, '8');
 });

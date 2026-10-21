@@ -634,38 +634,6 @@ async function main() {
         debugLog('Received input:', inputData.substring(0, 200) + (inputData.length > 200 ? '...' : ''));
         
         const parsedArgs = JSON.parse(inputData);
-        
-        // --- ShotEngine Cinema Dialogue Enhancement ---
-        if (parsedArgs.mode === 'cinema' || parsedArgs.mode === 'shotengine' || parsedArgs.slice_name || parsedArgs.shots) {
-            debugLog('Routing to ShotEngine Cinema Pipeline...');
-            const sliceName = parsedArgs.slice_name || 'eight_lines';
-            const studioPort = parsedArgs.studio_port || 8765;
-            
-            try {
-                const response = await axios.post(`http://127.0.0.1:${studioPort}/api/slice/${sliceName}/render`, {
-                    fps: parsedArgs.fps || 24.0,
-                    j_cut_slip: parsedArgs.j_cut_slip || 4
-                }, { timeout: 30000 });
-                
-                const cinemaResult = {
-                    content: `[ShotEngine Cinema Generated] Slice: ${sliceName}, Total Frames: ${response.data.total_active_frames}`,
-                    details: {
-                        engine: "ShotEngine Studio v2.0 Enterprise",
-                        mode: "cinema_dialogue_i2v",
-                        slice: sliceName,
-                        active_frames: response.data.total_active_frames,
-                        timeline_otio: response.data.timeline_otio,
-                        rendered_shots: response.data.rendered_shots,
-                        qc_passed: true
-                    }
-                };
-                console.log(JSON.stringify({ status: "success", result: cinemaResult }));
-                return;
-            } catch (err) {
-                debugLog('ShotEngine HTTP failed, falling back to standard pipeline or reporting error:', err.message);
-            }
-        }
-        
         const result = await generateImageAndSave(parsedArgs);
         
         // 回退到通用输出协议：status + result（与 NovelAIGen 对齐）

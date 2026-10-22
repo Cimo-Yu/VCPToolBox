@@ -1120,7 +1120,15 @@ fn gate_tags(
                     penalty
                 };
             }
-            let layer_gain = config.layer_decay.clamp(0.0, 1.0).powi(level as i32);
+            let base_layer_gain = config.layer_decay.clamp(0.0, 1.0).powi(level as i32);
+            // V8 Stratified Deep-Layer Source Quota:
+            // Prevent Level 0 from monopolizing >95% of initial seed current when Level >= 1
+            // discovers high-coherence tangent-space concepts.
+            let layer_gain = if level >= 1 && relevance > 0.15 {
+                base_layer_gain.max(0.45 * (0.65_f64).powi((level - 1) as i32))
+            } else {
+                base_layer_gain
+            };
             let weight = positive(tag.contribution) * lowdin_gate_scale * layer_gain * language_gain * core_gain;
             if weight > 0.0 {
                 gated.push(GatedTag {
@@ -1432,6 +1440,7 @@ struct DualFieldOutput {
     transfer_domain_ids: Vec<i64>,
     local_vector: Vec<f32>,
     transfer_vector: Vec<f32>,
+    transfer_basin_vectors: Vec<Vec<f32>>,
     diagnostics: DualFieldDiagnostics,
 }
 
@@ -1759,8 +1768,11 @@ fn project_supported_fields(
     pool: &mut TagVectorPool,
     diagnostics: &mut DualFieldDiagnostics,
 ) -> std::result::Result<(Vec<f32>, Vec<f32>), String> {
-    project_basin_fields(connection, artifact, fields, domains, dimension, limit,
-        river_ids, &[], pool, diagnostics)
+    let (local, transfer, _) = project_basin_fields(
+        connection, artifact, fields, domains, dimension, limit,
+        river_ids, &[], pool, diagnostics,
+    )?;
+    Ok((local, transfer))
 }
 
 fn project_basin_fields(
@@ -1774,7 +1786,7 @@ fn project_basin_fields(
     basins: &[crate::memo_projection::Basin],
     pool: &mut TagVectorPool,
     diagnostics: &mut DualFieldDiagnostics,
-) -> std::result::Result<(Vec<f32>, Vec<f32>), String> {
+) -> std::result::Result<(Vec<f32>, Vec<f32>, Vec<Vec<f32>>), String> {
     let supports = crate::memo_projection::grow(artifact, fields, domains, river_ids, basins, limit)?;
     let selected = supports.ids;
     let support_diagnostics = |f: usize| {
@@ -1831,9 +1843,55 @@ fn project_basin_fields(
     }
     [diagnostics.local_selected_mass_ratio, diagnostics.transfer_selected_mass_ratio] = selected_ratios;
     [diagnostics.local_projected_mass_ratio, diagnostics.transfer_projected_mass_ratio] = projected_ratios;
+
+    // V8 Multi-Basin Dipole Projection (ColBERT / Poly-Encoder Max-Sim Prototypes):
+    // Instead of collapsing multiple orthogonal transfer basins into a single centroid vector
+    // (where orthogonal cross-domain directions cancel each other out), compute up to 4
+    // basin-specific unit transfer prototype vectors so readout can take max-sim across poles.
+    let mut transfer_basin_vectors: Vec<Vec<f32>> = Vec::new();
+    if basins.len() > 1 && !selected[1].is_empty() {
+        let selected_transfer_set: HashSet<i64> = selected[1].iter().copied().collect();
+        let mut ranked_basins: Vec<&crate::memo_projection::Basin> = basins.iter().collect();
+        ranked_basins.sort_by(|a, b| {
+            b.importance
+                .partial_cmp(&a.importance)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        for basin in ranked_basins.into_iter().take(4) {
+            let mut pole = vec![0.0f64; dimension];
+            let mut pole_mass = 0.0f64;
+            for &id in &basin.inner {
+                if !selected_transfer_set.contains(&id) {
+                    continue;
+                }
+                let Some(&index) = artifact.node_index.get(&id) else { continue };
+                let mass = positive(fields[1][index]);
+                if mass <= 0.0 {
+                    continue;
+                }
+                let Some(vector) = pool.get(&id) else { continue };
+                pole_mass += mass;
+                for (out, value) in pole.iter_mut().zip(vector.iter()) {
+                    *out += *value as f64 * mass;
+                }
+            }
+            if pole_mass > 1e-12 {
+                for out in &mut pole {
+                    *out /= pole_mass;
+                }
+                normalize(&mut pole);
+                transfer_basin_vectors.push(pole.into_iter().map(|v| v as f32).collect());
+            }
+        }
+    }
+
     let [local, transfer] = outputs;
-    Ok((local.into_iter().map(|v| v as f32).collect(),
-        transfer.into_iter().map(|v| v as f32).collect()))
+    Ok((
+        local.into_iter().map(|v| v as f32).collect(),
+        transfer.into_iter().map(|v| v as f32).collect(),
+        transfer_basin_vectors,
+    ))
 }
 
 #[cfg(test)]
@@ -1875,6 +1933,7 @@ fn solve_dual_fields_with_pool(
             transfer_domain_ids: Vec::new(),
             local_vector: vec![0.0; dimension],
             transfer_vector: vec![0.0; dimension],
+            transfer_basin_vectors: Vec::new(),
             diagnostics: DualFieldDiagnostics {
                 iterations: 0,
                 local_converged: true,
@@ -1915,10 +1974,12 @@ fn solve_dual_fields_with_pool(
         && node_resonances.iter().any(|&r| r > 0.0);
     let transfer_weights_cow: std::borrow::Cow<'_, [f64]> = if has_global_wormhole_resonance {
         const DOOB_BETA: f64 = 2.5;
+        const WORMHOLE_COUPLE_GAMMA: f64 = 0.85;
         let mut mod_w = artifact.weights.clone();
         for src_idx in 0..artifact.node_ids.len() {
             let start = artifact.row_offsets[src_idx];
             let end = artifact.row_offsets[src_idx + 1];
+            let r_u = node_resonances[src_idx].clamp(0.0, 1.0);
             let mut orig_sum = 0.0;
             let mut mod_sum = 0.0;
             let mut row_changed = false;
@@ -1926,9 +1987,25 @@ fn solve_dual_fields_with_pool(
                 let w = positive(artifact.weights[cursor]);
                 orig_sum += w;
                 let dst_idx = artifact.targets[cursor];
-                let r = node_resonances[dst_idx].clamp(0.0, 1.0);
-                if r > 0.0 && w > 0.0 {
-                    let h_val = (DOOB_BETA * r).exp();
+                let r_v = node_resonances[dst_idx].clamp(0.0, 1.0);
+                if r_v > 0.0 && w > 0.0 {
+                    // V8 Non-Backtracking Potential-Gradient & Wormhole-Coupled Doob Kernel:
+                    // 1) Potential gradient rectification (r_v - 0.45 * r_u)_+ prevents high-resonance
+                    //    hubs from back-flowing into lower-resonance generic neighbors.
+                    // 2) True structural wormhole edges (`edge_is_wormhole`) receive explicit
+                    //    geometric-mean coupling so trivial frequent edges cannot hijack the bridge flux.
+                    let grad_potential = (r_v - 0.45 * r_u).max(0.15 * r_v);
+                    let is_wh = artifact
+                        .edge_is_wormhole
+                        .get(cursor)
+                        .copied()
+                        .unwrap_or(false);
+                    let wh_bonus = if is_wh {
+                        WORMHOLE_COUPLE_GAMMA * (r_u.max(0.25) * r_v).sqrt()
+                    } else {
+                        0.0
+                    };
+                    let h_val = (DOOB_BETA * grad_potential + wh_bonus).exp();
                     let mw = w * h_val;
                     mod_w[cursor] = mw;
                     mod_sum += mw;
@@ -2033,7 +2110,7 @@ fn solve_dual_fields_with_pool(
         ..DualFieldDiagnostics::default()
     };
     let project_started = Instant::now();
-    let (local_vector, transfer_vector) = project_basin_fields(
+    let (local_vector, transfer_vector, transfer_basin_vectors) = project_basin_fields(
         connection, artifact, [&local, &transfer],
         [&local_domain_ids, &transfer_domain_ids], dimension,
         config.max_field_projection_nodes, river_ids, basins, pool, &mut projection)?;
@@ -2046,6 +2123,7 @@ fn solve_dual_fields_with_pool(
         transfer_domain_ids,
         local_vector,
         transfer_vector,
+        transfer_basin_vectors,
         diagnostics: DualFieldDiagnostics {
             iterations,
             local_converged,
@@ -2271,6 +2349,7 @@ fn run_pipeline_with_connection(
         enhanced_vector_f32.clone(),
         dual_fields.local_vector.clone(),
         dual_fields.transfer_vector.clone(),
+        dual_fields.transfer_basin_vectors.clone(),
         dual_fields.local_field.clone(),
         dual_fields.transfer_field.clone(),
         dual_fields.local_domain_ids.clone(),

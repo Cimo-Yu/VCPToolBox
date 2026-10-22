@@ -280,6 +280,7 @@ pub(crate) struct DynamicWormholeContext<'a> {
 }
 
 impl<'a> DynamicWormholeContext<'a> {
+    #[allow(dead_code)]
     pub(crate) fn new(
         connection: &'a Connection, pool: &'a mut TagVectorPool,
         residuals: Vec<Vec<f32>>, seed_levels: HashMap<i64, usize>,
@@ -453,17 +454,39 @@ impl<'a> DynamicWormholeContext<'a> {
     fn resonance(&mut self, target: usize, source_level: usize) -> f64 {
         let Some(scores) = self.scores.get(&target) else { return 0.0 };
         self.diagnostics.cache_hits += 1;
-        scores.iter().skip(source_level.saturating_add(1)).copied().fold(0.0, f64::max)
+        // V8 Subspace L2 Projection Norm (Cellular Sheaf Subspace Energy):
+        // Since pyramid residual layers {r_1, r_2, ...} are mutually orthogonalized,
+        // the true projection magnitude onto the deep residual subspace is the L2 norm
+        // sqrt(\sum_{l > source_level} cos_+(r_l, v)^2), rewarding hubs that bridge multiple residual layers.
+        let mut max_r = 0.0f64;
+        let mut sum_sq = 0.0f64;
+        for &s in scores.iter().skip(source_level.saturating_add(1)) {
+            let p = positive(s);
+            if p > max_r {
+                max_r = p;
+            }
+            sum_sq += p * p;
+        }
+        sum_sq.sqrt().max(max_r).min(1.0)
     }
 
-    /// Export maximum deep-layer residual resonance per CSR node index for global wormhole field traversal.
+    /// Export deep-layer residual subspace L2 resonance per CSR node index for global wormhole field traversal.
     pub(crate) fn extract_global_node_resonances(&self, node_count: usize, threshold: f64) -> Vec<f64> {
         let mut out = vec![0.0; node_count];
         for (&target, scores) in &self.scores {
             if target < node_count {
-                let max_r = scores.iter().skip(1).copied().fold(0.0, f64::max);
-                if max_r >= threshold {
-                    out[target] = max_r;
+                let mut max_r = 0.0f64;
+                let mut sum_sq = 0.0f64;
+                for &s in scores.iter().skip(1) {
+                    let p = positive(s);
+                    if p > max_r {
+                        max_r = p;
+                    }
+                    sum_sq += p * p;
+                }
+                let subspace_r = sum_sq.sqrt().max(max_r).min(1.0);
+                if subspace_r >= threshold {
+                    out[target] = subspace_r;
                 }
             }
         }

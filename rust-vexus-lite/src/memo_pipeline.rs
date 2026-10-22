@@ -132,8 +132,18 @@ struct PipelineConfig {
     tech_tag_threshold: f64,
     normal_tag_threshold: f64,
     epa_gate_mode: String,
+    #[serde(default = "default_true")]
+    enable_twisted_transfer_kernel: bool,
+    #[serde(default = "default_true")]
+    enable_oblique_bridge_retention: bool,
+    #[serde(default = "default_true")]
+    enable_orthogonal_dipole_query: bool,
     #[serde(default)]
     spike_routing: SenseConfig,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for PipelineConfig {
@@ -165,6 +175,9 @@ impl Default for PipelineConfig {
             tech_tag_threshold: 0.08,
             normal_tag_threshold: 0.015,
             epa_gate_mode: "backgroundRelative".into(),
+            enable_twisted_transfer_kernel: true,
+            enable_oblique_bridge_retention: true,
+            enable_orthogonal_dipole_query: true,
             spike_routing: SenseConfig::default(),
         }
     }
@@ -1029,8 +1042,22 @@ fn analyze_pyramid_with_pool(
         if config.spike_routing.dynamic_wormholes {
             residuals.push(residual.clone());
         }
+        // V8.5 Spectral Tikhonov Oblique Bridge Retention:
+        // When handing residual over to level + 1 in high-dimensional spaces (dimension >= 64),
+        // retain 16% of the oblique bridge component so semi-orthogonal transition concepts
+        // (~60-70 deg to L0) are not completely annihilated before level 1 search!
+        let handover_residual: Vec<f32> =
+            if config.enable_oblique_bridge_retention && dimension >= 64 && level == 0 {
+                residual
+                    .iter()
+                    .zip(projection.iter())
+                    .map(|(&r, &p)| r - 0.84 * p)
+                    .collect()
+            } else {
+                next_residual
+            };
         levels_work.push(tags);
-        residual = next_residual;
+        residual = handover_residual;
         if residual_energy / original_energy < config.min_energy_ratio.clamp(0.0, 1.0) {
             break;
         }
@@ -2029,7 +2056,8 @@ fn solve_dual_fields_with_pool(
     //   \widetilde{P}_{u -> v} = \frac{P_{u -> v} \exp(\beta R(v))}{\sum_w P_{u -> w} \exp(\beta R(w))} * (\sum_w P_{u -> w})
     // This satisfies multi-hop path telescoping (\prod P^{(h)} \propto P \cdot e^{\beta R(v_k)})
     // while preserving 100% of every row's outbound probability mass.
-    let has_global_wormhole_resonance = node_resonances.len() == artifact.node_ids.len()
+    let has_global_wormhole_resonance = config.enable_twisted_transfer_kernel
+        && node_resonances.len() == artifact.node_ids.len()
         && node_resonances.iter().any(|&r| r > 0.0);
     let transfer_weights_cow: std::borrow::Cow<'_, [f64]> = if has_global_wormhole_resonance {
         const DOOB_BETA: f64 = 2.5;
@@ -2059,12 +2087,20 @@ fn solve_dual_fields_with_pool(
                         .get(cursor)
                         .copied()
                         .unwrap_or(false);
+                    // V8.5 Discrete Ollivier-Ricci Negative-Curvature Bottleneck Factor:
+                    // Amplify true inter-cluster bridges (\triangle(u,v) -> 0, ricci_bridge -> 1.0)
+                    // while dampening intra-clique triangle edges (\triangle(u,v) -> 1, ricci_bridge -> 0.30).
+                    let ricci_bridge = artifact
+                        .edge_ricci_bridge
+                        .get(cursor)
+                        .copied()
+                        .unwrap_or(1.0);
                     let wh_bonus = if is_wh {
-                        WORMHOLE_COUPLE_GAMMA * (r_u.max(0.25) * r_v).sqrt()
+                        WORMHOLE_COUPLE_GAMMA * ricci_bridge * (r_u.max(0.25) * r_v).sqrt()
                     } else {
-                        0.0
+                        0.25 * (ricci_bridge - 0.5).max(0.0) * (r_u.max(0.20) * r_v).sqrt()
                     };
-                    let h_val = (DOOB_BETA * grad_potential + wh_bonus).exp();
+                    let h_val = (DOOB_BETA * grad_potential * (0.65 + 0.35 * ricci_bridge) + wh_bonus).exp();
                     let mw = w * h_val;
                     mod_w[cursor] = mw;
                     mod_sum += mw;
@@ -2133,6 +2169,33 @@ fn solve_dual_fields_with_pool(
         }
         if local_converged && transfer_converged {
             break;
+        }
+    }
+
+    // Audit P2-7 Fix (Steady-State Total Mass Invariance under Non-Uniform Node Leakage):
+    // Row-stochastic reweighting changes total steady-state mass when shifting flow between a
+    // continuing branch and a terminal sink. Rescaling `transfer` to match the untwisted steady-state
+    // total mass preserves 100% of the relative node rankings and domain ratios while guaranteeing
+    // exact global steady-state mass conservation on arbitrary graphs!
+    if has_global_wormhole_resonance {
+        let mut base_trf = source.clone();
+        let mut next_base = vec![0.0; source.len()];
+        let mut prop_base = vec![0.0; source.len()];
+        for _ in 1..=config.field_max_iterations.max(1) {
+            apply_transport(artifact, &base_trf, &mut prop_base);
+            let res = relax_field(&source, &prop_base, transfer_alpha, &base_trf, &mut next_base);
+            std::mem::swap(&mut base_trf, &mut next_base);
+            if res <= config.transfer_tolerance.max(1e-15) {
+                break;
+            }
+        }
+        let base_mass = field_mass(&base_trf);
+        let cur_mass = field_mass(&transfer);
+        if base_mass > 1e-12 && cur_mass > 1e-12 {
+            let scale = base_mass / cur_mass;
+            for v in &mut transfer {
+                *v *= scale;
+            }
         }
     }
 
@@ -2400,7 +2463,41 @@ fn run_pipeline_with_connection(
         &global_node_resonances,
     )?;
 
-    let enhanced_vector_f32: Vec<f32> = enhanced_vector.iter().map(|value| *value as f32).collect();
+    // V8.5 Orthogonal Transfer-Dipole Enhanced Query Vector:
+    // Blend the component of `dual_fields.transfer_vector` that is strictly orthogonal to `enhanced_vector`
+    // (bounded by 0.18 amplitude) so stage-1 KNN retrieval actively pulls in cross-domain bridge candidates
+    // before stage-2 readout even begins!
+    let mut enhanced_f64 = enhanced_vector.clone();
+    if input.config.enable_orthogonal_dipole_query
+        && dual_fields.transfer_vector.len() == dimensions
+        && dimensions >= 64
+    {
+        let trf_f64: Vec<f64> = dual_fields.transfer_vector.iter().map(|&x| x as f64).collect();
+        let trf_norm = trf_f64.iter().map(|v| v * v).sum::<f64>().sqrt();
+        if trf_norm > 1e-12 {
+            let parallel: f64 = enhanced_f64
+                .iter()
+                .zip(trf_f64.iter())
+                .map(|(a, b)| a * b)
+                .sum();
+            let mut ortho_trf: Vec<f64> = trf_f64
+                .iter()
+                .zip(enhanced_f64.iter())
+                .map(|(&t, &e)| t - parallel * e)
+                .collect();
+            let ortho_norm = ortho_trf.iter().map(|v| v * v).sum::<f64>().sqrt();
+            if ortho_norm > 1e-9 {
+                for v in &mut ortho_trf {
+                    *v /= ortho_norm;
+                }
+                for (e, &ot) in enhanced_f64.iter_mut().zip(ortho_trf.iter()) {
+                    *e += 0.18 * ot;
+                }
+                normalize(&mut enhanced_f64);
+            }
+        }
+    }
+    let enhanced_vector_f32: Vec<f32> = enhanced_f64.iter().map(|value| *value as f32).collect();
     let observation_handle = runtime.store_query_observation(
         artifact_sig,
         observation,
@@ -2775,6 +2872,48 @@ mod audit_gate_tests {
         let t3_plain = plain.transfer_field.iter().find(|(id, _)| *id == 3).unwrap().1;
         let t3_steered = steered.transfer_field.iter().find(|(id, _)| *id == 3).unwrap().1;
         assert!(t3_steered > t3_plain * 1.4);
+
+        // Audit Counterexample P2-7: Non-uniform leakage graph (node 2 propagates to 4, while node 3 is a dead-end sink).
+        // Shifting outbound mass from continuing branch 2 to terminal sink 3 must still preserve global steady-state transfer_mass!
+        let leaky_artifact = NativeArtifact {
+            node_ids: vec![1, 2, 3, 4],
+            node_index: HashMap::from([(1, 0), (2, 1), (3, 2), (4, 3)]),
+            row_offsets: vec![0, 2, 3, 3, 3],
+            targets: vec![1, 2, 3], // 1 -> 2 (idx 1), 1 -> 3 (idx 2), and 2 -> 4 (idx 3); node 3 has 0 outbound edges!
+            weights: vec![0.475, 0.475, 0.95],
+            ..NativeArtifact::default()
+        }
+        .prepared();
+        let leaky_plain = solve_dual_fields_with_pool(
+            &leaky_artifact,
+            &connection,
+            &[(1, 1.0)],
+            3,
+            &config,
+            &mut pool,
+            &[1],
+            &[],
+            &[0.0, 0.0, 0.0, 0.0],
+        )
+        .unwrap();
+        let leaky_steered = solve_dual_fields_with_pool(
+            &leaky_artifact,
+            &connection,
+            &[(1, 1.0)],
+            3,
+            &config,
+            &mut pool,
+            &[1],
+            &[],
+            &[0.0, 0.0, 0.9, 0.0],
+        )
+        .unwrap();
+        assert!(
+            (leaky_plain.diagnostics.transfer_mass - leaky_steered.diagnostics.transfer_mass).abs() < 1e-12,
+            "Steady-state transfer mass under non-uniform leakage must remain invariant: plain={} vs steered={}",
+            leaky_plain.diagnostics.transfer_mass,
+            leaky_steered.diagnostics.transfer_mass
+        );
     }
 
     #[test]
@@ -3314,5 +3453,53 @@ mod projection_budget_tests {
             assert!(serde_json::from_value::<PipelineConfig>(
                 serde_json::json!({"maxFieldProjectionNodes": value})).is_err());
         }
+    }
+
+    #[test]
+    fn v9_torture_directed_cycle_plus_dead_end_sink_conserves_mass_without_nan() {
+        use super::{solve_dual_fields_with_pool, Connection, TagVectorPool};
+        use std::collections::HashSet;
+        // Pathological graph: 1 -> 2 -> 3 -> 1 (directed 3-cycle with high resonance) + 1 -> 4 (dead-end sink)
+        let artifact = NativeArtifact {
+            node_ids: vec![1, 2, 3, 4],
+            node_index: HashMap::from([(1, 0), (2, 1), (3, 2), (4, 3)]),
+            row_offsets: vec![0, 2, 3, 4, 4],
+            targets: vec![1, 3, 2, 0],
+            weights: vec![0.5, 0.5, 1.0, 1.0],
+            wormhole_edges: HashSet::from([(2, 3)]),
+            ..NativeArtifact::default()
+        }
+        .prepared();
+
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT, vector BLOB);").unwrap();
+        for id in 1..=4 {
+            let v: Vec<u8> = [1.0f32, 0.0, 0.0, 0.0].iter().flat_map(|f| f.to_ne_bytes()).collect();
+            conn.execute("INSERT INTO tags (id, name, vector) VALUES (?1, ?2, ?3)", rusqlite::params![id, format!("t{id}"), v]).unwrap();
+        }
+        let mut cfg_off = PipelineConfig::default();
+        cfg_off.enable_twisted_transfer_kernel = false;
+        let mut cfg_on = PipelineConfig::default();
+        cfg_on.enable_twisted_transfer_kernel = true;
+
+        let resonances = vec![0.0, 0.95, 0.95, 0.0];
+        let mut pool_off = TagVectorPool::new();
+        let out_off = solve_dual_fields_with_pool(
+            &artifact, &conn, &[(1, 1.0)], 4, &cfg_off, &mut pool_off, &[1, 2, 3, 4], &[], &resonances,
+        ).unwrap();
+        let mut pool_on = TagVectorPool::new();
+        let out_on = solve_dual_fields_with_pool(
+            &artifact, &conn, &[(1, 1.0)], 4, &cfg_on, &mut pool_on, &[1, 2, 3, 4], &[], &resonances,
+        ).unwrap();
+
+        let mass_off: f64 = out_off.transfer_field.iter().map(|x| x.1).sum();
+        let mass_on: f64 = out_on.transfer_field.iter().map(|x| x.1).sum();
+        assert!(mass_on.is_finite() && mass_off.is_finite());
+        assert!(
+            (mass_on - mass_off).abs() < 1e-9,
+            "Directed cycle + dead-end sink must conserve total steady-state transfer mass: off={} vs on={}",
+            mass_off,
+            mass_on
+        );
     }
 }

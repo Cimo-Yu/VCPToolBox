@@ -678,7 +678,7 @@ fn run_build(
     }
 
     let snapshot_gate = crate::publication_gate::acquire_read(db_path, &["*".into()])?;
-    let (rows, fact, anchor_gain, residual_sig, database_generation, dependencies) =
+    let (rows, fact, anchor_gain, residual_sig, database_generation, dependencies, bipartite) =
         with_registered_read_transaction(db_path, |readonly| {
             let rows = load_file_tags(readonly)?;
             let (anchor_gain, _raw_residuals, residual_sig) = load_anchor_gains(readonly, &input.model_sig)?;
@@ -697,6 +697,11 @@ fn run_build(
             let dependencies = crate::storage::DerivedDependencies::capture(
                 readonly, crate::storage::MEMO_ARTIFACT_DEPENDENCIES,
             )?;
+            let bipartite = Arc::new(
+                crate::rivermemo_topology_v3::BipartiteHypergraphIndex::build_from_connection(
+                    readonly,
+                ),
+            );
             Ok((
                 rows,
                 fact,
@@ -704,6 +709,7 @@ fn run_build(
                 residual_sig,
                 database_generation,
                 dependencies,
+                bipartite,
             ))
         })?;
     drop(snapshot_gate);
@@ -768,7 +774,9 @@ fn run_build(
         48,
     );
 
-    let native = build_native_artifact(&transport, inbound, anchor_gain, wormholes, &provenance);
+    let mut native_inner = (*build_native_artifact(&transport, inbound, anchor_gain, wormholes, &provenance)).clone();
+    native_inner.bipartite = Some(bipartite);
+    let native = Arc::new(native_inner);
     drop(transport);
     let published_at = now_ms();
     let metadata = json!({

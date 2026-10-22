@@ -125,8 +125,8 @@ struct Provenance {
     origin_type: Option<String>,
     hop: usize,
     seed_id: Option<i64>,
+    peak_energy: f64,
 }
-
 #[derive(Clone)]
 struct Parent {
     parent_id: i64,
@@ -548,12 +548,9 @@ pub(crate) fn sense_with_context(
             origin_type: None,
             hop: 0,
             seed_id: Some(seed.id),
+            peak_energy: energy,
         });
     }
-
-    // 空种子是合法的请求级观测：JavaScript SOTA 在 Pyramid 未召回 Tag 时
-    // 跳过 Spike，但仍允许传播后补入字符串 Core/幽灵节点参与最终融合；
-    // 若后续也没有可融合节点，则返回原查询向量而不是把请求升级为异常。
     let mut return_flow_suppressed_mass = 0.0;
     let mut state_truncations = 0usize;
     let mut hop_in_flight_mass = Vec::new();
@@ -713,7 +710,10 @@ pub(crate) fn sense_with_context(
                     hop: spike.hop + 1,
                     wormhole,
                 });
-                if injected > parent.flow || (injected == parent.flow && spike.hop + 1 < parent.hop)
+                if injected > parent.flow
+                    || (injected == parent.flow
+                        && (spike.hop + 1 < parent.hop
+                            || (spike.hop + 1 == parent.hop && source_id < parent.parent_id)))
                 {
                     *parent = Parent {
                         parent_id: source_id,
@@ -829,12 +829,18 @@ pub(crate) fn sense_with_context(
             provenance
                 .entry(spike.node_index)
                 .and_modify(|value| {
-                    if spike.hop < value.hop {
+                    if spike.hop < value.hop
+                        || (spike.hop == value.hop
+                            && (spike.energy > value.peak_energy
+                                || (spike.energy == value.peak_energy
+                                    && Some(spike.seed_id) < value.seed_id)))
+                    {
                         *value = Provenance {
                             source_type: "emergent".to_string(),
                             origin_type: Some(spike.source_type.clone()),
                             hop: spike.hop,
                             seed_id: Some(spike.seed_id),
+                            peak_energy: spike.energy,
                         };
                     }
                 })
@@ -843,6 +849,7 @@ pub(crate) fn sense_with_context(
                     origin_type: Some(spike.source_type.clone()),
                     hop: spike.hop,
                     seed_id: Some(spike.seed_id),
+                    peak_energy: spike.energy,
                 });
         }
         hop_in_flight_mass.push(in_flight);
@@ -858,7 +865,6 @@ pub(crate) fn sense_with_context(
         }
         active = next;
     }
-
     let maximum_node_energy = accumulated.values().copied().fold(0.0, f64::max);
     let maximum_edge_flow = edge_flows
         .values()

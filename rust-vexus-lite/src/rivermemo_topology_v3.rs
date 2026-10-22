@@ -359,6 +359,14 @@ struct NativeConfig {
     anchor_saturation: f64,
     anchor_frontier_contrast: f64,
     anchor_frontier_abs_floor: f64,
+    #[serde(default = "default_true")]
+    enable_subspace_peer_kernel: bool,
+    #[serde(default = "default_true")]
+    enable_bipartite_bridge_pullback: bool,
+    #[serde(default = "default_true")]
+    enable_grassmann_subspace_readout: bool,
+    #[serde(default = "default_true")]
+    enable_cellular_sheaf_envelope: bool,
 }
 
 impl Default for NativeConfig {
@@ -412,10 +420,88 @@ impl Default for NativeConfig {
             anchor_saturation: 0.2,
             anchor_frontier_contrast: 2.0,
             anchor_frontier_abs_floor: 0.1,
+            enable_subspace_peer_kernel: true,
+            enable_bipartite_bridge_pullback: true,
+            enable_grassmann_subspace_readout: true,
+            enable_cellular_sheaf_envelope: true,
         }
     }
 }
-#[derive(Default)]
+
+/// V9 Tag <-> File 保序二分超图驻留 CSR 索引（Zero-SQL Curve & Order-Preserving Edge-Flux Pullback）
+#[derive(Default, Clone)]
+pub(crate) struct BipartiteHypergraphIndex {
+    /// tag_id -> Tag name
+    pub(crate) tag_names: HashMap<i64, String>,
+    /// file_id -> ordered Vec<(tag_id, position)>
+    pub(crate) file_to_tags: HashMap<i64, Vec<(i64, i64)>>,
+    /// tag_id -> sorted Vec<(file_id, normalized_pos_u16, raw_position)>
+    /// Sorted strictly by `file_id` ASC so two-pointer sorted intersection runs in O(deg(u) + deg(v)).
+    pub(crate) tag_to_files: HashMap<i64, Vec<(i64, u16, i64)>>,
+    /// file_id -> primary representative chunk_id (highest-norm or first valid chunk)
+    pub(crate) file_primary_chunk: HashMap<i64, i64>,
+}
+
+impl BipartiteHypergraphIndex {
+    pub(crate) fn build_from_connection(connection: &Connection) -> Self {
+        let mut index = Self::default();
+        if let Ok(mut stmt) = connection.prepare("SELECT id, name FROM tags") {
+            if let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))) {
+                for row in rows.flatten() {
+                    index.tag_names.insert(row.0, row.1);
+                }
+            }
+        }
+        if let Ok(mut stmt) = connection.prepare(
+            "SELECT ft.file_id, ft.tag_id, COALESCE(ft.position, 0) \
+             FROM file_tags ft \
+             ORDER BY ft.file_id ASC, ft.position ASC, ft.tag_id ASC",
+        ) {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            }) {
+                for row in rows.flatten() {
+                    index.file_to_tags.entry(row.0).or_default().push((row.1, row.2));
+                }
+            }
+        }
+        for (&file_id, tags) in &index.file_to_tags {
+            let len = tags.len();
+            let denom = len.saturating_sub(1).max(1) as f64;
+            for (ord, &(tag_id, raw_pos)) in tags.iter().enumerate() {
+                let norm_u16 = if len <= 1 {
+                    32768u16
+                } else {
+                    ((ord as f64 / denom) * 65535.0).round().clamp(0.0, 65535.0) as u16
+                };
+                index
+                    .tag_to_files
+                    .entry(tag_id)
+                    .or_default()
+                    .push((file_id, norm_u16, raw_pos));
+            }
+        }
+        for list in index.tag_to_files.values_mut() {
+            list.sort_by_key(|entry| entry.0);
+            list.dedup_by_key(|entry| entry.0);
+        }
+        if let Ok(mut stmt) = connection.prepare(
+            "SELECT file_id, MIN(id) FROM chunks WHERE vector IS NOT NULL GROUP BY file_id",
+        ) {
+            if let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))) {
+                for row in rows.flatten() {
+                    index.file_primary_chunk.insert(row.0, row.1);
+                }
+            }
+        }
+        index
+    }
+}
+#[derive(Default, Clone)]
 pub(crate) struct NativeArtifact {
     pub(crate) node_ids: Vec<i64>,
     pub(crate) node_index: HashMap<i64, usize>,
@@ -432,6 +518,12 @@ pub(crate) struct NativeArtifact {
     /// Rényi-2 collision entropy row L2 norm: \sqrt{\sum_v w_{uv}^2}.
     /// Decouples L2 wavepacket firing amplitude from L1 probability mass conservation.
     pub(crate) row_l2_norm: Vec<f64>,
+    /// V8.5 Discrete Ollivier/Forman-Ricci Negative-Curvature Bridge Factor in [0.25, 1.0]:
+    /// Intra-cluster edges have high triangle overlap \triangle(u,v) -> positive curvature -> low bridge factor;
+    /// True inter-cluster bottleneck bridges have zero triangle overlap -> negative curvature -> 1.0 bridge factor.
+    pub(crate) edge_ricci_bridge: Vec<f64>,
+    /// V9 Tag <-> File Order-Preserving Bipartite Hypergraph Index
+    pub(crate) bipartite: Option<Arc<BipartiteHypergraphIndex>>,
 }
 
 impl NativeArtifact {
@@ -442,6 +534,8 @@ impl NativeArtifact {
             .map(|id| self.anchor_gain.get(id).copied().unwrap_or(1.0)).collect();
         self.edge_is_wormhole = vec![false; self.targets.len()];
         self.row_l2_norm = vec![1.0; self.node_ids.len()];
+        self.edge_ricci_bridge = vec![1.0; self.targets.len()];
+        let mut sorted_neighbors: Vec<Vec<usize>> = Vec::with_capacity(self.node_ids.len());
         for source in 0..self.node_ids.len() {
             let start = self.row_offsets[source];
             let end = self.row_offsets[source + 1];
@@ -450,16 +544,57 @@ impl NativeArtifact {
             row.sort_by(|left, right| positive(right.1).total_cmp(&positive(left.1))
                 .then_with(|| self.node_ids[left.0].cmp(&self.node_ids[right.0])));
             let mut sum_sq = 0.0;
+            let mut nbrs = Vec::with_capacity(end.saturating_sub(start));
             for (cursor, (target, weight)) in (start..end).zip(row) {
                 self.targets[cursor] = target;
                 self.weights[cursor] = weight;
                 let pw = positive(weight);
+                if pw > 0.0 {
+                    nbrs.push(target);
+                }
                 sum_sq += pw * pw;
                 self.edge_is_wormhole[cursor] = self.wormhole_edges
                     .contains(&(self.node_ids[source], self.node_ids[target]));
             }
+            nbrs.sort_unstable();
+            nbrs.dedup();
+            sorted_neighbors.push(nbrs);
             let l2 = sum_sq.sqrt();
             self.row_l2_norm[source] = if l2 > 1e-12 { l2 } else { 1.0 };
+        }
+        // Compute discrete Ricci negative-curvature bridge factor via sorted two-pointer intersection
+        for source in 0..self.node_ids.len() {
+            let start = self.row_offsets[source];
+            let end = self.row_offsets[source + 1];
+            let u_nbrs = &sorted_neighbors[source];
+            if u_nbrs.is_empty() {
+                continue;
+            }
+            for cursor in start..end {
+                let target = self.targets[cursor];
+                let v_nbrs = &sorted_neighbors[target];
+                let min_deg = u_nbrs.len().min(v_nbrs.len());
+                if min_deg == 0 {
+                    self.edge_ricci_bridge[cursor] = 1.0;
+                    continue;
+                }
+                let (mut i, mut j, mut shared) = (0usize, 0usize, 0usize);
+                while i < u_nbrs.len() && j < v_nbrs.len() {
+                    match u_nbrs[i].cmp(&v_nbrs[j]) {
+                        Ordering::Less => i += 1,
+                        Ordering::Greater => j += 1,
+                        Ordering::Equal => {
+                            shared += 1;
+                            i += 1;
+                            j += 1;
+                        }
+                    }
+                }
+                let overlap_ratio = (shared as f64 / min_deg as f64).clamp(0.0, 1.0);
+                // Negative curvature bottleneck (\triangle = 0) gets full 1.0 bridge factor;
+                // dense intra-cluster clique edge (\triangle -> 1) is dampened to 0.30.
+                self.edge_ricci_bridge[cursor] = 1.0 - 0.70 * overlap_ratio;
+            }
         }
         self
     }
@@ -495,6 +630,170 @@ impl NativeArtifact {
             .map(|item| item.1)
             .sum();
         clamp01(1.0 - own / total).max(0.15)
+    }
+
+    pub(crate) fn edge_ricci_factor(&self, source_id: i64, target_id: i64) -> f64 {
+        let Some(&source) = self.node_index.get(&source_id) else {
+            return 1.0;
+        };
+        let Some(&target) = self.node_index.get(&target_id) else {
+            return 1.0;
+        };
+        let start = self.row_offsets[source];
+        let end = self.row_offsets[source + 1];
+        for cursor in start..end {
+            if self.targets[cursor] == target {
+                return self.edge_ricci_bridge.get(cursor).copied().unwrap_or(1.0);
+            }
+        }
+        1.0
+    }
+
+    /// V9 Order-Preserving 2-Simplex Edge-Flux & 1-Simplex Transfer Adjoint Pullback:
+    /// Computes the bipartite adjoint potential \mathbf{s}_{\text{topo}}(f) over files using
+    /// two-pointer sorted posting list intersection on high-flow river edges (u -> v) and
+    /// degree-normalized transfer nodes. Returns top candidate `(chunk_id, file_id, pullback_score)`.
+    fn compute_bipartite_file_scores(
+        &self,
+        river_nodes: &[RiverNode],
+        river_edges: &[RiverEdge],
+        transfer_field: &[(i64, f64)],
+        allowed_files: Option<&HashSet<i64>>,
+    ) -> HashMap<i64, f64> {
+        let Some(bipartite) = self.bipartite.as_ref() else {
+            return HashMap::new();
+        };
+        let node_hop: HashMap<i64, i64> = river_nodes.iter().map(|n| (n.id, n.hop)).collect();
+        let mut file_scores: HashMap<i64, f64> = HashMap::new();
+
+        // 1) 2-Simplex Directed Stokes Edge-Flux Pullback: J_{u->v} * \kappa_{Ricci}(u,v) * \sigma(\phi_f(v) - \phi_f(u))
+        for edge in river_edges.iter().take(64) {
+            let flow = positive(if edge.normalized_flow != 0.0 {
+                edge.normalized_flow
+            } else {
+                edge.flow
+            });
+            if flow < 0.015 {
+                continue;
+            }
+            let Some(u_list) = bipartite.tag_to_files.get(&edge.source_id) else {
+                continue;
+            };
+            let Some(v_list) = bipartite.tag_to_files.get(&edge.target_id) else {
+                continue;
+            };
+            let u_hop = node_hop.get(&edge.source_id).copied().unwrap_or(0);
+            let v_hop = node_hop.get(&edge.target_id).copied().unwrap_or(0);
+            let hop_depth_gain = 1.0 + 0.35 * (u_hop.max(v_hop).clamp(0, 4) as f64);
+            let ricci = self.edge_ricci_factor(edge.source_id, edge.target_id);
+            let idf_scale = 1.0 / ((u_list.len().min(v_list.len()).max(1) as f64).sqrt());
+
+            let (mut i, mut j) = (0usize, 0usize);
+            while i < u_list.len() && j < v_list.len() {
+                let (u_file, u_pos, _) = u_list[i];
+                let (v_file, v_pos, _) = v_list[j];
+                match u_file.cmp(&v_file) {
+                    Ordering::Less => i += 1,
+                    Ordering::Greater => j += 1,
+                    Ordering::Equal => {
+                        i += 1;
+                        j += 1;
+                        if let Some(scope) = allowed_files {
+                            if !scope.contains(&u_file) {
+                                continue;
+                            }
+                        }
+                        let delta_phi = (v_pos as f64 - u_pos as f64) / 65535.0;
+                        // Order-preserving narrative orientation credit: forward causal order gets full credit + phase bonus
+                        let orientation = if delta_phi > 0.0 {
+                            1.0 + 0.45 * delta_phi.sqrt()
+                        } else if delta_phi < 0.0 {
+                            0.35
+                        } else {
+                            0.50
+                        };
+                        let stokes_flux = flow * ricci * hop_depth_gain * orientation * idf_scale;
+                        *file_scores.entry(u_file).or_default() += stokes_flux;
+                    }
+                }
+            }
+        }
+
+        // 2) 1-Simplex Degree-Normalized Transfer Field Adjoint Pullback: B D_T^{-1/2} f_trf
+        let mut sorted_trf: Vec<(i64, f64)> = transfer_field
+            .iter()
+            .filter(|&&(id, val)| id > 0 && val > 0.0)
+            .copied()
+            .collect();
+        sorted_trf.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let max_trf = sorted_trf.first().map(|x| x.1).unwrap_or(1.0).max(1e-12);
+        for (tag_id, mass) in sorted_trf.into_iter().take(24) {
+            let norm_mass = mass / max_trf;
+            if norm_mass < 0.08 {
+                continue;
+            }
+            let Some(f_list) = bipartite.tag_to_files.get(&tag_id) else {
+                continue;
+            };
+            if f_list.len() > 64 {
+                continue; // skip overly generic high-degree hub tags
+            }
+            let hop = node_hop.get(&tag_id).copied().unwrap_or(1);
+            if hop == 0 {
+                continue; // focus on emergent cross-domain transfer nodes
+            }
+            let deg_inv_sqrt = 1.0 / ((f_list.len().max(1) as f64).sqrt());
+            let contrib = 0.22 * norm_mass * deg_inv_sqrt * (1.0 + 0.25 * (hop.min(4) as f64));
+            for &(file_id, _, _) in f_list {
+                if let Some(scope) = allowed_files {
+                    if !scope.contains(&file_id) {
+                        continue;
+                    }
+                }
+                *file_scores.entry(file_id).or_default() += contrib;
+            }
+        }
+
+        file_scores
+    }
+
+    fn pullback_bridge_candidates(
+        &self,
+        river_nodes: &[RiverNode],
+        river_edges: &[RiverEdge],
+        transfer_field: &[(i64, f64)],
+        allowed_files: Option<&HashSet<i64>>,
+        existing_chunk_ids: &HashSet<i64>,
+        limit: usize,
+    ) -> Vec<(i64, i64, f64)> {
+        let Some(bipartite) = self.bipartite.as_ref() else {
+            return Vec::new();
+        };
+        if limit == 0 || bipartite.file_primary_chunk.is_empty() {
+            return Vec::new();
+        }
+        let file_scores = self.compute_bipartite_file_scores(
+            river_nodes,
+            river_edges,
+            transfer_field,
+            allowed_files,
+        );
+        let mut ranked: Vec<(i64, i64, f64)> = file_scores
+            .into_iter()
+            .filter_map(|(file_id, score)| {
+                if score <= 0.02 {
+                    return None;
+                }
+                let &chunk_id = bipartite.file_primary_chunk.get(&file_id)?;
+                if existing_chunk_ids.contains(&chunk_id) {
+                    return None;
+                }
+                Some((chunk_id, file_id, score))
+            })
+            .collect();
+        ranked.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        ranked.truncate(limit);
+        ranked
     }
 }
 
@@ -1077,19 +1376,26 @@ fn decode_artifact(
         }
     }
 
-    Ok(Arc::new(NativeArtifact {
-        node_ids,
-        node_index,
-        row_offsets,
-        targets,
-        weights,
-        inbound,
-        max_inbound,
-        anchor_gain,
-        wormhole_edges,
-        provenance,
-        ..NativeArtifact::default()
-    }.prepared()))
+    let bipartite = Some(Arc::new(BipartiteHypergraphIndex::build_from_connection(
+        connection,
+    )));
+    Ok(Arc::new(
+        NativeArtifact {
+            node_ids,
+            node_index,
+            row_offsets,
+            targets,
+            weights,
+            inbound,
+            max_inbound,
+            anchor_gain,
+            wormhole_edges,
+            provenance,
+            bipartite,
+            ..NativeArtifact::default()
+        }
+        .prepared(),
+    ))
 }
 
 pub(crate) fn load_artifact_with_connection(
@@ -1153,6 +1459,7 @@ struct Curve {
     denoised_score: f64,
     local_score: f64,
     transfer_score: f64,
+    bipartite_score: f64,
     bm25_score: f64,
     time_score: f64,
     anchor_score: f64,
@@ -1200,6 +1507,7 @@ fn load_curves(
     connection: &Connection,
     candidates: &[CandidateInput],
     dimension: usize,
+    bipartite: Option<&BipartiteHypergraphIndex>,
 ) -> std::result::Result<CurveLoadOutput, String> {
     const SQLITE_BATCH_SIZE: usize = 500;
     let candidate_ids: Vec<i64> = candidates
@@ -1236,8 +1544,6 @@ fn load_curves(
             })
             .map_err(|error| format!("query batched chunk projection failed: {}", error))?;
         for row in rows {
-            // 与旧逐候选实现保持行级故障隔离：单条脏记录不能拖垮
-            // 整个候选批次；prepare/query 级数据库错误仍在上方显式返回。
             let Ok((id, file_id, bytes)) = row else {
                 continue;
             };
@@ -1249,12 +1555,31 @@ fn load_curves(
         }
     }
 
-    // 同一文件的 Tag 关系只读取一次，供该文件的全部候选 Chunk 复用；
-    // Tag 向量在候选筛选之后才读取（见 attach_tags）。
+    // V9 Zero-SQL Bipartite Curve Projection:
+    // 若驻留式二分超图 CSR 索引已包含全部 file_tags 与 tag_names，直接在内存中 O(1) 组装关系，file_tag_sql_batches = 0！
     let file_ids: Vec<i64> = unique_file_ids.into_iter().collect();
     let mut relations: FileTagRows = HashMap::with_capacity(file_ids.len());
     let mut file_tag_sql_batches = 0usize;
-    for batch in file_ids.chunks(SQLITE_BATCH_SIZE) {
+    let mut missing_files = Vec::new();
+    if let Some(bip) = bipartite {
+        for &file_id in &file_ids {
+            if let Some(tags) = bip.file_to_tags.get(&file_id) {
+                let mut row_vec = Vec::with_capacity(tags.len());
+                for &(tag_id, pos) in tags {
+                    if let Some(name) = bip.tag_names.get(&tag_id) {
+                        row_vec.push((tag_id, pos, name.clone()));
+                    }
+                }
+                relations.insert(file_id, row_vec);
+            } else {
+                missing_files.push(file_id);
+            }
+        }
+    } else {
+        missing_files = file_ids;
+    }
+
+    for batch in missing_files.chunks(SQLITE_BATCH_SIZE) {
         if batch.is_empty() {
             continue;
         }
@@ -1284,13 +1609,10 @@ fn load_curves(
             })
             .map_err(|error| format!("query batched tag curve projection failed: {}", error))?;
         for row in rows {
-            // 旧实现通过 rows.flatten() 跳过单条 Tag 行解码错误。
-            // 批量化后保留同一容错边界，避免一条脏 Tag 污染整次查询。
             let Ok((file_id, tag_id, position, name)) = row else { continue };
             relations.entry(file_id).or_default().push((tag_id, position, name));
         }
     }
-
     // 恢复原始候选顺序；稳定排序与旧实现完全一致。
     let mut curves = Vec::with_capacity(candidates.len());
     for candidate in candidates {
@@ -1306,6 +1628,7 @@ fn load_curves(
             denoised_score: 0.0,
             local_score: 0.0,
             transfer_score: 0.0,
+            bipartite_score: 0.0,
             bm25_score: positive(candidate.bm25_score),
             time_score: positive(candidate.time_score),
             anchor_score: positive(candidate.anchor_score),
@@ -1664,12 +1987,20 @@ fn evaluate_topology(
     let mut node_quality_mass = 0.0;
 
     for node in &input.query_state.river_nodes {
-        let weight = positive(if node.normalized_energy != 0.0 {
+        let base_w = positive(if node.normalized_energy != 0.0 {
             node.normalized_energy
         } else {
             node.energy
         })
         .max(1e-9);
+        // V8.5 Geodesic Hop-Depth Compensation:
+        // Prevent Hop 0/1 seed nodes from drowning out Hop 2/3/4 multi-hop river discoveries in topology alignment.
+        let hop_boost = if node.hop >= 2 {
+            1.0 + 0.45 * (node.hop.min(4) - 1) as f64
+        } else {
+            1.0
+        };
+        let weight = base_w * hop_boost;
         total_node_weight += weight;
         let exact = curve
             .tags
@@ -1782,13 +2113,32 @@ fn evaluate_topology(
     let mut direction_mass = 0.0;
     let mut topology_mass = 0.0;
 
-    for edge in retained_edges {
-        let edge_weight = positive(if edge.normalized_flow != 0.0 {
+    for edge in &retained_edges {
+        let base_edge_w = positive(if edge.normalized_flow != 0.0 {
             edge.normalized_flow
         } else {
             edge.flow
         })
         .max(1e-9);
+        let source_hop = river_node_by_id
+            .get(&edge.source_id)
+            .map(|node| node.hop)
+            .unwrap_or(0);
+        let target_hop = river_node_by_id
+            .get(&edge.target_id)
+            .map(|node| node.hop)
+            .unwrap_or(0);
+        // V9 Geodesic Ricci-Weighted Edge Measure:
+        // Weight river edges by their hop depth and negative-curvature Ricci bottleneck factor
+        // so Hop 2/3/4 cross-domain wormhole edges are not drowned out by Hop 0->1 hub fan-out!
+        let max_edge_hop = source_hop.max(target_hop).clamp(0, 4);
+        let edge_hop_boost = if max_edge_hop >= 2 {
+            1.0 + 0.55 * (max_edge_hop - 1) as f64
+        } else {
+            1.0
+        };
+        let ricci = artifact.edge_ricci_factor(edge.source_id, edge.target_id);
+        let edge_weight = base_edge_w * edge_hop_boost * (0.7 + 0.3 * ricci);
         total_edge_weight += edge_weight;
         let (Some(source), Some(target)) = (
             alignments.get(&edge.source_id),
@@ -1799,14 +2149,6 @@ fn evaluate_topology(
         if source.candidate_index == target.candidate_index {
             continue;
         }
-        let source_hop = river_node_by_id
-            .get(&edge.source_id)
-            .map(|node| node.hop)
-            .unwrap_or(0);
-        let target_hop = river_node_by_id
-            .get(&edge.target_id)
-            .map(|node| node.hop)
-            .unwrap_or(0);
         let query_distance = (target_hop - source_hop).abs().max(1) as f64 / maximum_hop;
         let candidate_distance =
             (target.candidate_position - source.candidate_position).abs() as f64 / candidate_span;
@@ -1828,6 +2170,53 @@ fn evaluate_topology(
         direction_mass += edge_weight * direction_similarity;
         topology_mass += edge_weight * edge_quality;
         output.matched_edges += 1;
+    }
+
+    // V9 Path-Transitive Geodesic Homotopy Closure:
+    // A bridge note often anchors Hop-0 seed `u` and Hop-2/3 target `w` along its directed Tag curve
+    // `(u ... -> ... w)` via an intermediate ferry tag `v'` that is semantically dual to the river's `v`.
+    // When direct single-step edge matching misses the intermediate hop, evaluate 2-hop river chains
+    // `u -> v -> w` (or matched `u` at hop <= 1 to matched `w` at hop >= 2) to credit geodesic homotopy!
+    if input.config.enable_bipartite_bridge_pullback && alignments.len() >= 2 {
+        let mut transitive_bonus_weight = 0.0;
+        let mut transitive_quality_mass = 0.0;
+        for (&u_id, u_align) in &alignments {
+            let u_hop = river_node_by_id.get(&u_id).map(|n| n.hop).unwrap_or(0);
+            if u_hop > 1 {
+                continue;
+            }
+            for (&w_id, w_align) in &alignments {
+                if u_id == w_id || w_align.candidate_position <= u_align.candidate_position {
+                    continue;
+                }
+                let w_hop = river_node_by_id.get(&w_id).map(|n| n.hop).unwrap_or(0);
+                if w_hop <= u_hop {
+                    continue;
+                }
+                let endpoint_q = (u_align.quality * w_align.quality).sqrt();
+                let hop_span = (w_hop - u_hop).clamp(1, 4) as f64;
+                let w_energy = river_node_by_id
+                    .get(&w_id)
+                    .map(|n| positive(if n.normalized_energy != 0.0 { n.normalized_energy } else { n.energy }))
+                    .unwrap_or(0.05);
+                let syn_w = w_energy * (0.35 * hop_span);
+                transitive_bonus_weight += syn_w;
+                transitive_quality_mass += syn_w * endpoint_q;
+            }
+        }
+        if transitive_bonus_weight > 0.0 && total_edge_weight > 0.0 {
+            let capped_add = transitive_bonus_weight.min(0.45 * (total_edge_weight - matched_edge_weight).max(0.0));
+            if capped_add > 1e-9 {
+                let avg_q = (transitive_quality_mass / transitive_bonus_weight).clamp(0.0, 1.0);
+                matched_edge_weight += capped_add;
+                distance_mass += capped_add * 0.85;
+                direction_mass += capped_add * 1.0;
+                topology_mass += capped_add * avg_q;
+                if output.matched_edges == 0 {
+                    output.matched_edges = 1;
+                }
+            }
+        }
     }
 
     output.matched_edge_coverage = if total_edge_weight > 0.0 {
@@ -1982,7 +2371,21 @@ fn evaluate_observables(
             + dipole_bonus)
             * (1.0 - 0.5 * clamp01(tail_ratio)),
     );
-    let query_chunk = clamp01(cosine(&input.query.vector, &curve.chunk_vector));
+    let raw_query_chunk = clamp01(cosine(&input.query.vector, &curve.chunk_vector));
+    // V9 Dual-Manifold Symmetric Closure:
+    // A cross-domain bridge chunk aligns with the Grassmannian transfer frame (`curve.transfer_score`)
+    // and denoised manifold (`curve.denoised_score`) rather than just the unexpanded raw query vector.
+    // Using only `raw_query_chunk` in `closure` and `topology_reliability` systematically penalizes
+    // cross-domain bridge notes whose raw cosine is 0.25~0.35 but whose transfer pole cosine is >0.65!
+    let effective_chunk_resonance = if input.config.enable_grassmann_subspace_readout {
+        raw_query_chunk
+            .max(0.88 * clamp01(curve.denoised_score))
+            .max(0.85 * clamp01(curve.transfer_score))
+            .max(0.82 * clamp01(curve.local_score))
+    } else {
+        raw_query_chunk
+    };
+    let query_chunk = effective_chunk_resonance;
     let direct_contact = clamp01(exact_seed_hits as f64 / workspace.source_ids.len().max(1) as f64);
     let semantic_boundary_score = if boundary >= 0.55 { boundary } else { 0.0 };
     let direct = if visible {
@@ -2573,10 +2976,10 @@ fn assign_v3_scores(
                 } else {
                     0.35
                 };
-                // DPP Subspace-Orthogonal Peer Decoupling (Schur Complement Coherence):
-                // Candidates spanning orthogonal semantic subspaces (low cosine) are independent
-                // inspirations, not redundant peers competing in the same direction.
-                let subspace_coherence = if unit_chunks[index].1
+                // Subspace-Coherence Peer Kernel (configurable via `enable_subspace_peer_kernel`):
+                // Weight peer competition by directional cosine coherence in the combined chunk+tag space.
+                let subspace_coherence = if config.enable_subspace_peer_kernel
+                    && unit_chunks[index].1
                     && unit_chunks[peer].1
                     && unit_chunks[index].0.len() == unit_chunks[peer].0.len()
                 {
@@ -2616,7 +3019,7 @@ fn assign_v3_scores(
         }
         let total_weight: f64 = peers.iter().map(|entry| entry.1).sum();
         let squared_weight: f64 = peers.iter().map(|entry| entry.1 * entry.1).sum();
-        let expected = if total_weight > 1e-12 {
+        let raw_expected = if total_weight > 1e-12 {
             peers
                 .iter()
                 .map(|entry| entry.1 * work[entry.0].graph_score)
@@ -2625,6 +3028,15 @@ fn assign_v3_scores(
         } else {
             work[index].graph_score
         };
+        // Audit P2-8 Fix: If all peers are mutually orthogonal to `index`, a uniform 0.10 factor
+        // cancels out in `sum(w_j s_j) / sum(w_j)`. Coupling `expected` with the mean peer weight
+        // saturation ensures genuinely orthogonal outliers are not held to the same collinear baseline!
+        let peer_density = if config.enable_subspace_peer_kernel && !peers.is_empty() {
+            (total_weight / (peers.len() as f64 * 0.35).max(1e-6)).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let expected = raw_expected * (0.88 + 0.12 * peer_density);
         let variance = if total_weight > 1e-12 {
             peers
                 .iter()
@@ -2664,15 +3076,44 @@ fn assign_v3_scores(
         };
         let statistical = clamp01(effective_peers / config.minimum_effective_peers);
         let combined_confidence = clamp01(candidate_confidence * statistical);
+        let is_v9_bridge = config.enable_bipartite_bridge_pullback
+            && (work[index].curve.bipartite_score >= 0.20
+                || (work[index].topology.matched_edges >= 2
+                    && work[index].observables.transfer_coverage > 0.0
+                    && work[index].observables.local_coverage > 0.0));
         let (role_cap, multiplier) = match work[index].role.as_str() {
             "atomic_concept" => (config.topology_bonus_cap, 1.0),
             "direct_answer" => (0.02, 0.35),
-            "structural_explanation" => (0.045, 0.7),
-            _ => (0.008, 0.15),
+            "structural_explanation" => {
+                if is_v9_bridge {
+                    (config.topology_bonus_cap.max(0.12), 1.15)
+                } else {
+                    (0.045, 0.7)
+                }
+            }
+            _ => {
+                if is_v9_bridge {
+                    (config.topology_bonus_cap.max(0.09), 0.85)
+                } else {
+                    (0.008, 0.15)
+                }
+            }
         };
         let requested = innovation * combined_confidence * config.innovation_scale * multiplier;
-        let mut bonus = requested.min(role_cap).min(config.topology_bonus_cap);
-        if direct_frontier > 0.0 && work[index].role != "direct_answer" && mode != "atomic" {
+        let mut bonus = requested.min(role_cap).min(if is_v9_bridge {
+            config.topology_bonus_cap.max(0.12)
+        } else {
+            config.topology_bonus_cap
+        });
+        // V9 Glass-Ceiling Liberation:
+        // Only clamp `thematic_neighbor` that lacks a verified 2-Simplex bipartite bridge;
+        // genuine cross-domain bridge notes (`is_v9_bridge`) are allowed to surpass single-domain
+        // direct answers when their topological innovation and Stokes flux justify it!
+        if direct_frontier > 0.0
+            && work[index].role != "direct_answer"
+            && mode != "atomic"
+            && !is_v9_bridge
+        {
             bonus = bonus.min(positive(direct_frontier - 0.005 - work[index].pure_score));
         }
         work[index].v2_bonus = clamp01(bonus);
@@ -2899,11 +3340,72 @@ pub(crate) fn run_native_with_connection(
 
     let load_started = Instant::now();
     let artifact = load_artifact_with_connection(runtime, connection, artifact_sig)?;
-    let curve_load = load_curves(connection, &input.candidates, dimension)?;
-    let mut curves = curve_load.curves;
-    // 显式空集合也意味着无权限；必须在候选归一化和统计前移除越权项。
     let allowed: Option<HashSet<i64>> = input.allowed_file_ids.as_ref()
         .map(|ids| ids.iter().copied().collect());
+
+    // V9 Stage-1.5 Order-Preserving Bipartite Hypergraph Bridge Pullback & Lyapunov Closure:
+    // Use `artifact.pullback_bridge_candidates` to directly pull in cross-domain bridge files
+    // that carry high-flow river wormhole edges (u -> v) in forward narrative order, bypassing
+    // the rank-1 single-vector ANN bottleneck!
+    let bipartite_file_scores = if input.config.enable_bipartite_bridge_pullback {
+        artifact.compute_bipartite_file_scores(
+            &input.query_state.river_nodes,
+            &input.query_state.river_edges,
+            &input.query_state.transfer_field,
+            allowed.as_ref(),
+        )
+    } else {
+        HashMap::new()
+    };
+    let max_bipartite_score = bipartite_file_scores
+        .values()
+        .copied()
+        .fold(0.0f64, f64::max);
+
+    if input.config.enable_bipartite_bridge_pullback && !input.candidates.is_empty() {
+        let existing_ids: HashSet<i64> = input.candidates.iter().map(|c| c.id).collect();
+        let pullback = artifact.pullback_bridge_candidates(
+            &input.query_state.river_nodes,
+            &input.query_state.river_edges,
+            &input.query_state.transfer_field,
+            allowed.as_ref(),
+            &existing_ids,
+            16,
+        );
+        for (chunk_id, _file_id, pb_score) in pullback {
+            let norm_pb = if max_bipartite_score > 1e-12 {
+                (pb_score / max_bipartite_score).clamp(0.15, 0.95)
+            } else {
+                pb_score.clamp(0.15, 0.85)
+            };
+            input.candidates.push(CandidateInput {
+                id: chunk_id,
+                score: norm_pb,
+                vector_score: 0.0,
+                bm25_score: 0.0,
+                time_score: 0.0,
+                anchor_score: norm_pb,
+                hybrid_score: norm_pb,
+            });
+        }
+    }
+
+    let curve_load = load_curves(
+        connection,
+        &input.candidates,
+        dimension,
+        artifact.bipartite.as_deref(),
+    )?;
+    let mut curves = curve_load.curves;
+    if max_bipartite_score > 1e-12 {
+        for curve in &mut curves {
+            if let Some(&raw_bip) = bipartite_file_scores.get(&curve.file_id) {
+                curve.bipartite_score = clamp01(raw_bip / max_bipartite_score);
+                curve.anchor_score = curve.anchor_score.max(0.85 * curve.bipartite_score);
+            }
+        }
+    }
+    // 显式空集合也意味着无权限；必须在候选归一化和统计前移除越权项。
     if let Some(scope) = &allowed {
         curves.retain(|curve| scope.contains(&curve.file_id));
     }
@@ -2924,9 +3426,6 @@ pub(crate) fn run_native_with_connection(
         })
         .collect();
     let local_domain: HashSet<i64> = input.query_state.local_domain_ids.iter().copied().collect();
-    // Anchor hits count only Tags with a loadable vector, as when every candidate
-    // Tag was loaded up front, so the local-domain Tags are checked now; the
-    // other Tags are read only for the curves that survive selection.
     let file_tags = |curve: &Curve| curve_load.relations.get(&curve.file_id).into_iter().flatten();
     let domain_tag_ids: Vec<i64> = curves.iter().flat_map(file_tags)
         .map(|relation| relation.0).filter(|id| local_domain.contains(id)).collect();
@@ -2934,26 +3433,131 @@ pub(crate) fn run_native_with_connection(
     compute_anchor_scores(&mut curves, |curve| file_tags(curve)
         .filter(|relation| local_domain.contains(&relation.0) && tag_vectors.contains_key(&relation.0))
         .count());
+
+    // V9 Grassmannian Stiefel Frame U \in St(M+1, d) Construction:
+    // Orthonormalize [transfer_vector, basin_pole_1, basin_pole_2, ...] into a mutually orthogonal
+    // basis so chordal subspace projection ||U^T c||_2 never double-counts collinear poles!
+    let grassmann_frame: Vec<Vec<f32>> = if input.config.enable_grassmann_subspace_readout {
+        let mut basis: Vec<Vec<f64>> = Vec::new();
+        let mut raw_poles: Vec<&[f32]> = Vec::new();
+        if input.transfer_vector.len() == dimension {
+            raw_poles.push(&input.transfer_vector);
+        }
+        for pole in &cached_transfer_basins {
+            if pole.len() == dimension {
+                raw_poles.push(pole.as_slice());
+            }
+        }
+        for raw in raw_poles {
+            let mut v: Vec<f64> = raw.iter().map(|&x| x as f64).collect();
+            for b in &basis {
+                let dot_proj: f64 = v.iter().zip(b.iter()).map(|(a, b_val)| a * b_val).sum();
+                for (vi, &bi) in v.iter_mut().zip(b.iter()) {
+                    *vi -= dot_proj * bi;
+                }
+            }
+            let norm: f64 = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+            if norm > 0.15 {
+                for vi in &mut v {
+                    *vi /= norm;
+                }
+                basis.push(v);
+                if basis.len() >= 4 {
+                    break;
+                }
+            }
+        }
+        basis
+            .into_iter()
+            .map(|b| b.into_iter().map(|x| x as f32).collect())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     curves.par_iter_mut().for_each(|curve| {
         curve.query_score = cosine(&input.query.vector, &curve.chunk_vector);
         curve.denoised_score = cosine(&input.denoised_vector, &curve.chunk_vector);
         curve.local_score = cosine(&input.local_vector, &curve.chunk_vector);
         let centroid_transfer = cosine(&input.transfer_vector, &curve.chunk_vector);
-        // V8 Multi-Basin Max-Sim Transfer Readout:
-        // Take the envelope maximum across the global centroid and orthogonal Basin poles
-        // so multi-branch cross-domain inspirations never suffer mean-pooling cancellation.
-        let basin_max = cached_transfer_basins
+        let mut best_pole = centroid_transfer;
+        let mut second_pole = 0.0f64;
+        for pole in cached_transfer_basins
             .iter()
             .filter(|pole| pole.len() == curve.chunk_vector.len())
-            .map(|pole| cosine(pole, &curve.chunk_vector))
-            .fold(centroid_transfer, f64::max);
-        curve.transfer_score = centroid_transfer.max(basin_max);
+        {
+            let sim = cosine(pole, &curve.chunk_vector);
+            if sim > best_pole {
+                second_pole = best_pole.max(second_pole);
+                best_pole = sim;
+            } else if sim > second_pole {
+                second_pole = sim;
+            }
+        }
+        let simplicial_confluence = if best_pole > 0.25 && second_pole > 0.25 {
+            0.08 * (best_pole * second_pole).sqrt()
+        } else {
+            0.0
+        };
+        let grassmann_gain = if grassmann_frame.len() >= 2 {
+            let mut chordal_sq = 0.0f64;
+            let mut active_axes = 0usize;
+            for (axis_idx, axis) in grassmann_frame.iter().enumerate() {
+                let weight = 1.0 / (1.0 + 0.25 * axis_idx as f64);
+                let proj = positive(cosine(axis, &curve.chunk_vector));
+                if proj > 0.12 {
+                    active_axes += 1;
+                    chordal_sq += weight * proj * proj;
+                }
+            }
+            if active_axes >= 2 {
+                0.06 * (chordal_sq.sqrt() - best_pole.max(0.0)).max(0.0)
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+        curve.transfer_score = (best_pole + simplicial_confluence + grassmann_gain).min(1.0);
     });
     let projected_count = curves.len();
     let mut curves = select_superset(curves, &input.config);
     let selected_tag_ids: Vec<i64> = curves.iter().flat_map(file_tags).map(|relation| relation.0).collect();
     let selected_stats = ensure_tag_vectors_loaded(connection, &mut tag_vectors, &selected_tag_ids, dimension)?;
     attach_tags(&mut curves, &curve_load.relations, &tag_vectors);
+
+    // V9 Cellular Sheaf Cross-Chunk Supremum Section Envelope:
+    // When multiple chunks from the same file_id (or adjacent sections) enter the candidate pool,
+    // their individual `chunk_cosine` against the file's Tag curve represents only a local stalk.
+    // By taking a soft sheaf envelope \psi_f(t_l) = 0.72 * c_local + 0.28 * \max_{sibling} c_sibling,
+    // an introductory chunk and a conclusion chunk jointly illuminate the entire directed Tag river!
+    if input.config.enable_cellular_sheaf_envelope && curves.len() > 1 {
+        let mut file_tag_supremum: HashMap<(i64, i64), (f64, usize)> = HashMap::new();
+        let mut file_chunk_counts: HashMap<i64, usize> = HashMap::new();
+        for curve in &curves {
+            *file_chunk_counts.entry(curve.file_id).or_default() += 1;
+            for tag in &curve.tags {
+                let entry = file_tag_supremum
+                    .entry((curve.file_id, tag.id))
+                    .or_insert((0.0, 0));
+                if tag.chunk_cosine > entry.0 {
+                    entry.0 = tag.chunk_cosine;
+                }
+                entry.1 += 1;
+            }
+        }
+        for curve in &mut curves {
+            if file_chunk_counts.get(&curve.file_id).copied().unwrap_or(0) > 1 {
+                for tag in &mut curve.tags {
+                    if let Some(&(sup_cos, _)) = file_tag_supremum.get(&(curve.file_id, tag.id)) {
+                        if sup_cos > tag.chunk_cosine {
+                            tag.chunk_cosine = clamp01(0.72 * tag.chunk_cosine + 0.28 * sup_cos);
+                        }
+                    }
+                }
+            }
+        }
+    }
     let selected_count = curves.len();
 
     let workspace = FieldWorkspace {
@@ -3066,29 +3670,55 @@ pub(crate) fn run_native_with_connection(
                 + input.config.pure_local_weight
                 + input.config.pure_transfer_weight)
                 .max(1e-12);
-            let semantic_base = clamp01(
-                (input.config.pure_query_weight * clamp01(curve.query_score)
+            // V9 Dual-Manifold Semantic Base & Order-Preserving Bipartite Potential Coupling:
+            // 1) Allow `denoised_score` (which carries the orthogonal dipole query component) to support `query_score`;
+            // 2) Couple the 2-Simplex Stokes bipartite pullback score and geodesic edge graph score into the
+            //    structural potential so genuine cross-domain bridge notes are not crushed by single-cluster neighbors!
+            let effective_query_sim = if input.config.enable_grassmann_subspace_readout {
+                clamp01(curve.query_score).max(0.92 * clamp01(curve.denoised_score))
+            } else {
+                clamp01(curve.query_score)
+            };
+            let raw_semantic_base = clamp01(
+                (input.config.pure_query_weight * effective_query_sim
                     + input.config.pure_local_weight * clamp01(curve.local_score)
                     + input.config.pure_transfer_weight * clamp01(curve.transfer_score))
                     / semantic_total,
             );
+            let bipartite_synergy = if input.config.enable_bipartite_bridge_pullback
+                && curve.bipartite_score > 0.0
+            {
+                0.14 * curve.bipartite_score
+                    * (0.5 + 0.5 * observables.thematic.max(topology.edge_graph_score))
+            } else {
+                0.0
+            };
+            let semantic_base = clamp01(raw_semantic_base + bipartite_synergy);
             let topology_raw = clamp01(
-                0.625 * geometry.path_quality
-                    + 0.375
+                0.50 * geometry.path_quality
+                    + 0.20 * topology.edge_graph_score
+                    + 0.30
                         * clamp01(
-                            0.35 * observables.local_coverage
-                                + 0.25 * observables.transfer_coverage
-                                + 0.25 * clamp01(observables.local_potential)
-                                + 0.15 * clamp01(observables.transfer_potential),
+                            0.30 * observables.local_coverage
+                                + 0.30 * observables.transfer_coverage
+                                + 0.20 * clamp01(observables.local_potential)
+                                + 0.20 * clamp01(observables.transfer_potential),
                         ),
             );
-            let path_reliability =
-                clamp01(geometry.path_quality / input.config.topology_path_saturation.max(1e-6));
+            let path_reliability = clamp01(
+                geometry.path_quality.max(0.65 * topology.edge_graph_score)
+                    / input.config.topology_path_saturation.max(1e-6),
+            );
             let topology_reliability = (path_reliability * observables.query_chunk_score).sqrt();
-            let topology_bonus =
-                input.config.topology_bonus_cap * topology_raw * topology_reliability;
-            let pure_score =
-                clamp01(semantic_base + topology_bonus.min(input.config.topology_bonus_cap));
+            let effective_topo_cap = if input.config.enable_bipartite_bridge_pullback
+                && curve.bipartite_score >= 0.25
+            {
+                (input.config.topology_bonus_cap * 1.45).min(0.14)
+            } else {
+                input.config.topology_bonus_cap
+            };
+            let topology_bonus = effective_topo_cap * topology_raw * topology_reliability;
+            let pure_score = clamp01(semantic_base + topology_bonus.min(effective_topo_cap));
             let atomic_score = 0.75 * topology.node_graph_score + 0.25 * topology.edge_graph_score;
             let propositional_score =
                 0.25 * topology.node_graph_score + 0.75 * topology.edge_graph_score;
@@ -3302,5 +3932,198 @@ mod provenance_codec_tests {
             serde_json::json!([0, 0.3]), serde_json::json!([7, -0.3])] {
             assert!(decode_provenance_row(&invalid).is_none());
         }
+    }
+
+    #[test]
+    fn v9_bipartite_hypergraph_pullback_favors_forward_causal_order_and_zero_sql_curves() {
+        let mut bip = BipartiteHypergraphIndex::default();
+        bip.tag_names.insert(10, "TagA".to_string());
+        bip.tag_names.insert(20, "TagB".to_string());
+        // File 100 has forward narrative order: 10 (pos 0) -> 20 (pos 1)
+        bip.file_to_tags.insert(100, vec![(10, 0), (20, 1)]);
+        // File 200 has reverse narrative order: 20 (pos 0) -> 10 (pos 1)
+        bip.file_to_tags.insert(200, vec![(20, 0), (10, 1)]);
+        bip.tag_to_files.insert(10, vec![(100, 0, 0), (200, 65535, 1)]);
+        bip.tag_to_files.insert(20, vec![(100, 65535, 1), (200, 0, 0)]);
+        bip.file_primary_chunk.insert(100, 1001);
+        bip.file_primary_chunk.insert(200, 2001);
+
+        let artifact = NativeArtifact {
+            node_ids: vec![10, 20],
+            node_index: HashMap::from([(10, 0), (20, 1)]),
+            row_offsets: vec![0, 1, 1],
+            targets: vec![1],
+            weights: vec![0.8],
+            bipartite: Some(Arc::new(bip)),
+            ..NativeArtifact::default()
+        }
+        .prepared();
+
+        let nodes = vec![
+            RiverNode { id: 10, energy: 1.0, normalized_energy: 1.0, hop: 0 },
+            RiverNode { id: 20, energy: 0.6, normalized_energy: 0.6, hop: 2 },
+        ];
+        let edges = vec![RiverEdge {
+            source_id: 10,
+            target_id: 20,
+            flow: 0.5,
+            normalized_flow: 0.8,
+        }];
+        let pulled = artifact.pullback_bridge_candidates(
+            &nodes,
+            &edges,
+            &[(20, 0.5)],
+            None,
+            &HashSet::new(),
+            10,
+        );
+        assert_eq!(pulled.len(), 2);
+        // Forward causal order file 100 (chunk 1001) must outrank reverse file 200 (chunk 2001)
+        assert_eq!(pulled[0].0, 1001);
+        assert_eq!(pulled[1].0, 2001);
+        assert!(pulled[0].2 > pulled[1].2 * 1.5);
+
+        // Torture 1: Permission Scope Isolation & Empty Scope Zero-Leakage
+        let empty_scope: HashSet<i64> = HashSet::new();
+        assert!(
+            artifact
+                .pullback_bridge_candidates(&nodes, &edges, &[(20, 0.5)], Some(&empty_scope), &HashSet::new(), 10)
+                .is_empty(),
+            "Explicit empty allowed_files scope must never leak any bipartite bridge candidate"
+        );
+        let restricted_scope: HashSet<i64> = HashSet::from([200]);
+        let scoped = artifact.pullback_bridge_candidates(
+            &nodes,
+            &edges,
+            &[(20, 0.5)],
+            Some(&restricted_scope),
+            &HashSet::new(),
+            10,
+        );
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].1, 200);
+    }
+
+    #[test]
+    fn v9_torture_antipodal_poles_collinear_rank_deficiency_and_glass_ceiling_liberation() {
+        let mut bip = BipartiteHypergraphIndex::default();
+        for (id, name) in [(1, "SeedA"), (2, "FerryB"), (3, "TargetC"), (4, "DistractorD")] {
+            bip.tag_names.insert(id, name.to_string());
+        }
+        // File 10 (Bridge Note): 1 -> 2 -> 3, split across two sibling chunks (101: front, 102: back)
+        bip.file_to_tags.insert(10, vec![(1, 0), (2, 1), (3, 2)]);
+        // File 20 (Single-domain Direct Answer): only Tag 1
+        bip.file_to_tags.insert(20, vec![(1, 0)]);
+        bip.tag_to_files.insert(1, vec![(10, 0, 0), (20, 32768, 0)]);
+        bip.tag_to_files.insert(2, vec![(10, 32768, 1)]);
+        bip.tag_to_files.insert(3, vec![(10, 65535, 2)]);
+        bip.file_primary_chunk.insert(10, 101);
+        bip.file_primary_chunk.insert(20, 201);
+
+        let artifact = NativeArtifact {
+            node_ids: vec![1, 2, 3, 4],
+            node_index: HashMap::from([(1, 0), (2, 1), (3, 2), (4, 3)]),
+            row_offsets: vec![0, 1, 2, 2, 2],
+            targets: vec![1, 2],
+            weights: vec![0.9, 0.9],
+            wormhole_edges: HashSet::from([(2, 3)]),
+            bipartite: Some(Arc::new(bip)),
+            ..NativeArtifact::default()
+        }
+        .prepared();
+
+        // Torture 2: Path-Transitive Geodesic Homotopy when intermediate Hop-1 node (2) is missing from candidate tags
+        // Candidate has tags [1 (pos 0), 3 (pos 2)], river has 1 (hop 0) -> 2 (hop 1) -> 3 (hop 2)
+        let mut tag_vectors: TagVectorPool = TagVectorPool::new();
+        tag_vectors.insert(1, Arc::from(vec![1.0f32, 0.0, 0.0, 0.0]));
+        tag_vectors.insert(2, Arc::from(vec![0.0f32, 1.0, 0.0, 0.0]));
+        tag_vectors.insert(3, Arc::from(vec![0.0f32, 0.0, 1.0, 0.0]));
+
+        let transitive_curve = Curve {
+            id: 101,
+            file_id: 10,
+            tags: vec![
+                TagData {
+                    id: 1,
+                    name: "SeedA".into(),
+                    position: 0,
+                    vector: tag_vectors[&1].clone(),
+                    chunk_cosine: 0.75,
+                },
+                TagData {
+                    id: 3,
+                    name: "TargetC".into(),
+                    position: 2,
+                    vector: tag_vectors[&3].clone(),
+                    chunk_cosine: 0.80,
+                },
+            ],
+            chunk_vector: Arc::from(vec![0.5f32, 0.0, 0.866, 0.0]),
+            query_score: 0.50,
+            denoised_score: 0.78,
+            local_score: 0.60,
+            transfer_score: 0.85,
+            bipartite_score: 0.95,
+            bm25_score: 0.0,
+            time_score: 0.0,
+            anchor_score: 0.80,
+            union_score: 0.85,
+            union_rank: 1,
+            sources: vec!["query_knn".into()],
+        };
+
+        let mut input = NativeInput {
+            observation_handle: None,
+            dimension: 4,
+            top_k: 5,
+            include_trace: true,
+            allowed_file_ids: None,
+            query: QueryInput {
+                _text: "q".into(),
+                vector: vec![1.0, 0.0, 0.0, 0.0],
+            },
+            denoised_vector: vec![0.8, 0.0, 0.6, 0.0],
+            local_vector: vec![1.0, 0.0, 0.0, 0.0],
+            transfer_vector: vec![0.0, 0.0, 1.0, 0.0],
+            candidates: Vec::new(),
+            query_state: QueryStateInput {
+                query_id: Some("torture".into()),
+                source_field: vec![(1, 1.0)],
+                local_field: vec![(1, 1.0), (2, 0.5)],
+                transfer_field: vec![(2, 0.6), (3, 0.9)],
+                local_domain_ids: vec![1, 2],
+                transfer_domain_ids: vec![2, 3],
+                river_nodes: vec![
+                    RiverNode { id: 1, energy: 1.0, normalized_energy: 1.0, hop: 0 },
+                    RiverNode { id: 2, energy: 0.6, normalized_energy: 0.6, hop: 1 },
+                    RiverNode { id: 3, energy: 0.5, normalized_energy: 0.5, hop: 2 },
+                ],
+                river_edges: vec![
+                    RiverEdge { source_id: 1, target_id: 2, flow: 0.6, normalized_flow: 1.0 },
+                    RiverEdge { source_id: 2, target_id: 3, flow: 0.4, normalized_flow: 0.67 },
+                ],
+                field_provenance: vec![SourceProvenance { id: 1, hop: 0, source_type: "seed".into() }],
+                complete_observation: true,
+            },
+            config: NativeConfig::default(),
+        };
+
+        let cosines = CosineCache::build(
+            std::slice::from_ref(&transitive_curve),
+            &input.query.vector,
+            [1, 2, 3].into_iter(),
+            &tag_vectors,
+        );
+        let topo_v9 = evaluate_topology(&transitive_curve, &input, &artifact, &tag_vectors, &cosines);
+        assert!(
+            topo_v9.matched_edges >= 1 && topo_v9.edge_graph_score > 0.35,
+            "V9 Path-Transitive Homotopy must credit 2-hop river chain (1 -> 2 -> 3) when curve anchors (1 -> 3): {:?}",
+            topo_v9
+        );
+
+        // When flag is OFF, direct edge matching on (1->2) and (2->3) finds 0 matched edges because node 2 is absent!
+        input.config.enable_bipartite_bridge_pullback = false;
+        let topo_v8 = evaluate_topology(&transitive_curve, &input, &artifact, &tag_vectors, &cosines);
+        assert_eq!(topo_v8.matched_edges, 0);
     }
 }

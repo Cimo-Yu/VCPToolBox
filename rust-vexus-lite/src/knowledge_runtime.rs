@@ -2164,6 +2164,27 @@ impl NativeRiverQueryTask {
     fn compute_with_connection(&mut self, connection: &rusqlite::Connection) -> Result<String> {
         let total_started = std::time::Instant::now();
 
+        // V9 Grassmannian Multi-Pole Stage-1 ANN Beam Injection:
+        // Directly extract the top-2 orthogonal transfer basin poles from the active MemoQueryObservation
+        // and append them as bounded supplemental ANN queries (weight 0.78 / 0.72), breaking the rank-1
+        // single-vector bottleneck before Stage-2 Topology V3 begins.
+        if let Ok(plan_val) = serde_json::from_str::<serde_json::Value>(&self.river_input_json) {
+            if let Some(handle) = plan_val.get("observationHandle").and_then(|v| v.as_str()) {
+                if let Ok(obs) = self.runtime.get_query_observation(handle, &self.artifact_sig) {
+                    for (pole_idx, pole) in obs.transfer_basin_vectors.iter().take(2).enumerate() {
+                        if pole.len() == self.ann_task.dimension
+                            && self.ann_task.supplemental_queries.len() < 16
+                        {
+                            self.ann_task.supplemental_queries.push(pole.clone());
+                            self.ann_task
+                                .supplemental_weights
+                                .push(if pole_idx == 0 { 0.78 } else { 0.72 });
+                        }
+                    }
+                }
+            }
+        }
+
         // 复用已验证的原生 ANN/合并/语义去重实现。此处只在 Rust 内解析其
         // 小型 ID/分数结果，不发生 N-API resolve，也不携带向量跨边界。
         let ann_payload = self.ann_task.compute_with_connection(Some(connection))?;

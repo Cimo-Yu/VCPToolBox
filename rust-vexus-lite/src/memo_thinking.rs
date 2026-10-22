@@ -3,7 +3,7 @@
 //! Read-only method-module planning over one existing Sense observation.
 //! This is a propagation-supported scaffold, not a formal proof.
 use crate::memo_sensing::ObservationTransition;
-use crate::rivermemo_topology_v3::{load_artifact_with_connection, MemoRuntime};
+use crate::rivermemo_topology_v3::{load_artifact_with_connection, MemoRuntime, NativeArtifact};
 use crate::storage::with_registered_read_transaction;
 use napi::bindgen_prelude::*;
 use serde::{Deserialize, Serialize};
@@ -25,12 +25,23 @@ struct Input {
     stages: Vec<Stage>,
     #[serde(default = "default_closure")]
     min_closure: f64,
+    #[serde(default = "default_true")]
+    enable_viterbi_lookahead: bool,
+    #[serde(default = "default_true")]
+    enable_homotopy_relay: bool,
+    #[serde(default = "default_true")]
+    enable_grassmann_stage_resonance: bool,
+    #[serde(default = "default_true")]
+    enable_diagnostics: bool,
 }
 
 fn default_closure() -> f64 {
     0.2
 }
 
+fn default_true() -> bool {
+    true
+}
 #[derive(Clone)]
 struct Module {
     id: i64,
@@ -119,6 +130,56 @@ fn follows(left: &ObservationTransition, right: &ObservationTransition) -> bool 
         && right.previous_id == Some(left.source_id)
 }
 
+/// V9 Homotopy Continuation Kernel:
+/// 1) Returns `Some(1.0)` when strict `follows(left, right)` holds;
+/// 2) When `enable_homotopy_relay` is enabled and `right` advances in hop depth without folding back,
+///    awards a soft relay factor in `[0.60, 0.92]` if `left.target_id -> right.source_id` is bridged
+///    by a directed graph edge (`w >= 0.08`) or high-dimensional tangent cosine (`sim >= 0.72`).
+fn homotopy_continuation_factor(
+    left: &ObservationTransition,
+    right: &ObservationTransition,
+    enable_homotopy_relay: bool,
+    artifact: &NativeArtifact,
+    global_tag_vecs: &HashMap<i64, (Arc<[f32]>, f64)>,
+) -> Option<f64> {
+    if follows(left, right) {
+        return Some(1.0);
+    }
+    if !enable_homotopy_relay || right.immediate_return {
+        return None;
+    }
+    if right.hop < left.hop
+        || right.hop > left.hop + 2
+        || right.target_id == left.source_id
+        || right.source_id == left.source_id
+    {
+        return None;
+    }
+    if left.target_id == right.source_id && right.hop > left.hop {
+        return Some(0.92);
+    }
+    let graph_bridge = artifact.edge_weight(left.target_id, right.source_id);
+    if graph_bridge >= 0.08 {
+        return Some((0.80 + 0.12 * graph_bridge.min(1.0)).min(0.90));
+    }
+    if let (Some((u_vec, u_norm)), Some((v_vec, v_norm))) = (
+        global_tag_vecs.get(&left.target_id),
+        global_tag_vecs.get(&right.source_id),
+    ) {
+        if *u_norm > 1e-12 && *v_norm > 1e-12 && u_vec.len() == v_vec.len() {
+            let dot: f64 = u_vec
+                .iter()
+                .zip(v_vec.iter())
+                .map(|(&a, &b)| (a as f64) * (b as f64))
+                .sum();
+            let sim = dot / (u_norm * v_norm);
+            if sim >= 0.72 {
+                return Some((0.85 * sim).clamp(0.60, 0.88));
+            }
+        }
+    }
+    None
+}
 pub(crate) fn plan(
     runtime: &MemoRuntime,
     db_path: &str,
@@ -201,10 +262,44 @@ pub(crate) fn plan(
             0.0
         };
 
-        // Share Tag vectors by unique `tag_id` via `Arc<[f32]>` (seeded from `cached_obs.tag_vectors`),
-        // and store only lightweight `(position, tag_id)` tuples per `file_id` so multi-file requests
-        // never duplicate high-dimensional vectors across files.
+        // V9 Grassmannian Stiefel Frame U \in St(M+1, d) for Multi-Pole Stage Resonance:
+        let grassmann_poles: Vec<Vec<f32>> = if input.enable_grassmann_stage_resonance {
+            let mut basis: Vec<Vec<f64>> = Vec::new();
+            for pole in cached.transfer_basin_vectors.iter().take(4) {
+                if pole.len() != dimension {
+                    continue;
+                }
+                let mut v: Vec<f64> = pole.iter().map(|&x| x as f64).collect();
+                for b in &basis {
+                    let dot_p: f64 = v.iter().zip(b.iter()).map(|(a, b_val)| a * b_val).sum();
+                    for (vi, &bi) in v.iter_mut().zip(b.iter()) {
+                        *vi -= dot_p * bi;
+                    }
+                }
+                let n: f64 = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+                if n > 0.15 {
+                    for vi in &mut v {
+                        *vi /= n;
+                    }
+                    basis.push(v);
+                }
+            }
+            basis
+                .into_iter()
+                .map(|b| b.into_iter().map(|x| x as f32).collect())
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Audit P1-4 Hard Budgets: cap unique cached tag vectors and active transition evaluations.
         const MAX_CACHED_UNIQUE_TAGS: usize = 4096;
+        const MAX_ACTIVE_TRANSITIONS: usize = 1024;
+        let active_transitions: &[ObservationTransition] = if observation.transitions.len() > MAX_ACTIVE_TRANSITIONS {
+            &observation.transitions[..MAX_ACTIVE_TRANSITIONS]
+        } else {
+            &observation.transitions
+        };
         let mut file_tags_cache: HashMap<i64, Vec<(usize, i64)>> = HashMap::new();
         let mut global_tag_vecs: HashMap<i64, (Arc<[f32]>, f64)> = HashMap::new();
         for (&tid, vec_arc) in cached.tag_vectors.iter().take(MAX_CACHED_UNIQUE_TAGS) {
@@ -296,7 +391,18 @@ pub(crate) fn plan(
                     let c_orig = if norm_orig > 1e-12 { (d_orig / (v_norm * norm_orig)).clamp(0.0, 1.0) } else { 0.0 };
                     let c_enh = if has_enh { (d_enh / (v_norm * norm_enh)).clamp(0.0, 1.0) } else { c_orig };
                     let c_loc = if has_loc { (d_loc / (v_norm * norm_loc)).clamp(0.0, 1.0) } else { c_orig };
-                    let c_trf = if has_trf { (d_trf / (v_norm * norm_trf)).clamp(0.0, 1.0) } else { c_orig };
+                    let mut c_trf = if has_trf { (d_trf / (v_norm * norm_trf)).clamp(0.0, 1.0) } else { c_orig };
+                    if !grassmann_poles.is_empty() {
+                        let mut chordal_sq = 0.0f64;
+                        for (p_idx, pole) in grassmann_poles.iter().enumerate() {
+                            let p_cos = cosine(&vector, pole);
+                            if p_cos > c_trf {
+                                c_trf = p_cos;
+                            }
+                            chordal_sq += (1.0 / (1.0 + 0.25 * p_idx as f64)) * p_cos * p_cos;
+                        }
+                        c_trf = c_trf.max(chordal_sq.sqrt().min(1.0));
+                    }
                     let multi_env = 0.45 * c_orig + 0.25 * c_enh + 0.15 * c_loc + 0.15 * c_trf;
                     c_orig.max(multi_env)
                 } else {
@@ -318,54 +424,59 @@ pub(crate) fn plan(
         // continued by any valid module in stage s + 1. This prevents stage-1 greedy lock-in
         // on dead-end edges when a slightly lower edge unlocks a multi-stage causal chain.
         let num_stages = stage_modules.len();
-        let num_transitions = observation.transitions.len();
+        let num_transitions = active_transitions.len();
         let mut stage_edge_best_intrinsic: Vec<Vec<f64>> = vec![vec![0.0; num_transitions]; num_stages];
-        for (s_idx, (_, modules)) in stage_modules.iter().enumerate() {
-            for (e_idx, edge) in observation.transitions.iter().enumerate() {
-                if edge.immediate_return {
-                    continue;
-                }
-                let hop_max = max_flow_by_hop.get(&edge.hop).copied().unwrap_or(maximum_flow).max(1e-12);
-                let flow_norm = 0.5 * (edge.flow / maximum_flow.max(1e-12)) + 0.5 * (edge.flow / hop_max);
-                let mut best_mod_score = 0.0f64;
-                for m in modules {
-                    if let (Some((a_pos, a_c)), Some((b_pos, b_c))) = (
-                        m.tags.get(&edge.source_id),
-                        m.tags.get(&edge.target_id),
-                    ) {
-                        if *a_pos < *b_pos && *a_c >= input.min_closure && *b_c >= input.min_closure {
-                            let ind = artifact.independent_fraction(edge.source_id, edge.target_id, m.file_id);
-                            let sc = flow_norm * (a_c * b_c).sqrt() * ind;
-                            if sc > best_mod_score {
-                                best_mod_score = sc;
+        if input.enable_viterbi_lookahead {
+            for (s_idx, (_, modules)) in stage_modules.iter().enumerate() {
+                for (e_idx, edge) in active_transitions.iter().enumerate() {
+                    if edge.immediate_return {
+                        continue;
+                    }
+                    let hop_max = max_flow_by_hop.get(&edge.hop).copied().unwrap_or(maximum_flow).max(1e-12);
+                    let flow_norm = 0.5 * (edge.flow / maximum_flow.max(1e-12)) + 0.5 * (edge.flow / hop_max);
+                    let ricci_gain = 0.85 + 0.15 * artifact.edge_ricci_factor(edge.source_id, edge.target_id);
+                    let mut best_mod_score = 0.0f64;
+                    for m in modules {
+                        if let (Some((a_pos, a_c)), Some((b_pos, b_c))) = (
+                            m.tags.get(&edge.source_id),
+                            m.tags.get(&edge.target_id),
+                        ) {
+                            if *a_pos < *b_pos && *a_c >= input.min_closure && *b_c >= input.min_closure {
+                                let ind = artifact.independent_fraction(edge.source_id, edge.target_id, m.file_id);
+                                let sc = flow_norm * (a_c * b_c).sqrt() * ind * ricci_gain;
+                                if sc > best_mod_score {
+                                    best_mod_score = sc;
+                                }
                             }
                         }
                     }
+                    stage_edge_best_intrinsic[s_idx][e_idx] = best_mod_score;
                 }
-                stage_edge_best_intrinsic[s_idx][e_idx] = best_mod_score;
             }
         }
 
         // Build predecessor adjacency index `(hop, previous_id, source_id) -> Vec<next_e_idx>`
         // so Backward Viterbi DP evaluates only valid causal successors instead of O(S * |T|^2) all-pairs scans!
         let mut next_edges_by_pred: HashMap<(usize, Option<i64>, i64), Vec<usize>> = HashMap::new();
-        for (next_e_idx, next_edge) in observation.transitions.iter().enumerate() {
-            if !next_edge.immediate_return && next_edge.hop > 1 {
-                next_edges_by_pred
-                    .entry((next_edge.hop, next_edge.previous_id, next_edge.source_id))
-                    .or_default()
-                    .push(next_e_idx);
+        if input.enable_viterbi_lookahead {
+            for (next_e_idx, next_edge) in active_transitions.iter().enumerate() {
+                if !next_edge.immediate_return && next_edge.hop > 1 {
+                    next_edges_by_pred
+                        .entry((next_edge.hop, next_edge.previous_id, next_edge.source_id))
+                        .or_default()
+                        .push(next_e_idx);
+                }
             }
         }
 
         // Backward DP sweep: beta[s][e_idx] = max future continuation chain value from stage s+1..num_stages
         let mut beta_lookahead: Vec<Vec<f64>> = vec![vec![0.0; num_transitions]; num_stages];
-        if num_stages >= 2 {
+        if input.enable_viterbi_lookahead && num_stages >= 2 {
             for s_idx in (0..num_stages - 1).rev() {
                 if stage_modules[s_idx + 1].0.k == 0 {
                     continue;
                 }
-                for (e_idx, edge) in observation.transitions.iter().enumerate() {
+                for (e_idx, edge) in active_transitions.iter().enumerate() {
                     if stage_edge_best_intrinsic[s_idx][e_idx] <= 0.0 {
                         continue;
                     }
@@ -404,7 +515,7 @@ pub(crate) fn plan(
                     let mut best_route = None;
                     let mut best_parents = Vec::new();
                     let mut best_route_score = 0.0;
-                    for (e_idx, edge) in observation.transitions.iter().enumerate() {
+                    for (e_idx, edge) in active_transitions.iter().enumerate() {
                         if edge.immediate_return {
                             continue;
                         }
@@ -418,7 +529,7 @@ pub(crate) fn plan(
                         let flow_norm = 0.5 * (edge.flow / maximum_flow.max(1e-12)) + 0.5 * (edge.flow / hop_max);
 
                         // Inverse Topology Diagnostics (Counterfactual Bottleneck Detection on 1st pick):
-                        if pick_iter == 0 {
+                        if input.enable_diagnostics && pick_iter == 0 {
                             if *a_pos >= *b_pos && *a_closure >= input.min_closure && *b_closure >= input.min_closure {
                                 let ind = artifact.independent_fraction(edge.source_id, edge.target_id, module.file_id);
                                 let counterfactual = 0.65 * flow_norm * (a_closure * b_closure).sqrt() * ind;
@@ -465,14 +576,23 @@ pub(crate) fn plan(
                         {
                             continue;
                         }
+                        let mut best_relay_factor = 0.0f64;
                         let parents: Vec<i64> = selected
                             .iter()
-                            .filter(|s| {
-                                s.route
-                                    .as_ref()
-                                    .is_some_and(|previous| follows(previous, edge))
+                            .filter_map(|s| {
+                                let prev = s.route.as_ref()?;
+                                let factor = homotopy_continuation_factor(
+                                    prev,
+                                    edge,
+                                    input.enable_homotopy_relay,
+                                    &artifact,
+                                    &global_tag_vecs,
+                                )?;
+                                if factor > best_relay_factor {
+                                    best_relay_factor = factor;
+                                }
+                                Some(s.chunk_id)
                             })
-                            .map(|s| s.chunk_id)
                             .collect();
                         if edge.hop != 1 && parents.is_empty() {
                             continue;
@@ -488,7 +608,7 @@ pub(crate) fn plan(
                             edge.target_id,
                             module.file_id,
                         );
-                        if pick_iter == 0 && independent < 0.25 && flow_norm * (a_closure * b_closure).sqrt() > 0.20 {
+                        if input.enable_diagnostics && pick_iter == 0 && independent < 0.25 && flow_norm * (a_closure * b_closure).sqrt() > 0.20 {
                             let gain = 0.65 * flow_norm * (a_closure * b_closure).sqrt() * (0.85 - independent);
                             optimization_hints.push(OptimizationHint {
                                 stage: stage.diary_name.clone(),
@@ -503,14 +623,27 @@ pub(crate) fn plan(
                                 ),
                             });
                         }
+                        // V8.5 Magnetic Laplacian Causal Phase Coherence + V9 Ricci Negative-Curvature Gain:
+                        let chain_len = module.ordered_tags.len().max(2) as f64;
+                        let phase_span = ((*b_pos as f64 - *a_pos as f64) / (chain_len - 1.0)).clamp(0.0, 1.0);
+                        let magnetic_phase_gain = 0.96 + 0.08 * (std::f64::consts::FRAC_PI_2 * phase_span).sin();
+                        let ricci_gain = 0.92 + 0.12 * artifact.edge_ricci_factor(edge.source_id, edge.target_id);
                         let base_score = flow_norm
                             * (a_closure * b_closure).sqrt()
                             * independent
-                            * novelty;
-                        let parent_factor = if parents.is_empty() { 0.8 } else { 1.0 };
-                        // Add Viterbi future continuation lookahead bonus (bounded to 0.15 * beta)
-                        // so routes that bridge into subsequent stages win ties and near-ties.
-                        let viterbi_future = 0.15 * beta_lookahead[s_idx][e_idx];
+                            * novelty
+                            * magnetic_phase_gain
+                            * ricci_gain;
+                        let parent_factor = if parents.is_empty() {
+                            0.8
+                        } else {
+                            best_relay_factor.clamp(0.8, 1.0)
+                        };
+                        let viterbi_future = if input.enable_viterbi_lookahead {
+                            0.15 * beta_lookahead[s_idx][e_idx]
+                        } else {
+                            0.0
+                        };
                         let score = (base_score * parent_factor + viterbi_future).min(1.0);
                         if score > best_route_score {
                             best_route_score = score;
@@ -884,6 +1017,40 @@ mod tests {
             "Inverse topology diagnostics must detect TAG_ORDER_INVERTED on module 21: {:?}",
             hints
         );
+        // Verify V9 Homotopy Continuation Kernel & Isolation Flags
+        let e1 = ObservationTransition {
+            hop: 1,
+            previous_id: None,
+            source_id: 1,
+            target_id: 2,
+            flow: 0.6,
+            wormhole: false,
+            immediate_return: false,
+        };
+        let e2_homotopy = ObservationTransition {
+            hop: 2,
+            previous_id: Some(2),
+            source_id: 3,
+            target_id: 1,
+            flow: 0.5,
+            wormhole: false,
+            immediate_return: false,
+        };
+        let e2_valid_bridge = ObservationTransition {
+            hop: 2,
+            previous_id: Some(2),
+            source_id: 3,
+            target_id: 99,
+            flow: 0.5,
+            wormhole: false,
+            immediate_return: false,
+        };
+        assert!(!follows(&e1, &e2_valid_bridge));
+        assert!(homotopy_continuation_factor(&e1, &e2_homotopy, true, &graph, &HashMap::new()).is_none());
+        assert!(homotopy_continuation_factor(&e1, &e2_valid_bridge, false, &graph, &HashMap::new()).is_none());
+        let relay = homotopy_continuation_factor(&e1, &e2_valid_bridge, true, &graph, &HashMap::new());
+        assert!(relay.is_some_and(|f| f >= 0.85));
+
         runtime.clear().unwrap();
         assert!(plan(&runtime, db_path, "fixture", &input.to_string()).is_err());
         storage.shutdown().unwrap();

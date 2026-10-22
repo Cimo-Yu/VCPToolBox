@@ -738,6 +738,7 @@ mod tests {
                 vec![],
                 vec![],
                 vec![],
+                vec![],
                 Arc::new(HashMap::new()),
                 0,
             )

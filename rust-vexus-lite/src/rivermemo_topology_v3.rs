@@ -510,6 +510,7 @@ pub(crate) struct MemoQueryObservation {
     pub(crate) enhanced_query_vector: Arc<Vec<f32>>,
     pub(crate) local_vector: Arc<Vec<f32>>,
     pub(crate) transfer_vector: Arc<Vec<f32>>,
+    pub(crate) transfer_basin_vectors: Arc<Vec<Vec<f32>>>,
     pub(crate) local_field: Arc<Vec<(i64, f64)>>,
     pub(crate) transfer_field: Arc<Vec<(i64, f64)>>,
     pub(crate) local_domain_ids: Arc<Vec<i64>>,
@@ -541,6 +542,8 @@ impl MemoQueryObservation {
             + [&self.original_query_vector, &self.enhanced_query_vector,
                 &self.local_vector, &self.transfer_vector].iter()
                 .map(|vector| vector.capacity() * size_of::<f32>()).sum::<usize>()
+            + self.transfer_basin_vectors.iter()
+                .map(|v| v.capacity() * size_of::<f32>()).sum::<usize>()
             + (self.local_field.capacity() + self.transfer_field.capacity())
                 * size_of::<(i64, f64)>()
             + self.tag_vectors.values().map(|v| v.len() * size_of::<f32>()).sum::<usize>()
@@ -662,6 +665,7 @@ impl MemoRuntime {
         enhanced_query_vector: Vec<f32>,
         local_vector: Vec<f32>,
         transfer_vector: Vec<f32>,
+        transfer_basin_vectors: Vec<Vec<f32>>,
         local_field: Vec<(i64, f64)>,
         transfer_field: Vec<(i64, f64)>,
         local_domain_ids: Vec<i64>,
@@ -689,6 +693,7 @@ impl MemoRuntime {
             enhanced_query_vector: Arc::new(enhanced_query_vector),
             local_vector: Arc::new(local_vector),
             transfer_vector: Arc::new(transfer_vector),
+            transfer_basin_vectors: Arc::new(transfer_basin_vectors),
             local_field: Arc::new(local_field),
             transfer_field: Arc::new(transfer_field),
             local_domain_ids: Arc::new(local_domain_ids),
@@ -1928,13 +1933,55 @@ fn evaluate_observables(
     let transfer_mean = transfer_potential / chain_size;
     let tail_ratio = tail_only as f64 / chain_size;
     let dual_agreement = 1.0 - (clamp01(local_mean) - clamp01(transfer_mean)).abs();
+
+    // V8 Gentner Structure-Mapping Bridge Dipole Operator:
+    // True cross-domain inspiration requires a directed bridge along the ordered 1-Simplex Tag curve:
+    // an anchor foot in the local/seed domain followed by a mechanism/transfer foot in the transfer domain
+    // (or reverse with directional credit), weighted by tag-to-chunk closure so generic touch-and-go tags cannot freeload.
+    let mut best_dipole = 0.0f64;
+    if local_contacts > 0 && transfer_contacts > 0 && curve.tags.len() >= 2 {
+        for (i, left_tag) in curve.tags.iter().enumerate() {
+            let l_mass = workspace.local.get(&left_tag.id).copied().unwrap_or(0.0);
+            let l_is_local = workspace.local_domain.contains(&left_tag.id)
+                || workspace.source_ids.contains(&left_tag.id);
+            if !l_is_local && l_mass <= 0.0 {
+                continue;
+            }
+            let l_strength = (l_mass.max(if l_is_local { 0.35 } else { 0.0 })
+                * left_tag.chunk_cosine.max(0.2))
+            .sqrt();
+            for (j, right_tag) in curve.tags.iter().enumerate() {
+                if i == j || left_tag.id == right_tag.id {
+                    continue;
+                }
+                let t_mass = workspace.transfer.get(&right_tag.id).copied().unwrap_or(0.0);
+                let t_is_transfer = workspace.transfer_domain.contains(&right_tag.id);
+                if !t_is_transfer && t_mass <= 0.0 {
+                    continue;
+                }
+                let t_strength = (t_mass.max(if t_is_transfer { 0.35 } else { 0.0 })
+                    * right_tag.chunk_cosine.max(0.2))
+                .sqrt();
+                let dir_factor = if j > i { 1.0 } else { 0.65 };
+                let span_decay = (-0.12 * ((j as isize - i as isize).abs().saturating_sub(1) as f64)).exp();
+                let dipole = (l_strength * t_strength).sqrt() * dir_factor * span_decay;
+                if dipole > best_dipole {
+                    best_dipole = dipole;
+                }
+            }
+        }
+    }
+    let dipole_bonus = 0.12 * clamp01(best_dipole);
+
     let thematic = clamp01(
-        0.25 * local_coverage
+        (0.25 * local_coverage
             + 0.2 * transfer_coverage
             + 0.2 * clamp01(local_mean)
             + 0.15 * clamp01(transfer_mean)
-            + 0.2 * dual_agreement,
-    ) * (1.0 - 0.5 * clamp01(tail_ratio));
+            + 0.2 * dual_agreement
+            + dipole_bonus)
+            * (1.0 - 0.5 * clamp01(tail_ratio)),
+    );
     let query_chunk = clamp01(cosine(&input.query.vector, &curve.chunk_vector));
     let direct_contact = clamp01(exact_seed_hits as f64 / workspace.source_ids.len().max(1) as f64);
     let semantic_boundary_score = if boundary >= 0.55 { boundary } else { 0.0 };
@@ -2468,16 +2515,42 @@ fn assign_v3_scores(
         .map(|item| item.pure_score)
         .fold(0.0, f64::max);
 
-    // Pre-normalize candidate chunk vectors for DPP / Schur-complement subspace coherence
-    // so orthogonal cross-domain inspirations do not cannibalize each other's innovation bonus.
+    // V8 Tangent Tag-Curve Subspace + Chunk DPP Coherence:
+    // Blend candidate's activated Tag curve direction (weighted by chunk_cosine) with chunk_vector
+    // so two notes sharing background narrative tone but exploring orthogonal Tag mechanisms
+    // are recognized as independent subspace directions in the Schur peer kernel.
     let unit_chunks: Vec<(Vec<f32>, bool)> = work
         .iter()
         .map(|item| {
-            let v = &item.curve.chunk_vector;
-            let norm_sq: f64 = v.iter().map(|&x| (x as f64) * (x as f64)).sum();
+            let dim = item.curve.chunk_vector.len();
+            if dim == 0 {
+                return (Vec::new(), false);
+            }
+            let mut combined = vec![0.0f64; dim];
+            let mut tag_weight_sum = 0.0f64;
+            for tag in &item.curve.tags {
+                if tag.vector.len() == dim {
+                    let w = tag.chunk_cosine.max(0.15);
+                    tag_weight_sum += w;
+                    for (acc, &tv) in combined.iter_mut().zip(tag.vector.iter()) {
+                        *acc += (tv as f64) * w;
+                    }
+                }
+            }
+            if tag_weight_sum > 1e-12 {
+                let inv_tw = 1.0 / tag_weight_sum;
+                for (acc, &cv) in combined.iter_mut().zip(item.curve.chunk_vector.iter()) {
+                    *acc = 0.45 * (cv as f64) + 0.55 * (*acc * inv_tw);
+                }
+            } else {
+                for (acc, &cv) in combined.iter_mut().zip(item.curve.chunk_vector.iter()) {
+                    *acc = cv as f64;
+                }
+            }
+            let norm_sq: f64 = combined.iter().map(|&x| x * x).sum();
             if norm_sq > 1e-12 {
-                let inv = (1.0 / norm_sq.sqrt()) as f32;
-                (v.iter().map(|&x| x * inv).collect(), true)
+                let inv = 1.0 / norm_sq.sqrt();
+                (combined.into_iter().map(|x| (x * inv) as f32).collect(), true)
             } else {
                 (Vec::new(), false)
             }
@@ -2758,6 +2831,7 @@ pub(crate) fn run_native_with_connection(
     let mut input: NativeInput = serde_json::from_str(input_json)
         .map_err(|error| format!("invalid RiverMemo native input JSON: {}", error))?;
     let mut tag_vectors = TagVectorPool::new();
+    let mut cached_transfer_basins: Vec<Vec<f32>> = Vec::new();
     if let Some(handle) = input.observation_handle.as_deref() {
         let cached = runtime.get_query_observation(handle, artifact_sig)?;
         if cached.database_generation != crate::storage::read_generation(connection)? {
@@ -2768,6 +2842,7 @@ pub(crate) fn run_native_with_connection(
         input.denoised_vector = cached.enhanced_query_vector.as_ref().clone();
         input.local_vector = cached.local_vector.as_ref().clone();
         input.transfer_vector = cached.transfer_vector.as_ref().clone();
+        cached_transfer_basins = cached.transfer_basin_vectors.as_ref().clone();
         input.query_state.source_field = cached.observation.source_field.clone();
         input.query_state.local_field = cached.local_field.as_ref().clone();
         input.query_state.transfer_field = cached.transfer_field.as_ref().clone();
@@ -2863,7 +2938,16 @@ pub(crate) fn run_native_with_connection(
         curve.query_score = cosine(&input.query.vector, &curve.chunk_vector);
         curve.denoised_score = cosine(&input.denoised_vector, &curve.chunk_vector);
         curve.local_score = cosine(&input.local_vector, &curve.chunk_vector);
-        curve.transfer_score = cosine(&input.transfer_vector, &curve.chunk_vector);
+        let centroid_transfer = cosine(&input.transfer_vector, &curve.chunk_vector);
+        // V8 Multi-Basin Max-Sim Transfer Readout:
+        // Take the envelope maximum across the global centroid and orthogonal Basin poles
+        // so multi-branch cross-domain inspirations never suffer mean-pooling cancellation.
+        let basin_max = cached_transfer_basins
+            .iter()
+            .filter(|pole| pole.len() == curve.chunk_vector.len())
+            .map(|pole| cosine(pole, &curve.chunk_vector))
+            .fold(centroid_transfer, f64::max);
+        curve.transfer_score = centroid_transfer.max(basin_max);
     });
     let projected_count = curves.len();
     let mut curves = select_superset(curves, &input.config);

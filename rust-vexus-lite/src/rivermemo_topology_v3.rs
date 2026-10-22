@@ -312,6 +312,9 @@ pub(crate) struct NativeArtifact {
     pub(crate) provenance: HashMap<(i64, i64), Vec<(i64, f64)>>,
     pub(crate) node_anchor_gain: Vec<f64>,
     pub(crate) edge_is_wormhole: Vec<bool>,
+    /// Rényi-2 collision entropy row L2 norm: \sqrt{\sum_v w_{uv}^2}.
+    /// Decouples L2 wavepacket firing amplitude from L1 probability mass conservation.
+    pub(crate) row_l2_norm: Vec<f64>,
 }
 
 impl NativeArtifact {
@@ -321,6 +324,7 @@ impl NativeArtifact {
         self.node_anchor_gain = self.node_ids.iter()
             .map(|id| self.anchor_gain.get(id).copied().unwrap_or(1.0)).collect();
         self.edge_is_wormhole = vec![false; self.targets.len()];
+        self.row_l2_norm = vec![1.0; self.node_ids.len()];
         for source in 0..self.node_ids.len() {
             let start = self.row_offsets[source];
             let end = self.row_offsets[source + 1];
@@ -328,12 +332,17 @@ impl NativeArtifact {
                 .map(|cursor| (self.targets[cursor], self.weights[cursor])).collect();
             row.sort_by(|left, right| positive(right.1).total_cmp(&positive(left.1))
                 .then_with(|| self.node_ids[left.0].cmp(&self.node_ids[right.0])));
+            let mut sum_sq = 0.0;
             for (cursor, (target, weight)) in (start..end).zip(row) {
                 self.targets[cursor] = target;
                 self.weights[cursor] = weight;
+                let pw = positive(weight);
+                sum_sq += pw * pw;
                 self.edge_is_wormhole[cursor] = self.wormhole_edges
                     .contains(&(self.node_ids[source], self.node_ids[target]));
             }
+            let l2 = sum_sq.sqrt();
+            self.row_l2_norm[source] = if l2 > 1e-12 { l2 } else { 1.0 };
         }
         self
     }
@@ -2351,6 +2360,22 @@ fn assign_v3_scores(
         .map(|item| item.pure_score)
         .fold(0.0, f64::max);
 
+    // Pre-normalize candidate chunk vectors for DPP / Schur-complement subspace coherence
+    // so orthogonal cross-domain inspirations do not cannibalize each other's innovation bonus.
+    let unit_chunks: Vec<(Vec<f32>, bool)> = work
+        .iter()
+        .map(|item| {
+            let v = &item.curve.chunk_vector;
+            let norm_sq: f64 = v.iter().map(|&x| (x as f64) * (x as f64)).sum();
+            if norm_sq > 1e-12 {
+                let inv = (1.0 / norm_sq.sqrt()) as f32;
+                (v.iter().map(|&x| x * inv).collect(), true)
+            } else {
+                (Vec::new(), false)
+            }
+        })
+        .collect();
+
     for index in 0..work.len() {
         let mut peers: Vec<(usize, f64)> = (0..work.len())
             .filter(|peer| *peer != index)
@@ -2367,9 +2392,28 @@ fn assign_v3_scores(
                 } else {
                     0.35
                 };
+                // DPP Subspace-Orthogonal Peer Decoupling (Schur Complement Coherence):
+                // Candidates spanning orthogonal semantic subspaces (low cosine) are independent
+                // inspirations, not redundant peers competing in the same direction.
+                let subspace_coherence = if unit_chunks[index].1
+                    && unit_chunks[peer].1
+                    && unit_chunks[index].0.len() == unit_chunks[peer].0.len()
+                {
+                    let cos: f64 = unit_chunks[index]
+                        .0
+                        .iter()
+                        .zip(unit_chunks[peer].0.iter())
+                        .map(|(&a, &b)| (a as f64) * (b as f64))
+                        .sum();
+                    let pos_cos = cos.clamp(0.0, 1.0);
+                    0.10 + 0.90 * (pos_cos * pos_cos)
+                } else {
+                    1.0
+                };
                 (
                     peer,
                     role_weight
+                        * subspace_coherence
                         * (-0.5
                             * (pure_delta * pure_delta
                                 + closure_delta * closure_delta

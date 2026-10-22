@@ -452,43 +452,234 @@ struct PyramidOutput {
     features: PyramidFeatures,
 }
 
+/// Load the global manifold mean vector \mathbf{m} from `epa_basis_cache` if available,
+/// enabling Intrinsic Centered Tangent-Space geometry across both EPA and Pyramid.
+fn load_epa_mean(connection: &Connection, dimension: usize) -> Option<Vec<f32>> {
+    let raw = connection
+        .query_row(
+            "SELECT value FROM kv_store WHERE key = 'epa_basis_cache'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()?;
+    let cache: EpaCache = serde_json::from_str(&raw).ok()?;
+    let mean = decode_f32_base64(&cache.mean, dimension)?;
+    let mean_energy: f64 = mean.iter().map(|&v| (v as f64) * (v as f64)).sum();
+    if mean_energy > 1e-9 {
+        Some(mean)
+    } else {
+        None
+    }
+}
+
+/// Löwdin Symmetric Orthogonalization (\Phi = V S^{-1/2}) via cyclic Jacobi eigendecomposition
+/// on the k \times k Gram matrix R^T R (where V = Q R from Giraud-Langou QR).
+/// Theorem (Löwdin 1950): Among all orthonormal bases spanning col(V), \Phi = V(V^T V)^{-1/2}
+/// uniquely minimizes \sum_i ||\phi_i - v_i||^2 and is strictly permutation-invariant,
+/// while preserving the exact subspace projection \Phi \Phi^T \equiv Q Q^T and energy ||c_sym||^2 \equiv ||c_GS||^2.
+fn lowdin_symmetric_contributions(r_mat: &[Vec<f64>], signed_qr_coeffs: &[f64], k: usize) -> Vec<f64> {
+    let m = signed_qr_coeffs.len();
+    if m <= 1 || r_mat.len() != m {
+        let mut out = vec![0.0; k];
+        if m == 1 {
+            out[0] = signed_qr_coeffs[0].abs();
+        }
+        return out;
+    }
+    // Construct symmetric overlap matrix S = R^T R in the active m-dimensional subspace,
+    // and b = R^T c_qr = V^T q.
+    let mut s = vec![vec![0.0f64; m]; m];
+    let mut b = vec![0.0f64; m];
+    for i in 0..m {
+        let mut bi = 0.0;
+        for r in 0..m {
+            bi += r_mat[r][i] * signed_qr_coeffs[r];
+        }
+        b[i] = bi;
+        for j in i..m {
+            let mut sum = 0.0;
+            for r in 0..m {
+                sum += r_mat[r][i] * r_mat[r][j];
+            }
+            s[i][j] = sum;
+            s[j][i] = sum;
+        }
+    }
+    // Cyclic Jacobi eigendecomposition of m x m symmetric positive-definite matrix S (m <= 16)
+    let mut eig_vecs = vec![vec![0.0f64; m]; m];
+    for i in 0..m {
+        eig_vecs[i][i] = 1.0;
+    }
+    for _sweep in 0..12 {
+        let mut max_off = 0.0f64;
+        for p in 0..m {
+            for q in (p + 1)..m {
+                max_off = max_off.max(s[p][q].abs());
+            }
+        }
+        if max_off < 1e-13 {
+            break;
+        }
+        for p in 0..m {
+            for q in (p + 1)..m {
+                let apq = s[p][q];
+                if apq.abs() < 1e-14 {
+                    continue;
+                }
+                let app = s[p][p];
+                let aqq = s[q][q];
+                let tau = (aqq - app) / (2.0 * apq);
+                let t = if tau >= 0.0 {
+                    1.0 / (tau + (1.0 + tau * tau).sqrt())
+                } else {
+                    -1.0 / (-tau + (1.0 + tau * tau).sqrt())
+                };
+                let c = 1.0 / (1.0 + t * t).sqrt();
+                let sn = t * c;
+                s[p][p] = app - t * apq;
+                s[q][q] = aqq + t * apq;
+                s[p][q] = 0.0;
+                s[q][p] = 0.0;
+                for r in 0..m {
+                    if r != p && r != q {
+                        let arp = s[r][p];
+                        let arq = s[r][q];
+                        s[r][p] = c * arp - sn * arq;
+                        s[p][r] = s[r][p];
+                        s[r][q] = sn * arp + c * arq;
+                        s[q][r] = s[r][q];
+                    }
+                    let vrp = eig_vecs[r][p];
+                    let vrq = eig_vecs[r][q];
+                    eig_vecs[r][p] = c * vrp - sn * vrq;
+                    eig_vecs[r][q] = sn * vrp + c * vrq;
+                }
+            }
+        }
+    }
+    // Compute c_sym = S^{-1/2} b = U diag(lambda^{-1/2}) U^T b
+    let mut ut_b = vec![0.0f64; m];
+    for col in 0..m {
+        let eig = s[col][col];
+        if eig > 1e-10 {
+            let mut dot_ub = 0.0;
+            for row in 0..m {
+                dot_ub += eig_vecs[row][col] * b[row];
+            }
+            ut_b[col] = dot_ub / eig.sqrt();
+        }
+    }
+    let mut c_sym = vec![0.0f64; m];
+    for row in 0..m {
+        let mut val = 0.0;
+        for col in 0..m {
+            val += eig_vecs[row][col] * ut_b[col];
+        }
+        c_sym[row] = val.abs();
+    }
+    c_sym
+}
+
 fn orthogonal_projection(
     query: &[f32],
     tags: &[PyramidTagWork],
     dimension: usize,
 ) -> (Vec<f32>, Vec<f32>, Vec<f64>) {
+    orthogonal_projection_with_mean(query, tags, dimension, None)
+}
+
+fn orthogonal_projection_with_mean(
+    query: &[f32],
+    tags: &[PyramidTagWork],
+    dimension: usize,
+    mean: Option<&[f32]>,
+) -> (Vec<f32>, Vec<f32>, Vec<f64>) {
     let mut basis: Vec<Vec<f64>> = Vec::with_capacity(tags.len());
+    let mut r_columns: Vec<(usize, Vec<f64>)> = Vec::with_capacity(tags.len());
+    let mut signed_coeffs: Vec<f64> = Vec::with_capacity(tags.len());
     let mut coefficients = vec![0.0; tags.len()];
     for (index, tag) in tags.iter().enumerate() {
-        let mut vector: Vec<f64> = tag.vector.iter().map(|value| *value as f64).collect();
-        for unit in &basis {
+        let mut vector: Vec<f64> = if let Some(m) = mean {
+            tag.vector
+                .iter()
+                .zip(m.iter())
+                .map(|(&v, &mv)| (v - mv) as f64)
+                .collect()
+        } else {
+            tag.vector.iter().map(|value| *value as f64).collect()
+        };
+        let orig_norm = vector.iter().map(|v| v * v).sum::<f64>().sqrt();
+        if orig_norm <= 1e-12 {
+            continue;
+        }
+        // Normalize candidate vector in tangent space before building overlap/QR factors
+        // so Löwdin S = V^T V is scale-invariant across tags.
+        for v in &mut vector {
+            *v /= orig_norm;
+        }
+        let initial_norm_sq = 1.0f64;
+        let mut r_col = vec![0.0f64; basis.len() + 1];
+        for (b_idx, unit) in basis.iter().enumerate() {
             let projection = vector
                 .iter()
                 .zip(unit.iter())
                 .map(|(left, right)| left * right)
                 .sum::<f64>();
+            r_col[b_idx] = projection;
             for offset in 0..dimension {
                 vector[offset] -= projection * unit[offset];
             }
         }
-        if normalize(&mut vector) {
-            coefficients[index] = query
+        let after_first_sq: f64 = vector.iter().map(|v| v * v).sum();
+        if !basis.is_empty() && after_first_sq <= 0.25 * initial_norm_sq {
+            for (b_idx, unit) in basis.iter().enumerate() {
+                let projection = vector
+                    .iter()
+                    .zip(unit.iter())
+                    .map(|(left, right)| left * right)
+                    .sum::<f64>();
+                r_col[b_idx] += projection;
+                for offset in 0..dimension {
+                    vector[offset] -= projection * unit[offset];
+                }
+            }
+        }
+        let diag_norm = vector.iter().map(|v| v * v).sum::<f64>().sqrt();
+        if diag_norm > 1e-12 {
+            for v in &mut vector {
+                *v /= diag_norm;
+            }
+            r_col[basis.len()] = diag_norm;
+            let signed = query
                 .iter()
                 .zip(vector.iter())
                 .map(|(left, right)| (*left as f64) * right)
-                .sum::<f64>()
-                .abs();
+                .sum::<f64>();
+            coefficients[index] = signed.abs();
+            signed_coeffs.push(signed);
+            r_columns.push((index, r_col));
             basis.push(vector);
         }
     }
 
+    // Apply Löwdin S^{-1/2} symmetric orthogonalization to redistribute tag contributions
+    // without order bias while keeping the exact subspace residual unchanged.
+    let m = basis.len();
+    if m > 1 {
+        let mut r_mat = vec![vec![0.0f64; m]; m];
+        for (col_pos, (_, r_col)) in r_columns.iter().enumerate() {
+            for (row_pos, &val) in r_col.iter().enumerate() {
+                r_mat[row_pos][col_pos] = val;
+            }
+        }
+        let sym_coeffs = lowdin_symmetric_contributions(&r_mat, &signed_coeffs, m);
+        for ((orig_idx, _), sym_val) in r_columns.iter().zip(sym_coeffs.into_iter()) {
+            coefficients[*orig_idx] = sym_val;
+        }
+    }
+
     let mut projection = vec![0.0f32; dimension];
-    for unit in &basis {
-        let coefficient = query
-            .iter()
-            .zip(unit.iter())
-            .map(|(left, right)| (*left as f64) * right)
-            .sum::<f64>();
+    for (unit, &coefficient) in basis.iter().zip(signed_coeffs.iter()) {
         for offset in 0..dimension {
             projection[offset] += (coefficient * unit[offset]) as f32;
         }
@@ -509,25 +700,33 @@ fn analyze_handshakes(
     if tags.is_empty() {
         return HandshakeFeatures::default();
     }
-    let mut directions = Vec::with_capacity(tags.len());
+    let limit = tags.len().min(5);
+    let mut directions = Vec::with_capacity(limit);
     let mut average = vec![0.0f64; dimension];
-    for tag in tags.iter_mut() {
-        let mut direction = vec![0.0f64; dimension];
+    for (idx, tag) in tags.iter_mut().enumerate() {
         let mut magnitude_squared = 0.0;
         for offset in 0..dimension {
             let delta = (query[offset] - tag.vector[offset]) as f64;
-            direction[offset] = delta;
             magnitude_squared += delta * delta;
         }
         let distance = magnitude_squared.sqrt();
         tag.handshake_magnitude = distance;
-        if distance > 1e-9 {
+        let inv_dist = if distance > 1e-9 { 1.0 / distance } else { 0.0 };
+        if idx < limit {
+            let mut direction = vec![0.0f64; dimension];
+            if inv_dist > 0.0 {
+                for offset in 0..dimension {
+                    let unit_delta = ((query[offset] - tag.vector[offset]) as f64) * inv_dist;
+                    direction[offset] = unit_delta;
+                    average[offset] += unit_delta;
+                }
+            }
+            directions.push(direction);
+        } else if inv_dist > 0.0 {
             for offset in 0..dimension {
-                direction[offset] /= distance;
-                average[offset] += direction[offset];
+                average[offset] += ((query[offset] - tag.vector[offset]) as f64) * inv_dist;
             }
         }
-        directions.push(direction);
     }
     for value in &mut average {
         *value /= tags.len() as f64;
@@ -626,26 +825,61 @@ fn analyze_pyramid_with_pool(
         ));
     }
 
+    // Direction 1 (Intrinsic Centered Tangent-Space Pyramid):
+    // Keep `residual` initialized to `query` so Level-0 HNSW lookup and initial norm `original_energy`
+    // match the raw index space 100%; for deep orthogonal residuals (level >= 1), evaluate cosine
+    // in the centered tangent space \mathcal{T}_{\mathbf{m}} (\mathbf{v}_i - \mathbf{m}) so the 36.5%
+    // common-mode cone bias does not inflate the denominator and crush deep similarity!
+    let epa_mean = load_epa_mean(connection, dimension);
     let mut residual = query.to_vec();
     let mut levels_output = Vec::new();
     let mut levels_work = Vec::new();
     let mut residuals = Vec::new();
     let mut total_explained = 0.0;
+    let mut seen_pyramid_ids: HashSet<u64> = HashSet::new();
     for level in 0..config.max_levels.clamp(1, 8) {
+        let top_k = config.pyramid_top_k.clamp(1, 128);
         let guard = index.read().map_err(|error| format!("Pyramid index lock failed: {}", error))?;
+        let (ef_opt, excl_opt) = if level == 0 {
+            (None, None)
+        } else {
+            (Some(512), Some(&seen_pyramid_ids))
+        };
         let matches = guard
-            .search_sql(connection, None, &residual, config.pyramid_top_k.clamp(1, 128))
+            .search_sql_excluding(connection, None, &residual, top_k, ef_opt, excl_opt)
             .map_err(|error| format!("Memo pyramid retrieval search failed: {:?}", error))?;
         if matches.is_empty() {
             break;
         }
-        let ids: Vec<i64> = matches.iter().map(|(id, _)| *id as i64).collect();
+        let ids: Vec<i64> = matches.iter().map(|(id, _)| {
+            seen_pyramid_ids.insert(*id);
+            *id as i64
+        }).collect();
         drop(guard);
         ensure_tag_vectors_loaded(connection, tag_vectors, &ids, dimension)?;
         let mut tags = Vec::new();
+        let res_norm = magnitude(&residual);
         for id in &ids {
             let Some(vector) = tag_vectors.get(id).cloned() else { continue };
-            let similarity = cosine(&residual, &vector);
+            let raw_sim = cosine(&residual, &vector);
+            let similarity = if let (Some(ref m), true) = (&epa_mean, level >= 1) {
+                // Intrinsic tangent-space cosine: \cos(\mathbf{r}_l, \mathbf{v}_i - \mathbf{m})
+                let mut dot_val = 0.0f64;
+                let mut v_centered_sq = 0.0f64;
+                for i in 0..dimension {
+                    let vc = (vector[i] - m[i]) as f64;
+                    dot_val += (residual[i] as f64) * vc;
+                    v_centered_sq += vc * vc;
+                }
+                let denom = res_norm * v_centered_sq.sqrt();
+                if denom > 1e-12 {
+                    raw_sim.max(dot_val / denom)
+                } else {
+                    raw_sim
+                }
+            } else {
+                raw_sim
+            };
             tags.push(PyramidTagWork {
                 id: *id,
                 name: String::new(),
@@ -799,6 +1033,23 @@ fn gate_tags(
     let mut seen = HashSet::new();
     let mut gated = Vec::new();
     for (level, tags) in levels.iter().enumerate() {
+        let proj_mag = pyramid
+            .levels
+            .get(level)
+            .map(|l| l.projection_magnitude)
+            .unwrap_or(0.0);
+        let max_contrib = tags
+            .iter()
+            .map(|t| positive(t.contribution))
+            .fold(0.0, f64::max);
+        // When Löwdin S^{-1/2} distributes subspace energy across K correlated tags,
+        // rescale the gating amplitude so the lead tag reaches `proj_mag` (preserving
+        // Sense Hop-1 firing potential) while keeping Löwdin's permutation-invariant ratios!
+        let lowdin_gate_scale = if proj_mag > max_contrib && max_contrib > 1e-9 {
+            (proj_mag / max_contrib).min(2.2)
+        } else {
+            1.0
+        };
         for tag in tags {
             if tag.id <= 0 || !seen.insert(tag.id) {
                 continue;
@@ -829,7 +1080,7 @@ fn gate_tags(
                 };
             }
             let layer_gain = config.layer_decay.clamp(0.0, 1.0).powi(level as i32);
-            let weight = positive(tag.contribution) * layer_gain * language_gain * core_gain;
+            let weight = positive(tag.contribution) * lowdin_gate_scale * layer_gain * language_gain * core_gain;
             if weight > 0.0 {
                 gated.push(GatedTag {
                     id: tag.id,
@@ -849,6 +1100,7 @@ struct FusionTag {
     name: String,
     weight: f64,
     is_core: bool,
+    norm: f64,
     vector: Arc<[f32]>,
 }
 
@@ -980,7 +1232,8 @@ fn fuse_observation_with_pool(
     let mut vectors = Vec::with_capacity(requested_count);
     for tag in merged {
         let Some(vector) = tag_vectors.get(&tag.id).cloned() else { continue };
-        if magnitude(&vector) > 1e-12 {
+        let norm = magnitude(&vector);
+        if norm > 1e-12 {
             vectors.push(FusionTag {
                 id: tag.id,
                 name: if tag.name.is_empty() {
@@ -990,6 +1243,7 @@ fn fuse_observation_with_pool(
                 },
                 weight: tag.weight,
                 is_core: tag.is_core,
+                norm,
                 vector,
             });
         }
@@ -999,7 +1253,11 @@ fn fuse_observation_with_pool(
     let mut ghost_id = -1i64;
     let mut accepted_ghosts = 0usize;
     for ghost in ghost_tags {
-        if ghost.vector.len() != dimension || magnitude(&ghost.vector) <= 1e-12 {
+        if ghost.vector.len() != dimension {
+            continue;
+        }
+        let norm = magnitude(&ghost.vector);
+        if norm <= 1e-12 {
             continue;
         }
         vectors.push(FusionTag {
@@ -1012,6 +1270,7 @@ fn fuse_observation_with_pool(
                     1.0
                 },
             is_core: ghost.is_core,
+            norm,
             vector: Arc::from(ghost.vector.clone()),
         });
         ghost_id -= 1;
@@ -1032,9 +1291,10 @@ fn fuse_observation_with_pool(
     let threshold = config.deduplication_threshold.clamp(-1.0, 1.0);
     let mut selected: Vec<FusionTag> = Vec::new();
     for candidate in vectors {
-        let redundant_index = selected
-            .iter()
-            .position(|existing| cosine(&candidate.vector, &existing.vector) > threshold);
+        let redundant_index = selected.iter().position(|existing| {
+            let denom = candidate.norm * existing.norm;
+            denom > 1e-12 && (dot(&candidate.vector, &existing.vector) / denom) > threshold
+        });
         if let Some(index) = redundant_index {
             selected[index].weight += candidate.weight * 0.2;
             selected[index].is_core |= candidate.is_core;
@@ -1479,7 +1739,7 @@ fn solve_dual_fields(
     config: &PipelineConfig,
 ) -> std::result::Result<DualFieldOutput, String> {
     solve_dual_fields_with_pool(artifact, connection, source_entries, dimension, config,
-        &mut TagVectorPool::new(), &source_entries.iter().map(|entry| entry.0).collect::<Vec<_>>(), &[])
+        &mut TagVectorPool::new(), &source_entries.iter().map(|entry| entry.0).collect::<Vec<_>>(), &[], &[])
 }
 
 fn solve_dual_fields_with_pool(
@@ -1491,6 +1751,7 @@ fn solve_dual_fields_with_pool(
     pool: &mut TagVectorPool,
     river_ids: &[i64],
     basins: &[crate::memo_projection::Basin],
+    node_resonances: &[f64],
 ) -> std::result::Result<DualFieldOutput, String> {
     let solve_started = Instant::now();
     let mut source = vec![0.0f64; artifact.node_ids.len()];
@@ -1538,27 +1799,125 @@ fn solve_dual_fields_with_pool(
     let mut transfer_residual = f64::INFINITY;
     let mut iterations = 0;
 
+    // Theoretical Optimum 3: Doob's h-Transform / Schrödinger Bridge Twisted Markov Kernel.
+    // Given base transition matrix P and deep residual potential R(v) >= 0, the unique
+    // KL-divergence minimizing conditional transition operator is:
+    //   \widetilde{P}_{u -> v} = \frac{P_{u -> v} \exp(\beta R(v))}{\sum_w P_{u -> w} \exp(\beta R(w))} * (\sum_w P_{u -> w})
+    // This satisfies multi-hop path telescoping (\prod P^{(h)} \propto P \cdot e^{\beta R(v_k)})
+    // while preserving 100% of every row's outbound probability mass.
+    let has_global_wormhole_resonance = node_resonances.len() == artifact.node_ids.len()
+        && node_resonances.iter().any(|&r| r > 0.0);
+    let transfer_weights_cow: std::borrow::Cow<'_, [f64]> = if has_global_wormhole_resonance {
+        const DOOB_BETA: f64 = 2.5;
+        let mut mod_w = artifact.weights.clone();
+        for src_idx in 0..artifact.node_ids.len() {
+            let start = artifact.row_offsets[src_idx];
+            let end = artifact.row_offsets[src_idx + 1];
+            let mut orig_sum = 0.0;
+            let mut mod_sum = 0.0;
+            let mut row_changed = false;
+            for cursor in start..end {
+                let w = positive(artifact.weights[cursor]);
+                orig_sum += w;
+                let dst_idx = artifact.targets[cursor];
+                let r = node_resonances[dst_idx].clamp(0.0, 1.0);
+                if r > 0.0 && w > 0.0 {
+                    let h_val = (DOOB_BETA * r).exp();
+                    let mw = w * h_val;
+                    mod_w[cursor] = mw;
+                    mod_sum += mw;
+                    row_changed = true;
+                } else {
+                    mod_w[cursor] = w;
+                    mod_sum += w;
+                }
+            }
+            if row_changed && mod_sum > 1e-12 && orig_sum > 0.0 {
+                let scale = orig_sum / mod_sum;
+                for cursor in start..end {
+                    mod_w[cursor] *= scale;
+                }
+            }
+        }
+        std::borrow::Cow::Owned(mod_w)
+    } else {
+        std::borrow::Cow::Borrowed(&artifact.weights)
+    };
+    let transfer_weights: &[f64] = transfer_weights_cow.as_ref();
+
     for iteration in 1..=config.field_max_iterations.max(1) {
         iterations = iteration;
-        if !local_converged {
-            apply_transport(artifact, &local, &mut propagated_local);
-            for index in 0..source.len() {
-                next_local[index] =
-                    (1.0 - local_alpha) * source[index] + local_alpha * propagated_local[index];
+        if !local_converged && !transfer_converged {
+            // Shift-Invariance / Single-pass Dual CSR Transport:
+            // Scan the CSR topology once for both fields while preserving exact IEEE-754 summation order.
+            propagated_local.fill(0.0);
+            propagated_transfer.fill(0.0);
+            for src_idx in 0..artifact.node_ids.len() {
+                let m_l = local[src_idx];
+                let m_t = transfer[src_idx];
+                if m_l == 0.0 && m_t == 0.0 {
+                    continue;
+                }
+                for cursor in artifact.row_offsets[src_idx]..artifact.row_offsets[src_idx + 1] {
+                    let dst_idx = artifact.targets[cursor];
+                    if m_l != 0.0 {
+                        propagated_local[dst_idx] += m_l * positive(artifact.weights[cursor]);
+                    }
+                    if m_t != 0.0 {
+                        propagated_transfer[dst_idx] += m_t * positive(transfer_weights[cursor]);
+                    }
+                }
             }
-            local_residual = l1_distance(&next_local, &local);
+            let mut l_res = 0.0;
+            let mut t_res = 0.0;
+            let c_l = 1.0 - local_alpha;
+            let c_t = 1.0 - transfer_alpha;
+            for index in 0..source.len() {
+                let s_val = source[index];
+                let nl = c_l * s_val + local_alpha * propagated_local[index];
+                let nt = c_t * s_val + transfer_alpha * propagated_transfer[index];
+                l_res += (nl - local[index]).abs();
+                t_res += (nt - transfer[index]).abs();
+                next_local[index] = nl;
+                next_transfer[index] = nt;
+            }
+            local_residual = l_res;
+            transfer_residual = t_res;
             local_converged = local_residual <= config.local_tolerance.max(1e-15);
-            std::mem::swap(&mut local, &mut next_local);
-        }
-        if !transfer_converged {
-            apply_transport(artifact, &transfer, &mut propagated_transfer);
-            for index in 0..source.len() {
-                next_transfer[index] = (1.0 - transfer_alpha) * source[index]
-                    + transfer_alpha * propagated_transfer[index];
-            }
-            transfer_residual = l1_distance(&next_transfer, &transfer);
             transfer_converged = transfer_residual <= config.transfer_tolerance.max(1e-15);
+            std::mem::swap(&mut local, &mut next_local);
             std::mem::swap(&mut transfer, &mut next_transfer);
+        } else {
+            if !local_converged {
+                apply_transport(artifact, &local, &mut propagated_local);
+                for index in 0..source.len() {
+                    next_local[index] =
+                        (1.0 - local_alpha) * source[index] + local_alpha * propagated_local[index];
+                }
+                local_residual = l1_distance(&next_local, &local);
+                local_converged = local_residual <= config.local_tolerance.max(1e-15);
+                std::mem::swap(&mut local, &mut next_local);
+            }
+            if !transfer_converged {
+                propagated_transfer.fill(0.0);
+                for src_idx in 0..artifact.node_ids.len() {
+                    let mass = transfer[src_idx];
+                    if mass == 0.0 {
+                        continue;
+                    }
+                    for cursor in artifact.row_offsets[src_idx]..artifact.row_offsets[src_idx + 1] {
+                        propagated_transfer[artifact.targets[cursor]] +=
+                            mass * positive(transfer_weights[cursor]);
+                    }
+                }
+                for index in 0..source.len() {
+                    next_transfer[index] = (1.0 - transfer_alpha) * source[index]
+                        + transfer_alpha * propagated_transfer[index];
+                }
+                transfer_residual = l1_distance(&next_transfer, &transfer);
+                transfer_converged = transfer_residual <= config.transfer_tolerance.max(1e-15);
+                std::mem::swap(&mut transfer, &mut next_transfer);
+            }
         }
         if local_converged && transfer_converged {
             break;
@@ -1760,8 +2119,9 @@ fn run_pipeline_with_connection(
     for (level, tags) in level_tags.iter().enumerate() {
         for tag in tags { seed_levels.entry(tag.id).or_insert(level); }
     }
-    let mut wormholes = DynamicWormholeContext::new(
-        connection, &mut tag_vectors, residuals, seed_levels,
+    let epa_mean = load_epa_mean(connection, dimensions);
+    let mut wormholes = DynamicWormholeContext::new_with_mean(
+        connection, &mut tag_vectors, residuals, seed_levels, epa_mean,
     );
     for (layer, tags) in level_tags.iter().enumerate() {
         for tag in tags { wormholes.reuse_score(layer, tag.id, tag.similarity); }
@@ -1777,7 +2137,27 @@ fn run_pipeline_with_connection(
         Some(&mut wormholes),
     )?;
     let sensing_diagnostics = observation.diagnostics.clone();
+    let wh_threshold = input.config.spike_routing.dynamic_wormhole_threshold;
+    let has_deep_residuals = wormholes.residuals.len() > 1;
+    let mut global_node_resonances = wormholes.extract_global_node_resonances(
+        artifact.node_ids.len(),
+        wh_threshold,
+    );
     drop(wormholes);
+    // Also illuminate multi-hop global CSR nodes discovered by deeper pyramid layers (level >= 1)
+    if has_deep_residuals {
+        for tags in level_tags.iter().skip(1) {
+            for tag in tags {
+                if tag.similarity >= wh_threshold {
+                    if let Some(&node_idx) = artifact.node_index.get(&tag.id) {
+                        if tag.similarity > global_node_resonances[node_idx] {
+                            global_node_resonances[node_idx] = tag.similarity;
+                        }
+                    }
+                }
+            }
+        }
+    }
     let sensing_ms = sensing_started.elapsed().as_secs_f64() * 1000.0;
 
     let fusion_started = Instant::now();
@@ -1804,6 +2184,7 @@ fn run_pipeline_with_connection(
         &mut tag_vectors,
         &observation.nodes.iter().map(|node| node.id).collect::<Vec<_>>(),
         &crate::memo_projection::seed_basins(&observation, artifact),
+        &global_node_resonances,
     )?;
 
     let enhanced_vector_f32: Vec<f32> = enhanced_vector.iter().map(|value| *value as f32).collect();
@@ -2103,6 +2484,159 @@ mod audit_gate_tests {
         assert!((output.levels[0].projection_magnitude - 1.0).abs() < 1e-6);
         assert!((output.levels[0].residual_magnitude - 2.0).abs() < 1e-6);
         assert!((output.total_explained_energy - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn inspiration_a_and_b_exclude_peeled_tags_and_conserve_global_wormhole_row_mass() {
+        use crate::rivermemo_topology_v3::NativeArtifact;
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(
+            "CREATE TABLE tags(id INTEGER PRIMARY KEY,name TEXT,vector BLOB);"
+        ).unwrap();
+        let rows = [
+            (1_i64, "main-axis", [1.0_f32, 0.0, 0.0]),
+            (2_i64, "secondary-inspiration", [0.0_f32, 1.0, 0.0]),
+            (3_i64, "tertiary-bridge", [0.0_f32, 0.0, 1.0]),
+        ];
+        let index = crate::VexusIndex::new(3, 16).unwrap();
+        for (id, name, vec) in rows {
+            let bytes: Vec<u8> = vec.iter().flat_map(|v| v.to_le_bytes()).collect();
+            connection.execute("INSERT INTO tags VALUES (?1,?2,?3)", rusqlite::params![id, name, bytes]).unwrap();
+            index.index.write().unwrap().add(id as u64, &vec).unwrap();
+        }
+        let config = PipelineConfig {
+            max_levels: 3,
+            pyramid_top_k: 1,
+            min_energy_ratio: 0.01,
+            ..PipelineConfig::default()
+        };
+        let query = [0.8_f32, 0.5, 0.3];
+        connection.execute_batch("BEGIN").unwrap();
+        let (pyramid, _) = analyze_pyramid(&index.index, &connection, &query, 3, &config).unwrap();
+        connection.execute_batch("COMMIT").unwrap();
+        // Inspiration A: each level peels a strictly distinct orthogonal tag without repeating Level 0!
+        assert_eq!(pyramid.levels.len(), 3);
+        assert_eq!(pyramid.levels[0].tags[0].id, 1);
+        assert_eq!(pyramid.levels[1].tags[0].id, 2);
+        assert_eq!(pyramid.levels[2].tags[0].id, 3);
+        assert!((pyramid.total_explained_energy - 1.0).abs() < 1e-5);
+
+        // Inspiration B: global wormhole transfer field strictly conserves total mass while steering toward resonant target
+        let artifact = NativeArtifact {
+            node_ids: vec![1, 2, 3],
+            node_index: HashMap::from([(1, 0), (2, 1), (3, 2)]),
+            row_offsets: vec![0, 2, 2, 2],
+            targets: vec![1, 2],
+            weights: vec![0.475, 0.475],
+            ..NativeArtifact::default()
+        }.prepared();
+        let mut pool = TagVectorPool::new();
+        let plain = solve_dual_fields_with_pool(
+            &artifact, &connection, &[(1, 1.0)], 3, &config, &mut pool, &[1], &[], &[0.0, 0.0, 0.0],
+        ).unwrap();
+        let steered = solve_dual_fields_with_pool(
+            &artifact, &connection, &[(1, 1.0)], 3, &config, &mut pool, &[1], &[], &[0.0, 0.0, 0.8],
+        ).unwrap();
+        // Total scalar mass is 100% identical (zero artificial energy injection!),
+        // while transfer mass shifts from non-resonant node 2 to resonant wormhole node 3.
+        assert!((plain.diagnostics.transfer_mass - steered.diagnostics.transfer_mass).abs() < 1e-12);
+        assert!(( plain.diagnostics.local_mass - steered.diagnostics.local_mass).abs() < 1e-12);
+        let t3_plain = plain.transfer_field.iter().find(|(id, _)| *id == 3).unwrap().1;
+        let t3_steered = steered.transfer_field.iter().find(|(id, _)| *id == 3).unwrap().1;
+        assert!(t3_steered > t3_plain * 1.4);
+    }
+
+    #[test]
+    fn theoretical_optima_lowdin_invariance_tangent_centering_and_renyi2_wavepacket_firing() {
+        use crate::rivermemo_topology_v3::NativeArtifact;
+        // 1. Löwdin S^{-1/2} Symmetric Orthogonalization:
+        // Verify strict permutation invariance (reordering correlated tags yields identical contributions)
+        // and exact energy conservation (\sum c_sym^2 == \sum c_GS^2 == ||projection||^2).
+        let q = [0.85_f32, 0.50, 0.15];
+        let tag_a = PyramidTagWork {
+            id: 1,
+            name: "a".into(),
+            vector: Arc::from(vec![1.0_f32, 0.2, 0.0]),
+            similarity: 0.9,
+            contribution: 0.0,
+            handshake_magnitude: 0.0,
+        };
+        let tag_b = PyramidTagWork {
+            id: 2,
+            name: "b".into(),
+            vector: Arc::from(vec![0.6_f32, 0.8, 0.0]),
+            similarity: 0.8,
+            contribution: 0.0,
+            handshake_magnitude: 0.0,
+        };
+        let (proj_ab, res_ab, coeff_ab) =
+            orthogonal_projection(&q, &[tag_a.clone(), tag_b.clone()], 3);
+        let (proj_ba, res_ba, coeff_ba) =
+            orthogonal_projection(&q, &[tag_b, tag_a], 3);
+        // Permutation-invariant contributions: tag_a gets identical contribution whether ranked 1st or 2nd!
+        assert!((coeff_ab[0] - coeff_ba[1]).abs() < 1e-10);
+        assert!((coeff_ab[1] - coeff_ba[0]).abs() < 1e-10);
+        // Subspace residual and total explained energy are preserved to machine precision
+        for i in 0..3 {
+            assert!((proj_ab[i] - proj_ba[i]).abs() < 1e-6);
+            assert!((res_ab[i] - res_ba[i]).abs() < 1e-6);
+        }
+        let proj_energy: f64 = proj_ab.iter().map(|&x| (x as f64) * (x as f64)).sum();
+        let lowdin_energy: f64 = coeff_ab.iter().map(|&c| c * c).sum();
+        assert!((proj_energy - lowdin_energy).abs() < 1e-10);
+
+        // 2. Rényi-2 L2 Wavepacket Firing Potential vs L1 Mass Conservation:
+        // Hub node 1 has 16 neighbors with L1 weight 0.95 / 16 = 0.059375 each.
+        // Under pure L1 energy, Hop 1 energy at neighbor 2 is 0.25 * 0.059375 * 0.25 = 0.0037 < 0.10 (extinguished!).
+        // Under Rényi-2 L2 wavepacket normalization (row_l2 = 0.95 / 4 = 0.2375, l2_amp = 0.25),
+        // with seed energy 0.65 and base_decay 0.65, L1 energy is 0.65 * 0.059375 * 0.65 = 0.025 < 0.10,
+        // while L2 firing_potential is 0.65 * 0.25 * 0.65 = 0.1056 >= 0.10, unlocking Hop 2 -> node 20!
+        let mut node_ids: Vec<i64> = (1..=20).collect();
+        let mut targets: Vec<usize> = (1..=16).collect(); // node 1 connects to indices 1..=16 (IDs 2..=17)
+        let mut weights: Vec<f64> = vec![0.95 / 16.0; 16];
+        // Node 2 (index 1) connects to node 20 (index 19) with weight 0.90
+        targets.push(19);
+        weights.push(0.90);
+        let mut row_offsets = vec![0usize; 21];
+        row_offsets[0] = 0;
+        row_offsets[1] = 16;
+        for r in 2..=20 {
+            row_offsets[r] = 17;
+        }
+        let artifact = NativeArtifact {
+            node_index: node_ids.iter().enumerate().map(|(i, &id)| (id, i)).collect(),
+            node_ids: std::mem::take(&mut node_ids),
+            row_offsets,
+            targets,
+            weights,
+            ..NativeArtifact::default()
+        }
+        .prepared();
+
+        let sense_out = sense_typed(
+            &artifact,
+            "renyi2-test",
+            SenseInput {
+                query_id: None,
+                seeds: vec![SenseSeed {
+                    id: 1,
+                    energy: 0.65,
+                    source_type: "seed".into(),
+                }],
+                config: SenseConfig {
+                    max_safe_hops: 2,
+                    firing_threshold: 0.10,
+                    base_decay: 0.65,
+                    minimum_injected_current: 0.005,
+                    ..SenseConfig::default()
+                },
+            },
+        )
+        .unwrap();
+        // Node 20 (at Hop 2) is successfully reached because Node 2's L2 wavepacket potential crossed 0.10!
+        let node20 = sense_out.nodes.iter().find(|n| n.id == 20);
+        assert!(node20.is_some(), "Rényi-2 L2 wavepacket potential must enable Hop-2 propagation from high-degree hub");
+        assert_eq!(node20.unwrap().hop, 2);
     }
 
     #[test]

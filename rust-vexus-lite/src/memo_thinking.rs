@@ -37,6 +37,7 @@ struct Module {
     file_id: i64,
     relevance: f64,
     tags: HashMap<i64, (usize, f64)>,
+    ordered_tags: Vec<(i64, usize, f64)>,
 }
 
 #[derive(Clone, Serialize)]
@@ -55,6 +56,32 @@ struct StageOutput {
     diary_name: String,
     k: usize,
     results: Vec<Selection>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OptimizationHint {
+    stage: String,
+    module_id: i64,
+    bottleneck: &'static str,
+    potential_score_gain: f64,
+    source_tag_id: i64,
+    target_tag_id: i64,
+    prescription: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LatentWormhole {
+    from_stage: String,
+    to_stage: String,
+    from_module_id: i64,
+    to_module_id: i64,
+    source_tag_id: i64,
+    target_tag_id: i64,
+    structural_cosine: f64,
+    sweet_spot_gain: f64,
+    inspiration_potential: f64,
 }
 
 fn cosine(a: &[f32], b: &[f32]) -> f64 {
@@ -131,19 +158,58 @@ pub(crate) fn plan(
              WHERE ft.file_id=?1 AND t.vector IS NOT NULL ORDER BY ft.position, ft.tag_id LIMIT 128",
             )
             .map_err(|e| e.to_string())?;
-        let mut output = Vec::new();
-        let mut selected: Vec<Selection> = Vec::new();
-        let mut used_files = HashSet::new();
-        let mut used_edges = HashSet::new();
         let maximum_flow = observation
             .transitions
             .iter()
             .map(|e| e.flow)
             .fold(0.0, f64::max);
+        // Direction B (Per-Hop Layer Peak Normalization):
+        // Prevent Hop-1 dominant flow from crushing Hop-2/3/4 multi-hop continuations.
+        // Blend 50% global flow ratio + 50% per-hop peak flow ratio so deep hops compete fairly
+        // while preserving monotone flow preference within the same hop.
+        let mut max_flow_by_hop: HashMap<usize, f64> = HashMap::new();
+        for e in &observation.transitions {
+            if !e.immediate_return {
+                let entry = max_flow_by_hop.entry(e.hop).or_insert(0.0);
+                if e.flow > *entry {
+                    *entry = e.flow;
+                }
+            }
+        }
+
+        // Direction A (4-Way Fused Multi-Field Envelope Relevance):
+        // Measure module relevance against original, enhanced, local, and transfer field vectors
+        // in a single pass so abstract philosophical modules resonate with cross-domain transfer intent.
+        let q_orig = cached.original_query_vector.as_ref();
+        let q_enh = cached.enhanced_query_vector.as_ref();
+        let q_loc = cached.local_vector.as_ref();
+        let q_trf = cached.transfer_vector.as_ref();
+        let norm_orig = q_orig.iter().map(|&x| (x as f64).powi(2)).sum::<f64>().sqrt();
+        let norm_enh = if q_enh.len() == dimension {
+            q_enh.iter().map(|&x| (x as f64).powi(2)).sum::<f64>().sqrt()
+        } else {
+            0.0
+        };
+        let norm_loc = if q_loc.len() == dimension {
+            q_loc.iter().map(|&x| (x as f64).powi(2)).sum::<f64>().sqrt()
+        } else {
+            0.0
+        };
+        let norm_trf = if q_trf.len() == dimension {
+            q_trf.iter().map(|&x| (x as f64).powi(2)).sum::<f64>().sqrt()
+        } else {
+            0.0
+        };
+
+        let mut file_tags_cache: HashMap<i64, Vec<(usize, i64, Vec<f32>, f64)>> = HashMap::new();
+        let mut global_tag_vecs: HashMap<i64, (Vec<f32>, f64)> = HashMap::new();
+        let mut stage_modules: Vec<(Stage, Vec<Module>)> = Vec::with_capacity(input.stages.len());
+
+        // Preload all stages so we can compute Backward Viterbi Continuation Potential \beta_s(edge)
         for stage in input.stages {
             let mut modules = Vec::new();
             let mut seen = HashSet::new();
-            for id in stage.candidate_ids {
+            for &id in &stage.candidate_ids {
                 if id <= 0 || !seen.insert(id) {
                     continue;
                 }
@@ -158,36 +224,153 @@ pub(crate) fn plan(
                 let Some(vector) = decode(bytes, dimension) else {
                     continue;
                 };
-                let rows = tag_statement
-                    .query_map([file_id], |r| {
-                        Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
-                    })
-                    .map_err(|e| e.to_string())?;
-                let mut tags = HashMap::new();
-                for (position, row) in rows.enumerate() {
-                    let (tag_id, bytes) = row.map_err(|e| e.to_string())?;
-                    if let Some(tag_vector) = decode(bytes, dimension) {
-                        tags.insert(tag_id, (position, cosine(&vector, &tag_vector)));
+                let v_norm = vector.iter().map(|&x| (x as f64).powi(2)).sum::<f64>().sqrt();
+                let cached_tags = match file_tags_cache.entry(file_id) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        let rows = tag_statement
+                            .query_map([file_id], |r| {
+                                Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
+                            })
+                            .map_err(|e| e.to_string())?;
+                        let mut decoded = Vec::new();
+                        for (position, row) in rows.enumerate() {
+                            let (tag_id, bytes) = row.map_err(|e| e.to_string())?;
+                            if let Some(tag_vector) = decode(bytes, dimension) {
+                                let t_norm_sq: f64 = tag_vector.iter().map(|&x| (x as f64).powi(2)).sum();
+                                global_tag_vecs
+                                    .entry(tag_id)
+                                    .or_insert_with(|| (tag_vector.clone(), t_norm_sq.sqrt()));
+                                decoded.push((position, tag_id, tag_vector, t_norm_sq));
+                            }
+                        }
+                        entry.insert(decoded)
                     }
+                };
+                let mut tags = HashMap::with_capacity(cached_tags.len());
+                let mut ordered_tags = Vec::with_capacity(cached_tags.len());
+                for &(position, tag_id, ref tag_vector, t_norm_sq) in cached_tags.iter() {
+                    let dot: f64 = vector.iter().zip(tag_vector.iter()).map(|(x, y)| *x as f64 * *y as f64).sum();
+                    let val = dot / (v_norm * t_norm_sq.sqrt()).max(1e-12);
+                    let closure_val = if val.is_finite() { val.clamp(0.0, 1.0) } else { 0.0 };
+                    tags.insert(tag_id, (position, closure_val));
+                    ordered_tags.push((tag_id, position, closure_val));
                 }
+                let relevance = if v_norm > 1e-12 && vector.len() == dimension && !vector.is_empty() {
+                    let (mut d_orig, mut d_enh, mut d_loc, mut d_trf) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+                    let has_enh = norm_enh > 1e-12;
+                    let has_loc = norm_loc > 1e-12;
+                    let has_trf = norm_trf > 1e-12;
+                    for i in 0..dimension {
+                        let vi = vector[i] as f64;
+                        d_orig += vi * (q_orig[i] as f64);
+                        if has_enh {
+                            d_enh += vi * (q_enh[i] as f64);
+                        }
+                        if has_loc {
+                            d_loc += vi * (q_loc[i] as f64);
+                        }
+                        if has_trf {
+                            d_trf += vi * (q_trf[i] as f64);
+                        }
+                    }
+                    let c_orig = if norm_orig > 1e-12 { (d_orig / (v_norm * norm_orig)).clamp(0.0, 1.0) } else { 0.0 };
+                    let c_enh = if has_enh { (d_enh / (v_norm * norm_enh)).clamp(0.0, 1.0) } else { c_orig };
+                    let c_loc = if has_loc { (d_loc / (v_norm * norm_loc)).clamp(0.0, 1.0) } else { c_orig };
+                    let c_trf = if has_trf { (d_trf / (v_norm * norm_trf)).clamp(0.0, 1.0) } else { c_orig };
+                    let multi_env = 0.45 * c_orig + 0.25 * c_enh + 0.15 * c_loc + 0.15 * c_trf;
+                    c_orig.max(multi_env)
+                } else {
+                    0.0
+                };
                 modules.push(Module {
                     id,
                     file_id,
                     tags,
-                    relevance: cosine(&vector, &cached.original_query_vector),
+                    ordered_tags,
+                    relevance,
                 });
             }
+            stage_modules.push((stage, modules));
+        }
+
+        // Direction C (Backward Viterbi Continuation Envelope \beta):
+        // Precompute for each transition edge in stage s whether and how strongly it can be
+        // continued by any valid module in stage s + 1. This prevents stage-1 greedy lock-in
+        // on dead-end edges when a slightly lower edge unlocks a multi-stage causal chain.
+        let num_stages = stage_modules.len();
+        let num_transitions = observation.transitions.len();
+        let mut stage_edge_best_intrinsic: Vec<Vec<f64>> = vec![vec![0.0; num_transitions]; num_stages];
+        for (s_idx, (_, modules)) in stage_modules.iter().enumerate() {
+            for (e_idx, edge) in observation.transitions.iter().enumerate() {
+                if edge.immediate_return {
+                    continue;
+                }
+                let hop_max = max_flow_by_hop.get(&edge.hop).copied().unwrap_or(maximum_flow).max(1e-12);
+                let flow_norm = 0.5 * (edge.flow / maximum_flow.max(1e-12)) + 0.5 * (edge.flow / hop_max);
+                let mut best_mod_score = 0.0f64;
+                for m in modules {
+                    if let (Some((a_pos, a_c)), Some((b_pos, b_c))) = (
+                        m.tags.get(&edge.source_id),
+                        m.tags.get(&edge.target_id),
+                    ) {
+                        if *a_pos < *b_pos && *a_c >= input.min_closure && *b_c >= input.min_closure {
+                            let ind = artifact.independent_fraction(edge.source_id, edge.target_id, m.file_id);
+                            let sc = flow_norm * (a_c * b_c).sqrt() * ind;
+                            if sc > best_mod_score {
+                                best_mod_score = sc;
+                            }
+                        }
+                    }
+                }
+                stage_edge_best_intrinsic[s_idx][e_idx] = best_mod_score;
+            }
+        }
+
+        // Backward DP sweep: beta[s][e_idx] = max future continuation chain value from stage s+1..num_stages
+        let mut beta_lookahead: Vec<Vec<f64>> = vec![vec![0.0; num_transitions]; num_stages];
+        if num_stages >= 2 {
+            for s_idx in (0..num_stages - 1).rev() {
+                if stage_modules[s_idx + 1].0.k == 0 {
+                    continue;
+                }
+                for (e_idx, edge) in observation.transitions.iter().enumerate() {
+                    if stage_edge_best_intrinsic[s_idx][e_idx] <= 0.0 {
+                        continue;
+                    }
+                    let mut best_next = 0.0f64;
+                    for (next_e_idx, next_edge) in observation.transitions.iter().enumerate() {
+                        let next_intrinsic = stage_edge_best_intrinsic[s_idx + 1][next_e_idx];
+                        if next_intrinsic > 0.0 && follows(edge, next_edge) {
+                            let total_future = next_intrinsic + 0.5 * beta_lookahead[s_idx + 1][next_e_idx];
+                            if total_future > best_next {
+                                best_next = total_future;
+                            }
+                        }
+                    }
+                    beta_lookahead[s_idx][e_idx] = best_next;
+                }
+            }
+        }
+
+        let mut output = Vec::new();
+        let mut selected: Vec<Selection> = Vec::new();
+        let mut used_files = HashSet::new();
+        let mut used_edges = HashSet::new();
+        let mut optimization_hints: Vec<OptimizationHint> = Vec::new();
+
+        for (s_idx, (stage, modules)) in stage_modules.iter().enumerate() {
             let mut results = Vec::new();
-            for _ in 0..stage.k {
+            for pick_iter in 0..stage.k {
                 let mut offers = Vec::new();
-                for module in &modules {
+                for module in modules {
                     if used_files.contains(&module.file_id) {
                         continue;
                     }
                     let mut best_route = None;
                     let mut best_parents = Vec::new();
                     let mut best_route_score = 0.0;
-                    for edge in &observation.transitions {
+                    for (e_idx, edge) in observation.transitions.iter().enumerate() {
                         if edge.immediate_return {
                             continue;
                         }
@@ -197,6 +380,51 @@ pub(crate) fn plan(
                         ) else {
                             continue;
                         };
+                        let hop_max = max_flow_by_hop.get(&edge.hop).copied().unwrap_or(maximum_flow).max(1e-12);
+                        let flow_norm = 0.5 * (edge.flow / maximum_flow.max(1e-12)) + 0.5 * (edge.flow / hop_max);
+
+                        // Inverse Topology Diagnostics (Counterfactual Bottleneck Detection on 1st pick):
+                        if pick_iter == 0 {
+                            if *a_pos >= *b_pos && *a_closure >= input.min_closure && *b_closure >= input.min_closure {
+                                let ind = artifact.independent_fraction(edge.source_id, edge.target_id, module.file_id);
+                                let counterfactual = 0.65 * flow_norm * (a_closure * b_closure).sqrt() * ind;
+                                if counterfactual >= 0.08 {
+                                    optimization_hints.push(OptimizationHint {
+                                        stage: stage.diary_name.clone(),
+                                        module_id: module.id,
+                                        bottleneck: "TAG_ORDER_INVERTED",
+                                        potential_score_gain: (counterfactual * 10000.0).round() / 10000.0,
+                                        source_tag_id: edge.source_id,
+                                        target_tag_id: edge.target_id,
+                                        prescription: format!(
+                                            "Module #{} hits river edge [{} -> {}], but tag order is inverted (pos {} >= pos {}); swapping order unlocks +{:.3} route score.",
+                                            module.id, edge.source_id, edge.target_id, a_pos, b_pos, counterfactual
+                                        ),
+                                    });
+                                }
+                            } else if *a_pos < *b_pos && (*a_closure < input.min_closure || *b_closure < input.min_closure) {
+                                let min_c = a_closure.min(*b_closure);
+                                if min_c >= input.min_closure * 0.65 {
+                                    let ind = artifact.independent_fraction(edge.source_id, edge.target_id, module.file_id);
+                                    let counterfactual = 0.65 * flow_norm * input.min_closure.max(0.25) * ind;
+                                    if counterfactual >= 0.06 {
+                                        optimization_hints.push(OptimizationHint {
+                                            stage: stage.diary_name.clone(),
+                                            module_id: module.id,
+                                            bottleneck: "WEAK_TAG_CLOSURE",
+                                            potential_score_gain: (counterfactual * 10000.0).round() / 10000.0,
+                                            source_tag_id: edge.source_id,
+                                            target_tag_id: edge.target_id,
+                                            prescription: format!(
+                                                "Module #{} matches edge [{} -> {}], but tag closure ({:.3}, {:.3}) is below min_closure {:.2}; grounding the concept in text unlocks +{:.3}.",
+                                                module.id, edge.source_id, edge.target_id, a_closure, b_closure, input.min_closure, counterfactual
+                                            ),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+
                         if *a_pos >= *b_pos
                             || *a_closure < input.min_closure
                             || *b_closure < input.min_closure
@@ -226,15 +454,51 @@ pub(crate) fn plan(
                             edge.target_id,
                             module.file_id,
                         );
-                        let score = (edge.flow / maximum_flow.max(1e-12))
+                        if pick_iter == 0 && independent < 0.25 && flow_norm * (a_closure * b_closure).sqrt() > 0.20 {
+                            let gain = 0.65 * flow_norm * (a_closure * b_closure).sqrt() * (0.85 - independent);
+                            optimization_hints.push(OptimizationHint {
+                                stage: stage.diary_name.clone(),
+                                module_id: module.id,
+                                bottleneck: "SELF_PROVENANCE_ONLY",
+                                potential_score_gain: (gain * 10000.0).round() / 10000.0,
+                                source_tag_id: edge.source_id,
+                                target_tag_id: edge.target_id,
+                                prescription: format!(
+                                    "Edge [{} -> {}] in Module #{} has low external independence ({:.2}); citing this tag pair in an external note unlocks +{:.3}.",
+                                    edge.source_id, edge.target_id, module.id, independent, gain
+                                ),
+                            });
+                        }
+                        let base_score = flow_norm
                             * (a_closure * b_closure).sqrt()
                             * independent
                             * novelty;
-                        let score = score * if parents.is_empty() { 0.8 } else { 1.0 };
+                        let parent_factor = if parents.is_empty() { 0.8 } else { 1.0 };
+                        // Add Viterbi future continuation lookahead bonus (bounded to 0.15 * beta)
+                        // so routes that bridge into subsequent stages win ties and near-ties.
+                        let viterbi_future = 0.15 * beta_lookahead[s_idx][e_idx];
+                        let score = (base_score * parent_factor + viterbi_future).min(1.0);
                         if score > best_route_score {
                             best_route_score = score;
                             best_route = Some(edge.clone());
                             best_parents = parents;
+                        }
+                    }
+                    if pick_iter == 0 && best_route.is_none() && module.relevance >= 0.45 {
+                        if let Some(top_edge) = observation.transitions.iter().find(|e| !e.immediate_return) {
+                            let gain = 0.65 * 0.55 * module.relevance;
+                            optimization_hints.push(OptimizationHint {
+                                stage: stage.diary_name.clone(),
+                                module_id: module.id,
+                                bottleneck: "ISOLATED_MODULE_NO_FERRY",
+                                potential_score_gain: (gain * 10000.0).round() / 10000.0,
+                                source_tag_id: top_edge.source_id,
+                                target_tag_id: top_edge.target_id,
+                                prescription: format!(
+                                    "Module #{} has high semantic relevance ({:.3}) but zero river ferry tags; anchoring onto active flow [{} -> {}] unlocks +{:.3}.",
+                                    module.id, module.relevance, top_edge.source_id, top_edge.target_id, gain
+                                ),
+                            });
                         }
                     }
                     let relation = match &best_route {
@@ -272,7 +536,7 @@ pub(crate) fn plan(
                 results.push(choice);
             }
             output.push(StageOutput {
-                diary_name: stage.diary_name,
+                diary_name: stage.diary_name.clone(),
                 k: stage.k,
                 results,
             });
@@ -280,11 +544,84 @@ pub(crate) fn plan(
         if !selected.iter().any(|s| s.route.is_some()) {
             return Err("no grounded method route; use legacy chain".into());
         }
+
+        // Industrial Inspiration Factory (Forward-Backward Latent Wormhole Collider):
+        // Sweep cross-stage tag pairs (u in stage s, v in stage s+1) to discover high-potential
+        // structural isomorphisms (cosine in Gaussian sweet spot [0.45, 0.85]) with zero/low historical co-occurrence.
+        let mut latent_wormholes: Vec<LatentWormhole> = Vec::new();
+        for s_idx in 0..num_stages.saturating_sub(1) {
+            let (ref st_a, ref mods_a) = stage_modules[s_idx];
+            let (ref st_b, ref mods_b) = stage_modules[s_idx + 1];
+            for ma in mods_a.iter().take(8) {
+                let alpha = (0.35 * ma.relevance + 0.65 * ma.ordered_tags.iter().map(|t| t.2).fold(0.0, f64::max)).max(0.2);
+                for mb in mods_b.iter().take(8) {
+                    if ma.file_id == mb.file_id {
+                        continue;
+                    }
+                    let beta = (0.35 * mb.relevance + 0.65 * mb.ordered_tags.iter().map(|t| t.2).fold(0.0, f64::max)).max(0.2);
+                    for &(u_id, _, u_closure) in ma.ordered_tags.iter().rev().take(3) {
+                        if u_closure < input.min_closure {
+                            continue;
+                        }
+                        let Some((ref u_vec, u_norm)) = global_tag_vecs.get(&u_id) else {
+                            continue;
+                        };
+                        if *u_norm <= 1e-12 {
+                            continue;
+                        }
+                        for &(v_id, _, v_closure) in mb.ordered_tags.iter().take(3) {
+                            if u_id == v_id || v_closure < input.min_closure {
+                                continue;
+                            }
+                            let hist_w = artifact.edge_weight(u_id, v_id);
+                            if hist_w > 0.05 {
+                                continue;
+                            }
+                            let Some((ref v_vec, v_norm)) = global_tag_vecs.get(&v_id) else {
+                                continue;
+                            };
+                            if *v_norm <= 1e-12 {
+                                continue;
+                            }
+                            let dot_uv: f64 = u_vec.iter().zip(v_vec.iter()).map(|(&a, &b)| (a as f64) * (b as f64)).sum();
+                            let cos_uv = (dot_uv / (u_norm * v_norm)).clamp(-1.0, 1.0);
+                            if (0.35..=0.88).contains(&cos_uv) {
+                                let diff = (cos_uv - 0.65) / 0.20;
+                                let sweet_gain = (-0.5 * diff * diff).exp();
+                                let potential = alpha * beta * (u_closure * v_closure).sqrt() * sweet_gain / (1.0 + 10.0 * hist_w);
+                                if potential >= 0.08 {
+                                    latent_wormholes.push(LatentWormhole {
+                                        from_stage: st_a.diary_name.clone(),
+                                        to_stage: st_b.diary_name.clone(),
+                                        from_module_id: ma.id,
+                                        to_module_id: mb.id,
+                                        source_tag_id: u_id,
+                                        target_tag_id: v_id,
+                                        structural_cosine: (cos_uv * 10000.0).round() / 10000.0,
+                                        sweet_spot_gain: (sweet_gain * 10000.0).round() / 10000.0,
+                                        inspiration_potential: (potential * 10000.0).round() / 10000.0,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        optimization_hints.sort_by(|a, b| b.potential_score_gain.total_cmp(&a.potential_score_gain));
+        optimization_hints.truncate(10);
+        latent_wormholes.sort_by(|a, b| b.inspiration_potential.total_cmp(&a.inspiration_potential));
+        latent_wormholes.truncate(10);
+
         serde_json::to_string(&serde_json::json!({
             "schema": "vcp-river-thinking-plan-v1",
             "artifactSig": artifact_sig,
             "observationHandle": input.observation_handle,
-            "stages": output
+            "stages": output,
+            "diagnostics": {
+                "optimizationHints": optimization_hints,
+                "latentWormholes": latent_wormholes
+            }
         }))
         .map_err(|e| e.to_string())
     })
@@ -505,6 +842,13 @@ mod tests {
             "continuation"
         );
         assert_eq!(output["stages"][2]["results"], serde_json::json!([]));
+        // Verify Inverse Topology Diagnostics caught module #21's inverted tag order [3, 2] vs river edge 2 -> 3!
+        let hints = output["diagnostics"]["optimizationHints"].as_array().unwrap();
+        assert!(
+            hints.iter().any(|h| h["moduleId"] == 21 && h["bottleneck"] == "TAG_ORDER_INVERTED"),
+            "Inverse topology diagnostics must detect TAG_ORDER_INVERTED on module 21: {:?}",
+            hints
+        );
         runtime.clear().unwrap();
         assert!(plan(&runtime, db_path, "fixture", &input.to_string()).is_err());
         storage.shutdown().unwrap();

@@ -48,10 +48,127 @@ fn cosine(left: &[f32], right: &[f32]) -> f64 {
         left_norm += a * a;
         right_norm += b * b;
     }
+    cosine_from_parts(dot, left_norm, right_norm)
+}
+
+fn cosine_from_parts(dot: f64, left_norm: f64, right_norm: f64) -> f64 {
     if left_norm > 1e-15 && right_norm > 1e-15 {
         dot / (left_norm.sqrt() * right_norm.sqrt())
     } else {
         0.0
+    }
+}
+
+/// The three accumulators in `cosine` are independent, so computing each one
+/// separately in the same index order yields the same bits.
+fn squared_norm(vector: &[f32]) -> f64 {
+    let mut total = 0.0;
+    for value in vector {
+        let value = *value as f64;
+        total += value * value;
+    }
+    total
+}
+
+fn cosine_with_norms(left: &[f32], left_norm: f64, right: &[f32], right_norm: f64) -> f64 {
+    if left.len() != right.len() || left.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0;
+    for index in 0..left.len() {
+        dot += left[index] as f64 * right[index] as f64;
+    }
+    cosine_from_parts(dot, left_norm, right_norm)
+}
+
+/// Upper bound on the river/seed x candidate Tag table (32 MiB of f64).
+const MAX_TAG_PAIR_COSINES: usize = 1 << 22;
+
+/// Request-level cosine cache for the candidate readout. The same
+/// (river or seed Tag, candidate Tag) pair recurs across candidates and chunks
+/// of one file; every cached value is the raw `cosine` of the same two pool
+/// vectors, so a lookup equals recomputation bit for bit. Misses recompute.
+struct CosineCache {
+    columns: HashMap<i64, usize>,
+    column_norms: Vec<f64>,
+    rows: HashMap<i64, usize>,
+    row_norms: Vec<f64>,
+    /// `cosine(river or seed Tag, candidate Tag)`, absent above the size bound.
+    tag_pairs: Option<Vec<Vec<f64>>>,
+    /// `cosine(query vector, candidate Tag)`; the query is not a Tag.
+    query_tags: Vec<f64>,
+}
+
+impl CosineCache {
+    fn build(
+        curves: &[Curve],
+        query: &[f32],
+        row_ids: impl IntoIterator<Item = i64>,
+        vectors: &TagVectorPool,
+    ) -> Self {
+        let mut columns = HashMap::new();
+        let mut column_vectors: Vec<Arc<[f32]>> = Vec::new();
+        for tag in curves.iter().flat_map(|curve| &curve.tags) {
+            if let std::collections::hash_map::Entry::Vacant(entry) = columns.entry(tag.id) {
+                entry.insert(column_vectors.len());
+                column_vectors.push(tag.vector.clone());
+            }
+        }
+        let mut rows = HashMap::new();
+        let mut row_vectors: Vec<Arc<[f32]>> = Vec::new();
+        for id in row_ids {
+            let Some(vector) = vectors.get(&id) else { continue };
+            if let std::collections::hash_map::Entry::Vacant(entry) = rows.entry(id) {
+                entry.insert(row_vectors.len());
+                row_vectors.push(vector.clone());
+            }
+        }
+        let column_norms: Vec<f64> = column_vectors.par_iter().map(|v| squared_norm(v)).collect();
+        let row_norms: Vec<f64> = row_vectors.iter().map(|v| squared_norm(v)).collect();
+        let query_norm = squared_norm(query);
+        let query_tags = column_vectors
+            .par_iter()
+            .zip(column_norms.par_iter())
+            .map(|(column, norm)| cosine_with_norms(query, query_norm, column, *norm))
+            .collect::<Vec<f64>>();
+        let tag_pairs = (row_vectors.len().saturating_mul(column_vectors.len())
+            <= MAX_TAG_PAIR_COSINES)
+            .then(|| {
+                row_vectors
+                    .par_iter()
+                    .zip(row_norms.par_iter())
+                    .map(|(row, row_norm)| {
+                        column_vectors
+                            .iter()
+                            .zip(&column_norms)
+                            .map(|(column, norm)| cosine_with_norms(row, *row_norm, column, *norm))
+                            .collect::<Vec<f64>>()
+                    })
+                    .collect::<Vec<Vec<f64>>>()
+            });
+        Self { columns, column_norms, rows, row_norms, tag_pairs, query_tags }
+    }
+
+    /// Same value as `cosine(left_vector, &tag.vector)`, where `left_vector`
+    /// is the pool vector of `left_id`.
+    fn tag_pair(&self, left_id: i64, left_vector: &[f32], tag: &TagData) -> f64 {
+        match (self.rows.get(&left_id), self.columns.get(&tag.id)) {
+            (Some(&row), Some(&column)) => match &self.tag_pairs {
+                Some(table) => table[row][column],
+                None => cosine_with_norms(
+                    left_vector, self.row_norms[row], &tag.vector, self.column_norms[column],
+                ),
+            },
+            _ => cosine(left_vector, &tag.vector),
+        }
+    }
+
+    /// Same value as `cosine(query, &tag.vector)` for the request query vector.
+    fn query_tag(&self, query: &[f32], tag: &TagData) -> f64 {
+        match self.columns.get(&tag.id) {
+            Some(&column) => self.query_tags[column],
+            None => cosine(query, &tag.vector),
+        }
     }
 }
 
@@ -1039,19 +1156,45 @@ struct Curve {
     sources: Vec<String>,
 }
 
+/// Tag rows of one file in position order: (Tag ID, position, name).
+type FileTagRows = HashMap<i64, Vec<(i64, i64, String)>>;
+
 struct CurveLoadOutput {
+    /// Candidate curves without Tags; `attach_tags` adds them after selection.
     curves: Vec<Curve>,
+    relations: FileTagRows,
     chunk_sql_batches: usize,
     file_tag_sql_batches: usize,
-    tag_vector_sql_batches: usize,
-    tag_vector_fetched_nodes: usize,
+}
+
+/// Attaches each curve's Tags in position order, keeping only Tags whose vector
+/// is in the pool: missing or invalid vector rows are never loaded, so they are
+/// dropped exactly as before.
+fn attach_tags(curves: &mut [Curve], relations: &FileTagRows, tag_vectors: &TagVectorPool) {
+    for curve in curves {
+        let chunk_vector = curve.chunk_vector.clone();
+        curve.tags = relations
+            .get(&curve.file_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|(id, position, name)| {
+                let vector = tag_vectors.get(id)?;
+                Some(TagData {
+                    id: *id,
+                    position: *position,
+                    name: name.clone(),
+                    vector: vector.clone(),
+                    chunk_cosine: clamp01(cosine(vector, &chunk_vector)),
+                })
+            })
+            .collect();
+    }
 }
 
 fn load_curves(
     connection: &Connection,
     candidates: &[CandidateInput],
     dimension: usize,
-    tag_vectors: &mut TagVectorPool,
 ) -> std::result::Result<CurveLoadOutput, String> {
     const SQLITE_BATCH_SIZE: usize = 500;
     let candidate_ids: Vec<i64> = candidates
@@ -1101,12 +1244,10 @@ fn load_curves(
         }
     }
 
-    // 同一文件的 Tag 曲线只读取和解码一次，供该文件的全部候选 Chunk 复用。
-    // 同一 Tag 出现在多个文件时，按 tag_id 只解码一次，后续行共享同一 Arc。
+    // 同一文件的 Tag 关系只读取一次，供该文件的全部候选 Chunk 复用；
+    // Tag 向量在候选筛选之后才读取（见 attach_tags）。
     let file_ids: Vec<i64> = unique_file_ids.into_iter().collect();
-    let mut tags_by_file: HashMap<i64, Vec<(i64, i64, String, Arc<[f32]>)>> =
-        HashMap::with_capacity(file_ids.len());
-    let mut relations: Vec<(i64, i64, i64, String)> = Vec::new();
+    let mut relations: FileTagRows = HashMap::with_capacity(file_ids.len());
     let mut file_tag_sql_batches = 0usize;
     for batch in file_ids.chunks(SQLITE_BATCH_SIZE) {
         if batch.is_empty() {
@@ -1140,41 +1281,21 @@ fn load_curves(
         for row in rows {
             // 旧实现通过 rows.flatten() 跳过单条 Tag 行解码错误。
             // 批量化后保留同一容错边界，避免一条脏 Tag 污染整次查询。
-            let Ok(relation) = row else { continue };
-            relations.push(relation);
+            let Ok((file_id, tag_id, position, name)) = row else { continue };
+            relations.entry(file_id).or_default().push((tag_id, position, name));
         }
     }
 
-    let requested_ids: Vec<i64> = relations.iter().map(|row| row.1).collect();
-    let tag_stats = ensure_tag_vectors_loaded(connection, tag_vectors, &requested_ids, dimension)?;
-    for (file_id, tag_id, position, name) in relations {
-        let Some(vector) = tag_vectors.get(&tag_id) else { continue };
-        tags_by_file.entry(file_id).or_default()
-            .push((tag_id, position, name, vector.clone()));
-    }
     // 恢复原始候选顺序；稳定排序与旧实现完全一致。
     let mut curves = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         let Some((file_id, chunk_vector)) = chunks_by_id.get(&candidate.id) else {
             continue;
         };
-        let tags = tags_by_file
-            .get(file_id)
-            .into_iter()
-            .flatten()
-            .map(|(id, position, name, vector)| TagData {
-                id: *id,
-                position: *position,
-                name: name.clone(),
-                vector: vector.clone(),
-                chunk_cosine: clamp01(cosine(vector, chunk_vector)),
-            })
-            .collect();
-
         curves.push(Curve {
             id: candidate.id,
             file_id: *file_id,
-            tags,
+            tags: Vec::new(),
             chunk_vector: chunk_vector.clone(),
             query_score: 0.0,
             denoised_score: 0.0,
@@ -1190,37 +1311,20 @@ fn load_curves(
     }
     Ok(CurveLoadOutput {
         curves,
+        relations,
         chunk_sql_batches,
         file_tag_sql_batches,
-        tag_vector_sql_batches: tag_stats.sql_batches,
-        tag_vector_fetched_nodes: tag_stats.fetched_nodes,
     })
 }
 
-fn compute_anchor_scores(curves: &mut [Curve], local_domain: &HashSet<i64>) {
-    if local_domain.is_empty() {
-        return;
-    }
-    let max_hits = curves
-        .iter()
-        .map(|curve| {
-            curve
-                .tags
-                .iter()
-                .filter(|tag| local_domain.contains(&tag.id))
-                .count()
-        })
-        .max()
-        .unwrap_or(0);
+/// `hits(curve)`: the curve's Tags with a vector that lie in the local domain.
+fn compute_anchor_scores(curves: &mut [Curve], hits: impl Fn(&Curve) -> usize) {
+    let max_hits = curves.iter().map(&hits).max().unwrap_or(0);
     if max_hits == 0 {
         return;
     }
     for curve in curves {
-        let hits = curve
-            .tags
-            .iter()
-            .filter(|tag| local_domain.contains(&tag.id))
-            .count();
+        let hits = hits(curve);
         curve.anchor_score = curve.anchor_score.max(hits as f64 / max_hits as f64);
     }
 }
@@ -1539,6 +1643,7 @@ fn evaluate_topology(
     input: &NativeInput,
     artifact: &NativeArtifact,
     query_tag_vectors: &TagVectorPool,
+    cosines: &CosineCache,
 ) -> TopologyOutput {
     let mut output = TopologyOutput {
         query_nodes: input.query_state.river_nodes.len(),
@@ -1583,7 +1688,7 @@ fn evaluate_topology(
                     // 查询河网与候选曲线的原始 Tag 向量均已加载；直接计算精确
                     // 余弦，避免在 NativeArtifact 中再常驻一份字符串键 Pairwise 表。
                     let similarity = query_vector
-                        .map(|vector| clamp01(cosine(vector, &tag.vector)))
+                        .map(|vector| clamp01(cosines.tag_pair(node.id, vector, tag)))
                         .unwrap_or(0.0);
                     if similarity < input.config.semantic_node_threshold {
                         return None;
@@ -1789,6 +1894,7 @@ fn evaluate_observables(
     input: &NativeInput,
     workspace: &FieldWorkspace,
     visible: bool,
+    cosines: &CosineCache,
 ) -> ObservableOutput {
     let chain_size = curve.tags.len().max(1) as f64;
     let mut exact_seed_hits = 0usize;
@@ -1813,7 +1919,7 @@ fn evaluate_observables(
                 && !workspace.transfer_domain.contains(&tag.id),
         );
         boundary = boundary
-            .max((clamp01(cosine(&input.query.vector, &tag.vector)) * tag.chunk_cosine).sqrt());
+            .max((clamp01(cosines.query_tag(&input.query.vector, tag)) * tag.chunk_cosine).sqrt());
     }
 
     let local_coverage = local_contacts as f64 / chain_size;
@@ -1869,6 +1975,7 @@ fn anchor_contacts(
     seeds: &[(i64, f64)],
     seed_vectors: &TagVectorPool,
     config: &NativeConfig,
+    cosines: &CosineCache,
 ) -> Vec<(i64, i64, bool, f64, f64, f64)> {
     let mut contacts = Vec::new();
     for (seed_id, mass) in seeds {
@@ -1882,7 +1989,7 @@ fn anchor_contacts(
         if let Some((tag, similarity)) = curve
             .tags
             .iter()
-            .map(|tag| (tag, cosine(seed_vector, &tag.vector)))
+            .map(|tag| (tag, cosines.tag_pair(*seed_id, seed_vector, tag)))
             .filter(|item| item.1 >= config.semantic_anchor_threshold)
             .max_by(|left, right| left.1.partial_cmp(&right.1).unwrap_or(Ordering::Equal))
         {
@@ -1899,10 +2006,11 @@ fn compute_anchors(
     artifact: &NativeArtifact,
     config: &NativeConfig,
     fallback: bool,
+    cosines: &CosineCache,
 ) -> Vec<AnchorOutput> {
     let contacts: Vec<Vec<(i64, i64, bool, f64, f64, f64)>> = curves
         .par_iter()
-        .map(|curve| anchor_contacts(curve, seeds, seed_vectors, config))
+        .map(|curve| anchor_contacts(curve, seeds, seed_vectors, config, cosines))
         .collect();
     let mut pool_counts: HashMap<i64, usize> = seeds.iter().map(|seed| (seed.0, 0)).collect();
     for candidate_contacts in &contacts {
@@ -2716,7 +2824,7 @@ pub(crate) fn run_native_with_connection(
 
     let load_started = Instant::now();
     let artifact = load_artifact_with_connection(runtime, connection, artifact_sig)?;
-    let curve_load = load_curves(connection, &input.candidates, dimension, &mut tag_vectors)?;
+    let curve_load = load_curves(connection, &input.candidates, dimension)?;
     let mut curves = curve_load.curves;
     // 显式空集合也意味着无权限；必须在候选归一化和统计前移除越权项。
     let allowed: Option<HashSet<i64>> = input.allowed_file_ids.as_ref()
@@ -2741,7 +2849,16 @@ pub(crate) fn run_native_with_connection(
         })
         .collect();
     let local_domain: HashSet<i64> = input.query_state.local_domain_ids.iter().copied().collect();
-    compute_anchor_scores(&mut curves, &local_domain);
+    // Anchor hits count only Tags with a loadable vector, as when every candidate
+    // Tag was loaded up front, so the local-domain Tags are checked now; the
+    // other Tags are read only for the curves that survive selection.
+    let file_tags = |curve: &Curve| curve_load.relations.get(&curve.file_id).into_iter().flatten();
+    let domain_tag_ids: Vec<i64> = curves.iter().flat_map(file_tags)
+        .map(|relation| relation.0).filter(|id| local_domain.contains(id)).collect();
+    let domain_stats = ensure_tag_vectors_loaded(connection, &mut tag_vectors, &domain_tag_ids, dimension)?;
+    compute_anchor_scores(&mut curves, |curve| file_tags(curve)
+        .filter(|relation| local_domain.contains(&relation.0) && tag_vectors.contains_key(&relation.0))
+        .count());
     curves.par_iter_mut().for_each(|curve| {
         curve.query_score = cosine(&input.query.vector, &curve.chunk_vector);
         curve.denoised_score = cosine(&input.denoised_vector, &curve.chunk_vector);
@@ -2749,7 +2866,10 @@ pub(crate) fn run_native_with_connection(
         curve.transfer_score = cosine(&input.transfer_vector, &curve.chunk_vector);
     });
     let projected_count = curves.len();
-    let curves = select_superset(curves, &input.config);
+    let mut curves = select_superset(curves, &input.config);
+    let selected_tag_ids: Vec<i64> = curves.iter().flat_map(file_tags).map(|relation| relation.0).collect();
+    let selected_stats = ensure_tag_vectors_loaded(connection, &mut tag_vectors, &selected_tag_ids, dimension)?;
+    attach_tags(&mut curves, &curve_load.relations, &tag_vectors);
     let selected_count = curves.len();
 
     let workspace = FieldWorkspace {
@@ -2814,6 +2934,13 @@ pub(crate) fn run_native_with_connection(
 
     let compute_started = Instant::now();
     let morphology = compute_query_morphology(&input);
+    let cosines = CosineCache::build(
+        &curves,
+        &input.query.vector,
+        input.query_state.river_nodes.iter().map(|node| node.id)
+            .chain(seeds.iter().map(|seed| seed.0)),
+        &query_and_seed_tag_vectors,
+    );
 
     // Anchor rarity depends on the complete selected candidate pool, so compute it
     // before consuming `curves`. The indexed parallel result preserves curve order.
@@ -2824,6 +2951,7 @@ pub(crate) fn run_native_with_connection(
         &artifact,
         &input.config,
         fallback_anchor,
+        &cosines,
     );
     let core_tag_names: HashSet<String> = input
         .query_state
@@ -2844,10 +2972,12 @@ pub(crate) fn run_native_with_connection(
         .zip(anchor_results.into_par_iter())
         .map(|(curve, anchor)| {
             let geometry = evaluate_path(&curve, &workspace, &artifact, &input.config);
-            let topology =
-                evaluate_topology(&curve, &input, &artifact, &query_and_seed_tag_vectors);
+            let topology = evaluate_topology(
+                &curve, &input, &artifact, &query_and_seed_tag_vectors, &cosines,
+            );
             let visible = true; // 越权候选已在进入候选池前删除。
-            let observables = evaluate_observables(&curve, &geometry, &input, &workspace, visible);
+            let observables =
+                evaluate_observables(&curve, &geometry, &input, &workspace, visible, &cosines);
             let semantic_total = (input.config.pure_query_weight
                 + input.config.pure_local_weight
                 + input.config.pure_transfer_weight)
@@ -3024,8 +3154,8 @@ pub(crate) fn run_native_with_connection(
             chunk_sql_batches: curve_load.chunk_sql_batches,
             file_tag_sql_batches: curve_load.file_tag_sql_batches,
             query_tag_sql_batches,
-            candidate_tag_vector_sql_batches: curve_load.tag_vector_sql_batches,
-            candidate_tag_vector_fetched_nodes: curve_load.tag_vector_fetched_nodes,
+            candidate_tag_vector_sql_batches: domain_stats.sql_batches + selected_stats.sql_batches,
+            candidate_tag_vector_fetched_nodes: domain_stats.fetched_nodes + selected_stats.fetched_nodes,
         },
         results,
     };

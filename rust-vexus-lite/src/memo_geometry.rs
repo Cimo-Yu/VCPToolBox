@@ -1,4 +1,4 @@
-﻿//! Unified anchored greedy Gram-Schmidt geometry.
+//! Unified anchored greedy Gram-Schmidt geometry.
 //! All floating-point reductions use ID order, never Rayon reduction order.
 use rayon::prelude::*;
 
@@ -157,8 +157,8 @@ fn project_active(axis: &[f64], vectors: &[&[f64]], active: &[usize]) -> Vec<f64
     row
 }
 
-/// O(K*n*dim + K虏*dim + K*n); basis vectors are already in original space.
-/// Incremental scalar energy/correlation accumulators avoid O(K虏*n) rescans while
+/// O(K*n*dim + K²*dim + K*n); basis vectors are already in original space.
+/// Incremental scalar energy/correlation accumulators avoid O(K²*n) rescans while
 /// preserving IEEE-754 left-fold addition order bit-for-bit. Near rank loss,
 /// recompute the residual rather than trusting a difference of energies.
 fn direct_axes_core(
@@ -333,7 +333,9 @@ fn direct_axes(
     direct_axes_core(target, candidates, vectors, None, None, max_basis, min_gain, keep_basis)
 }
 
-/// Local Explain needs no returned axes; internal axes support reorthogonalization.
+/// Test and isolated-benchmark entry point; production uses precomputed inputs
+/// through direct_axes_core. Internal axes still support reorthogonalization.
+#[allow(dead_code)]
 fn select_axes(
     target: AgsTarget<'_>,
     candidates: &[AgsCandidate],

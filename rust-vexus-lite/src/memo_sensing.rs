@@ -454,39 +454,23 @@ impl<'a> DynamicWormholeContext<'a> {
     fn resonance(&mut self, target: usize, source_level: usize) -> f64 {
         let Some(scores) = self.scores.get(&target) else { return 0.0 };
         self.diagnostics.cache_hits += 1;
-        // V8 Subspace L2 Projection Norm (Cellular Sheaf Subspace Energy):
-        // Since pyramid residual layers {r_1, r_2, ...} are mutually orthogonalized,
-        // the true projection magnitude onto the deep residual subspace is the L2 norm
-        // sqrt(\sum_{l > source_level} cos_+(r_l, v)^2), rewarding hubs that bridge multiple residual layers.
-        let mut max_r = 0.0f64;
-        let mut sum_sq = 0.0f64;
-        for &s in scores.iter().skip(source_level.saturating_add(1)) {
-            let p = positive(s);
-            if p > max_r {
-                max_r = p;
-            }
-            sum_sq += p * p;
-        }
-        sum_sq.sqrt().max(max_r).min(1.0)
+        // Sequential residuals r_{l+1} = r_l - p_l share unpeeled tail components (<r_1, r_2> = ||r_2||^2 != 0),
+        // so taking the envelope maximum across deeper layers avoids double-counting overlapping directions.
+        scores
+            .iter()
+            .skip(source_level.saturating_add(1))
+            .copied()
+            .fold(0.0, f64::max)
     }
 
-    /// Export deep-layer residual subspace L2 resonance per CSR node index for global wormhole field traversal.
+    /// Export maximum deep-layer residual resonance per CSR node index for global wormhole field traversal.
     pub(crate) fn extract_global_node_resonances(&self, node_count: usize, threshold: f64) -> Vec<f64> {
         let mut out = vec![0.0; node_count];
         for (&target, scores) in &self.scores {
             if target < node_count {
-                let mut max_r = 0.0f64;
-                let mut sum_sq = 0.0f64;
-                for &s in scores.iter().skip(1) {
-                    let p = positive(s);
-                    if p > max_r {
-                        max_r = p;
-                    }
-                    sum_sq += p * p;
-                }
-                let subspace_r = sum_sq.sqrt().max(max_r).min(1.0);
-                if subspace_r >= threshold {
-                    out[target] = subspace_r;
+                let max_r = scores.iter().skip(1).copied().fold(0.0, f64::max);
+                if max_r >= threshold {
+                    out[target] = max_r;
                 }
             }
         }
@@ -694,8 +678,10 @@ pub(crate) fn sense_with_context(
                 // Rényi-2 L2 wavepacket amplitude: a_{uv} = w_{uv} / ||w_{u,:}||_2 = p_{uv} \sqrt{N_eff(u)}
                 let l2_amplitude = (conductance / row_l2).min(1.0);
                 let injected_potential = spike.firing_potential * l2_amplitude * decay * return_scale;
+                let has_multi_branch = (end - start) > 1 || conductance < 0.05;
                 if injected < config.minimum_injected_current
-                    && (spike.hop == 0 || injected_potential < config.minimum_injected_current)
+                    && ((!has_multi_branch && spike.hop == 0)
+                        || injected_potential < config.minimum_injected_current)
                 {
                     continue;
                 }
@@ -783,8 +769,15 @@ pub(crate) fn sense_with_context(
             retained.sort_by(|left, right| {
                 right
                     .energy
-                    .partial_cmp(&left.energy)
+                    .max(right.firing_potential)
+                    .partial_cmp(&left.energy.max(left.firing_potential))
                     .unwrap_or(Ordering::Equal)
+                    .then_with(|| {
+                        right
+                            .energy
+                            .partial_cmp(&left.energy)
+                            .unwrap_or(Ordering::Equal)
+                    })
             });
             let limit = config.max_propagation_states.max(100);
             state_truncations += retained.len().saturating_sub(limit);
@@ -821,9 +814,18 @@ pub(crate) fn sense_with_context(
 
         let mut node_energy: HashMap<usize, f64> = HashMap::new();
         let mut in_flight = 0.0;
+        let mut has_viable_wavefront = false;
         for spike in next.values() {
             *node_energy.entry(spike.node_index).or_default() += spike.energy;
             in_flight += spike.energy;
+            if spike.momentum >= 0.0
+                && (spike.energy >= config.firing_threshold
+                    || spike.firing_potential >= config.firing_threshold)
+                && (spike.energy > config.minimum_injected_current
+                    || spike.firing_potential > config.minimum_injected_current)
+            {
+                has_viable_wavefront = true;
+            }
             provenance
                 .entry(spike.node_index)
                 .and_modify(|value| {
@@ -846,7 +848,7 @@ pub(crate) fn sense_with_context(
         hop_in_flight_mass.push(in_flight);
 
         let field_weight = weights[hop + 1];
-        let mut propagated = false;
+        let mut propagated = has_viable_wavefront;
         for (node_index, energy) in node_energy {
             *accumulated.entry(node_index).or_default() += energy * field_weight;
             propagated |= energy > config.minimum_injected_current;

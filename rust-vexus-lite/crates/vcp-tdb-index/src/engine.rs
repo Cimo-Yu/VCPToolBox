@@ -273,12 +273,20 @@ impl TdbIndex {
         let extra = exclude.map_or(0, HashSet::len);
         let search_k = k.saturating_add(extra).min(self.len());
         let mut output: Vec<(u64, f32)> = if let Some(graph) = &self.graph {
-            let ef_val = ef.unwrap_or(128).max(search_k.saturating_mul(2));
-            let rerank_val = ef.map_or(64_usize, |e| e / 2).max(64).max(search_k);
-            let config = QuIVerSearchConfig {
-                top_k: search_k,
-                ef_search: ef_val,
-                rerank_limit: Some(rerank_val),
+            let config = if exclude.is_none() {
+                QuIVerSearchConfig {
+                    top_k: k,
+                    ef_search: ef.unwrap_or(128).max(k),
+                    rerank_limit: Some(64.max(k)),
+                }
+            } else {
+                let ef_val = ef.unwrap_or(128).max(search_k.saturating_mul(2));
+                let rerank_val = ef.map_or(64_usize, |e| e / 2).max(64).max(search_k);
+                QuIVerSearchConfig {
+                    top_k: search_k,
+                    ef_search: ef_val,
+                    rerank_limit: Some(rerank_val),
+                }
             };
             let candidates = graph.search(query, |slot, output| {
                 self.ids.get(slot).is_some_and(|id| *id != 0 && fill(*id, output))

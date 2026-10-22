@@ -201,8 +201,20 @@ pub(crate) fn plan(
             0.0
         };
 
-        let mut file_tags_cache: HashMap<i64, Vec<(usize, i64, Vec<f32>, f64)>> = HashMap::new();
-        let mut global_tag_vecs: HashMap<i64, (Vec<f32>, f64)> = HashMap::new();
+        // Share Tag vectors by unique `tag_id` via `Arc<[f32]>` (seeded from `cached_obs.tag_vectors`),
+        // and store only lightweight `(position, tag_id)` tuples per `file_id` so multi-file requests
+        // never duplicate high-dimensional vectors across files.
+        const MAX_CACHED_UNIQUE_TAGS: usize = 4096;
+        let mut file_tags_cache: HashMap<i64, Vec<(usize, i64)>> = HashMap::new();
+        let mut global_tag_vecs: HashMap<i64, (Arc<[f32]>, f64)> = HashMap::new();
+        for (&tid, vec_arc) in cached.tag_vectors.iter().take(MAX_CACHED_UNIQUE_TAGS) {
+            if vec_arc.len() == dimension {
+                let norm = vec_arc.iter().map(|&x| (x as f64).powi(2)).sum::<f64>().sqrt();
+                if norm > 1e-12 {
+                    global_tag_vecs.insert(tid, (vec_arc.clone(), norm));
+                }
+            }
+        }
         let mut stage_modules: Vec<(Stage, Vec<Module>)> = Vec::with_capacity(input.stages.len());
 
         // Preload all stages so we can compute Backward Viterbi Continuation Potential \beta_s(edge)
@@ -233,25 +245,32 @@ pub(crate) fn plan(
                                 Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
                             })
                             .map_err(|e| e.to_string())?;
-                        let mut decoded = Vec::new();
+                        let mut positions = Vec::new();
                         for (position, row) in rows.enumerate() {
                             let (tag_id, bytes) = row.map_err(|e| e.to_string())?;
-                            if let Some(tag_vector) = decode(bytes, dimension) {
-                                let t_norm_sq: f64 = tag_vector.iter().map(|&x| (x as f64).powi(2)).sum();
-                                global_tag_vecs
-                                    .entry(tag_id)
-                                    .or_insert_with(|| (tag_vector.clone(), t_norm_sq.sqrt()));
-                                decoded.push((position, tag_id, tag_vector, t_norm_sq));
+                            if !global_tag_vecs.contains_key(&tag_id) {
+                                if let Some(tag_vector) = decode(bytes, dimension) {
+                                    let t_norm = tag_vector.iter().map(|&x| (x as f64).powi(2)).sum::<f64>().sqrt();
+                                    if t_norm > 1e-12 && global_tag_vecs.len() < MAX_CACHED_UNIQUE_TAGS {
+                                        global_tag_vecs.insert(tag_id, (Arc::from(tag_vector), t_norm));
+                                    }
+                                }
+                            }
+                            if global_tag_vecs.contains_key(&tag_id) {
+                                positions.push((position, tag_id));
                             }
                         }
-                        entry.insert(decoded)
+                        entry.insert(positions)
                     }
                 };
                 let mut tags = HashMap::with_capacity(cached_tags.len());
                 let mut ordered_tags = Vec::with_capacity(cached_tags.len());
-                for &(position, tag_id, ref tag_vector, t_norm_sq) in cached_tags.iter() {
+                for &(position, tag_id) in cached_tags.iter() {
+                    let Some(&(ref tag_vector, t_norm)) = global_tag_vecs.get(&tag_id) else {
+                        continue;
+                    };
                     let dot: f64 = vector.iter().zip(tag_vector.iter()).map(|(x, y)| *x as f64 * *y as f64).sum();
-                    let val = dot / (v_norm * t_norm_sq.sqrt()).max(1e-12);
+                    let val = dot / (v_norm * t_norm).max(1e-12);
                     let closure_val = if val.is_finite() { val.clamp(0.0, 1.0) } else { 0.0 };
                     tags.insert(tag_id, (position, closure_val));
                     ordered_tags.push((tag_id, position, closure_val));
@@ -327,6 +346,18 @@ pub(crate) fn plan(
             }
         }
 
+        // Build predecessor adjacency index `(hop, previous_id, source_id) -> Vec<next_e_idx>`
+        // so Backward Viterbi DP evaluates only valid causal successors instead of O(S * |T|^2) all-pairs scans!
+        let mut next_edges_by_pred: HashMap<(usize, Option<i64>, i64), Vec<usize>> = HashMap::new();
+        for (next_e_idx, next_edge) in observation.transitions.iter().enumerate() {
+            if !next_edge.immediate_return && next_edge.hop > 1 {
+                next_edges_by_pred
+                    .entry((next_edge.hop, next_edge.previous_id, next_edge.source_id))
+                    .or_default()
+                    .push(next_e_idx);
+            }
+        }
+
         // Backward DP sweep: beta[s][e_idx] = max future continuation chain value from stage s+1..num_stages
         let mut beta_lookahead: Vec<Vec<f64>> = vec![vec![0.0; num_transitions]; num_stages];
         if num_stages >= 2 {
@@ -339,12 +370,15 @@ pub(crate) fn plan(
                         continue;
                     }
                     let mut best_next = 0.0f64;
-                    for (next_e_idx, next_edge) in observation.transitions.iter().enumerate() {
-                        let next_intrinsic = stage_edge_best_intrinsic[s_idx + 1][next_e_idx];
-                        if next_intrinsic > 0.0 && follows(edge, next_edge) {
-                            let total_future = next_intrinsic + 0.5 * beta_lookahead[s_idx + 1][next_e_idx];
-                            if total_future > best_next {
-                                best_next = total_future;
+                    let key = (edge.hop + 1, Some(edge.source_id), edge.target_id);
+                    if let Some(successors) = next_edges_by_pred.get(&key) {
+                        for &next_e_idx in successors {
+                            let next_intrinsic = stage_edge_best_intrinsic[s_idx + 1][next_e_idx];
+                            if next_intrinsic > 0.0 {
+                                let total_future = next_intrinsic + 0.5 * beta_lookahead[s_idx + 1][next_e_idx];
+                                if total_future > best_next {
+                                    best_next = total_future;
+                                }
                             }
                         }
                     }

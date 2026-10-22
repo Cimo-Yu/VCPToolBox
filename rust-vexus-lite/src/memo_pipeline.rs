@@ -493,8 +493,8 @@ struct PyramidOutput {
     features: PyramidFeatures,
 }
 
-/// Load the global manifold mean vector \mathbf{m} from `epa_basis_cache` if available,
-/// enabling Intrinsic Centered Tangent-Space geometry across both EPA and Pyramid.
+/// Load the global manifold mean vector \mathbf{m} from the decoded EPA basis cache if available,
+/// reusing `cached_epa_basis` so base64 decoding is never repeated per query stage.
 fn load_epa_mean(connection: &Connection, dimension: usize) -> Option<Vec<f32>> {
     let raw = connection
         .query_row(
@@ -503,72 +503,188 @@ fn load_epa_mean(connection: &Connection, dimension: usize) -> Option<Vec<f32>> 
             |row| row.get::<_, String>(0),
         )
         .ok()?;
-    let cache: EpaCache = serde_json::from_str(&raw).ok()?;
-    let mean = decode_f32_base64(&cache.mean, dimension)?;
-    let mean_energy: f64 = mean.iter().map(|&v| (v as f64) * (v as f64)).sum();
+    let cached = EPA_BASIS.lock().ok().and_then(|slot| {
+        slot.as_ref()
+            .filter(|basis| basis.dimension == dimension && basis.raw == raw)
+            .cloned()
+    });
+    let decoded = match cached {
+        Some(basis) => basis,
+        None => {
+            let basis = Arc::new(decode_epa_basis(raw, dimension)?);
+            if let Ok(mut slot) = EPA_BASIS.lock() {
+                *slot = Some(basis.clone());
+            }
+            basis
+        }
+    };
+    let mean_energy: f64 = decoded.mean.iter().map(|&v| (v as f64) * (v as f64)).sum();
     if mean_energy > 1e-9 {
-        Some(mean)
+        Some(decoded.mean.clone())
     } else {
         None
     }
 }
 
-/// Löwdin Symmetric Orthogonalization (\Phi = V S^{-1/2}) via cyclic Jacobi eigendecomposition
-/// on the k \times k Gram matrix R^T R (where V = Q R from Giraud-Langou QR).
-/// Theorem (Löwdin 1950): Among all orthonormal bases spanning col(V), \Phi = V(V^T V)^{-1/2}
-/// uniquely minimizes \sum_i ||\phi_i - v_i||^2 and is strictly permutation-invariant,
-/// while preserving the exact subspace projection \Phi \Phi^T \equiv Q Q^T and energy ||c_sym||^2 \equiv ||c_GS||^2.
-fn lowdin_symmetric_contributions(r_mat: &[Vec<f64>], signed_qr_coeffs: &[f64], k: usize) -> Vec<f64> {
-    let m = signed_qr_coeffs.len();
-    if m <= 1 || r_mat.len() != m {
-        let mut out = vec![0.0; k];
-        if m == 1 {
-            out[0] = signed_qr_coeffs[0].abs();
-        }
-        return out;
-    }
-    // Construct symmetric overlap matrix S = R^T R in the active m-dimensional subspace,
-    // and b = R^T c_qr = V^T q.
-    let mut s = vec![vec![0.0f64; m]; m];
-    let mut b = vec![0.0f64; m];
-    for i in 0..m {
-        let mut bi = 0.0;
-        for r in 0..m {
-            bi += r_mat[r][i] * signed_qr_coeffs[r];
-        }
-        b[i] = bi;
-        for j in i..m {
-            let mut sum = 0.0;
-            for r in 0..m {
-                sum += r_mat[r][i] * r_mat[r][j];
+#[allow(dead_code)]
+fn orthogonal_projection(
+    query: &[f32],
+    tags: &[PyramidTagWork],
+    dimension: usize,
+) -> (Vec<f32>, Vec<f32>, Vec<f64>) {
+    let mut cumulative_basis = Vec::new();
+    orthogonal_projection_with_mean_and_history(query, tags, dimension, None, &mut cumulative_basis)
+}
+
+#[allow(dead_code)]
+fn orthogonal_projection_with_mean(
+    query: &[f32],
+    tags: &[PyramidTagWork],
+    dimension: usize,
+    mean: Option<&[f32]>,
+) -> (Vec<f32>, Vec<f32>, Vec<f64>) {
+    let mut cumulative_basis = Vec::new();
+    orthogonal_projection_with_mean_and_history(query, tags, dimension, mean, &mut cumulative_basis)
+}
+
+/// Rank-Deficient & Near-Collinear Safe Moore-Penrose Löwdin Orthogonal Projection:
+/// Builds the full m \times m Gram overlap matrix G = V^T V across ALL valid candidate vectors
+/// (including exact duplicates or near-collinear pairs) and computes its spectral decomposition
+/// G = U \Lambda U^T via cyclic Jacobi sweeps.
+/// Both the subspace projection p = V G^+ V^T q and the symmetric contribution vector
+/// c_sym = G^{+1/2} V^T q use the exact same eigenvalue cutoff \lambda_k > \tau, guaranteeing:
+///   1) Strict permutation invariance even for identical/rank-deficient tags (A == B => c_A == c_B);
+///   2) Exact Parseval energy identity ||p||_2^2 \equiv ||c_sym||_2^2 with zero near-collinear leakage!
+fn orthogonal_projection_with_mean_and_history(
+    query: &[f32],
+    tags: &[PyramidTagWork],
+    dimension: usize,
+    mean: Option<&[f32]>,
+    cumulative_basis: &mut Vec<Vec<f64>>,
+) -> (Vec<f32>, Vec<f32>, Vec<f64>) {
+    let prior_len = cumulative_basis.len();
+    let mut active_indices: Vec<usize> = Vec::with_capacity(tags.len());
+    let mut unit_vectors: Vec<Vec<f64>> = Vec::with_capacity(tags.len());
+    let mut coefficients = vec![0.0; tags.len()];
+
+    for (index, tag) in tags.iter().enumerate() {
+        let mut vector: Vec<f64> = if let Some(m) = mean {
+            if m.len() == dimension && tag.vector.len() == dimension {
+                tag.vector
+                    .iter()
+                    .zip(m.iter())
+                    .map(|(&v, &mv)| (v - mv) as f64)
+                    .collect()
+            } else {
+                tag.vector.iter().map(|value| *value as f64).collect()
             }
-            s[i][j] = sum;
-            s[j][i] = sum;
+        } else {
+            tag.vector.iter().map(|value| *value as f64).collect()
+        };
+        if vector.len() != dimension {
+            continue;
+        }
+        let orig_norm = vector.iter().map(|v| v * v).sum::<f64>().sqrt();
+        if orig_norm <= 1e-12 {
+            continue;
+        }
+        for v in &mut vector {
+            *v /= orig_norm;
+        }
+        // Project out components lying in strictly prior pyramid levels' subspaces Q_{0..l-1}
+        // while keeping all current-level candidates (including duplicates) on equal footing!
+        if prior_len > 0 {
+            for _pass in 0..2 {
+                for prev_unit in &cumulative_basis[..prior_len] {
+                    let proj = vector
+                        .iter()
+                        .zip(prev_unit.iter())
+                        .map(|(left, right)| left * right)
+                        .sum::<f64>();
+                    for offset in 0..dimension {
+                        vector[offset] -= proj * prev_unit[offset];
+                    }
+                }
+            }
+            let post_prior_norm = vector.iter().map(|v| v * v).sum::<f64>().sqrt();
+            if post_prior_norm <= 1e-9 {
+                continue;
+            }
+            for v in &mut vector {
+                *v /= post_prior_norm;
+            }
+        }
+        active_indices.push(index);
+        unit_vectors.push(vector);
+    }
+
+    let m = unit_vectors.len();
+    if m == 0 {
+        return (vec![0.0f32; dimension], query.to_vec(), coefficients);
+    }
+    if m == 1 {
+        let u = &unit_vectors[0];
+        let signed = query
+            .iter()
+            .zip(u.iter())
+            .map(|(&q, &uv)| (q as f64) * uv)
+            .sum::<f64>();
+        coefficients[active_indices[0]] = signed.abs();
+        let mut projection = vec![0.0f32; dimension];
+        for offset in 0..dimension {
+            projection[offset] = (signed * u[offset]) as f32;
+        }
+        let residual = query
+            .iter()
+            .zip(projection.iter())
+            .map(|(source, explained)| source - explained)
+            .collect();
+        cumulative_basis.push(u.clone());
+        return (projection, residual, coefficients);
+    }
+
+    // Build full m x m symmetric overlap matrix G = V^T V and right-hand side b = V^T q
+    let mut g_mat = vec![vec![0.0f64; m]; m];
+    let mut b_vec = vec![0.0f64; m];
+    for i in 0..m {
+        let vi = &unit_vectors[i];
+        b_vec[i] = query
+            .iter()
+            .zip(vi.iter())
+            .map(|(&q, &uv)| (q as f64) * uv)
+            .sum::<f64>();
+        g_mat[i][i] = 1.0;
+        for j in (i + 1)..m {
+            let vj = &unit_vectors[j];
+            let dot_ij = vi.iter().zip(vj.iter()).map(|(a, b)| a * b).sum::<f64>();
+            g_mat[i][j] = dot_ij;
+            g_mat[j][i] = dot_ij;
         }
     }
-    // Cyclic Jacobi eigendecomposition of m x m symmetric positive-definite matrix S (m <= 16)
+
+    // Cyclic Jacobi eigendecomposition of symmetric positive semi-definite G (m x m)
     let mut eig_vecs = vec![vec![0.0f64; m]; m];
     for i in 0..m {
         eig_vecs[i][i] = 1.0;
     }
-    for _sweep in 0..12 {
+    for _sweep in 0..16 {
         let mut max_off = 0.0f64;
         for p in 0..m {
             for q in (p + 1)..m {
-                max_off = max_off.max(s[p][q].abs());
+                max_off = max_off.max(g_mat[p][q].abs());
             }
         }
-        if max_off < 1e-13 {
+        if max_off < 1e-14 {
             break;
         }
         for p in 0..m {
             for q in (p + 1)..m {
-                let apq = s[p][q];
-                if apq.abs() < 1e-14 {
+                let apq = g_mat[p][q];
+                if apq.abs() < 1e-15 {
                     continue;
                 }
-                let app = s[p][p];
-                let aqq = s[q][q];
+                let app = g_mat[p][p];
+                let aqq = g_mat[q][q];
                 let tau = (aqq - app) / (2.0 * apq);
                 let t = if tau >= 0.0 {
                     1.0 / (tau + (1.0 + tau * tau).sqrt())
@@ -577,18 +693,18 @@ fn lowdin_symmetric_contributions(r_mat: &[Vec<f64>], signed_qr_coeffs: &[f64], 
                 };
                 let c = 1.0 / (1.0 + t * t).sqrt();
                 let sn = t * c;
-                s[p][p] = app - t * apq;
-                s[q][q] = aqq + t * apq;
-                s[p][q] = 0.0;
-                s[q][p] = 0.0;
+                g_mat[p][p] = app - t * apq;
+                g_mat[q][q] = aqq + t * apq;
+                g_mat[p][q] = 0.0;
+                g_mat[q][p] = 0.0;
                 for r in 0..m {
                     if r != p && r != q {
-                        let arp = s[r][p];
-                        let arq = s[r][q];
-                        s[r][p] = c * arp - sn * arq;
-                        s[p][r] = s[r][p];
-                        s[r][q] = sn * arp + c * arq;
-                        s[q][r] = s[r][q];
+                        let arp = g_mat[r][p];
+                        let arq = g_mat[r][q];
+                        g_mat[r][p] = c * arp - sn * arq;
+                        g_mat[p][r] = g_mat[r][p];
+                        g_mat[r][q] = sn * arp + c * arq;
+                        g_mat[q][r] = g_mat[r][q];
                     }
                     let vrp = eig_vecs[r][p];
                     let vrq = eig_vecs[r][q];
@@ -598,131 +714,66 @@ fn lowdin_symmetric_contributions(r_mat: &[Vec<f64>], signed_qr_coeffs: &[f64], 
             }
         }
     }
-    // Compute c_sym = S^{-1/2} b = U diag(lambda^{-1/2}) U^T b
-    let mut ut_b = vec![0.0f64; m];
+
+    // Unified scale-aware spectral rank threshold \tau:
+    // Both projection p = \sum_{\lambda_k > \tau} (\phi_k^T q) \phi_k and symmetric contributions
+    // c_sym = U diag(\lambda_k^{-1/2}) U^T b use the exact same retained eigenmodes!
+    let max_eig = (0..m).map(|k| g_mat[k][k]).fold(0.0f64, f64::max);
+    let eig_cutoff = (max_eig * 1e-9).max(1e-10);
+    let mut mode_signed = vec![0.0f64; m];
     for col in 0..m {
-        let eig = s[col][col];
-        if eig > 1e-10 {
+        let lambda = g_mat[col][col];
+        if lambda > eig_cutoff {
             let mut dot_ub = 0.0;
             for row in 0..m {
-                dot_ub += eig_vecs[row][col] * b[row];
+                dot_ub += eig_vecs[row][col] * b_vec[row];
             }
-            ut_b[col] = dot_ub / eig.sqrt();
-        }
-    }
-    let mut c_sym = vec![0.0f64; m];
-    for row in 0..m {
-        let mut val = 0.0;
-        for col in 0..m {
-            val += eig_vecs[row][col] * ut_b[col];
-        }
-        c_sym[row] = val.abs();
-    }
-    c_sym
-}
-
-fn orthogonal_projection(
-    query: &[f32],
-    tags: &[PyramidTagWork],
-    dimension: usize,
-) -> (Vec<f32>, Vec<f32>, Vec<f64>) {
-    orthogonal_projection_with_mean(query, tags, dimension, None)
-}
-
-fn orthogonal_projection_with_mean(
-    query: &[f32],
-    tags: &[PyramidTagWork],
-    dimension: usize,
-    mean: Option<&[f32]>,
-) -> (Vec<f32>, Vec<f32>, Vec<f64>) {
-    let mut basis: Vec<Vec<f64>> = Vec::with_capacity(tags.len());
-    let mut r_columns: Vec<(usize, Vec<f64>)> = Vec::with_capacity(tags.len());
-    let mut signed_coeffs: Vec<f64> = Vec::with_capacity(tags.len());
-    let mut coefficients = vec![0.0; tags.len()];
-    for (index, tag) in tags.iter().enumerate() {
-        let mut vector: Vec<f64> = if let Some(m) = mean {
-            tag.vector
-                .iter()
-                .zip(m.iter())
-                .map(|(&v, &mv)| (v - mv) as f64)
-                .collect()
-        } else {
-            tag.vector.iter().map(|value| *value as f64).collect()
-        };
-        let orig_norm = vector.iter().map(|v| v * v).sum::<f64>().sqrt();
-        if orig_norm <= 1e-12 {
-            continue;
-        }
-        // Normalize candidate vector in tangent space before building overlap/QR factors
-        // so Löwdin S = V^T V is scale-invariant across tags.
-        for v in &mut vector {
-            *v /= orig_norm;
-        }
-        let initial_norm_sq = 1.0f64;
-        let mut r_col = vec![0.0f64; basis.len() + 1];
-        for (b_idx, unit) in basis.iter().enumerate() {
-            let projection = vector
-                .iter()
-                .zip(unit.iter())
-                .map(|(left, right)| left * right)
-                .sum::<f64>();
-            r_col[b_idx] = projection;
-            for offset in 0..dimension {
-                vector[offset] -= projection * unit[offset];
-            }
-        }
-        let after_first_sq: f64 = vector.iter().map(|v| v * v).sum();
-        if !basis.is_empty() && after_first_sq <= 0.25 * initial_norm_sq {
-            for (b_idx, unit) in basis.iter().enumerate() {
-                let projection = vector
-                    .iter()
-                    .zip(unit.iter())
-                    .map(|(left, right)| left * right)
-                    .sum::<f64>();
-                r_col[b_idx] += projection;
-                for offset in 0..dimension {
-                    vector[offset] -= projection * unit[offset];
+            mode_signed[col] = dot_ub / lambda.sqrt();
+            // Build orthonormal eigen-basis vector \phi_col = \lambda^{-1/2} V u_col for cumulative_basis
+            let inv_sqrt = 1.0 / lambda.sqrt();
+            let mut phi = vec![0.0f64; dimension];
+            for row in 0..m {
+                let weight = eig_vecs[row][col] * inv_sqrt;
+                if weight.abs() > 1e-15 {
+                    for (out, &v_val) in phi.iter_mut().zip(unit_vectors[row].iter()) {
+                        *out += weight * v_val;
+                    }
                 }
             }
-        }
-        let diag_norm = vector.iter().map(|v| v * v).sum::<f64>().sqrt();
-        if diag_norm > 1e-12 {
-            for v in &mut vector {
-                *v /= diag_norm;
+            let phi_norm = phi.iter().map(|v| v * v).sum::<f64>().sqrt();
+            if phi_norm > 1e-12 {
+                for v in &mut phi {
+                    *v /= phi_norm;
+                }
+                cumulative_basis.push(phi);
             }
-            r_col[basis.len()] = diag_norm;
-            let signed = query
-                .iter()
-                .zip(vector.iter())
-                .map(|(left, right)| (*left as f64) * right)
-                .sum::<f64>();
-            coefficients[index] = signed.abs();
-            signed_coeffs.push(signed);
-            r_columns.push((index, r_col));
-            basis.push(vector);
         }
     }
 
-    // Apply Löwdin S^{-1/2} symmetric orthogonalization to redistribute tag contributions
-    // without order bias while keeping the exact subspace residual unchanged.
-    let m = basis.len();
-    if m > 1 {
-        let mut r_mat = vec![vec![0.0f64; m]; m];
-        for (col_pos, (_, r_col)) in r_columns.iter().enumerate() {
-            for (row_pos, &val) in r_col.iter().enumerate() {
-                r_mat[row_pos][col_pos] = val;
+    // Symmetric contribution vector c_sym = U mode_signed, and dual weights w = G^+ b = U (\lambda^{-1/2} mode_signed)
+    let mut dual_weights = vec![0.0f64; m];
+    for row in 0..m {
+        let mut sym_val = 0.0;
+        let mut dual_val = 0.0;
+        for col in 0..m {
+            let lambda = g_mat[col][col];
+            if lambda > eig_cutoff {
+                let u_rc = eig_vecs[row][col];
+                sym_val += u_rc * mode_signed[col];
+                dual_val += u_rc * (mode_signed[col] / lambda.sqrt());
             }
         }
-        let sym_coeffs = lowdin_symmetric_contributions(&r_mat, &signed_coeffs, m);
-        for ((orig_idx, _), sym_val) in r_columns.iter().zip(sym_coeffs.into_iter()) {
-            coefficients[*orig_idx] = sym_val;
-        }
+        coefficients[active_indices[row]] = sym_val.abs();
+        dual_weights[row] = dual_val;
     }
 
     let mut projection = vec![0.0f32; dimension];
-    for (unit, &coefficient) in basis.iter().zip(signed_coeffs.iter()) {
-        for offset in 0..dimension {
-            projection[offset] += (coefficient * unit[offset]) as f32;
+    for (row, u_vec) in unit_vectors.iter().enumerate() {
+        let w = dual_weights[row];
+        if w.abs() > 1e-15 {
+            for offset in 0..dimension {
+                projection[offset] += (w * u_vec[offset]) as f32;
+            }
         }
     }
     let residual = query
@@ -878,6 +929,7 @@ fn analyze_pyramid_with_pool(
     let mut residuals = Vec::new();
     let mut total_explained = 0.0;
     let mut seen_pyramid_ids: HashSet<u64> = HashSet::new();
+    let mut cumulative_basis: Vec<Vec<f64>> = Vec::new();
     for level in 0..config.max_levels.clamp(1, 8) {
         let top_k = config.pyramid_top_k.clamp(1, 128);
         let guard = index.read().map_err(|error| format!("Pyramid index lock failed: {}", error))?;
@@ -939,8 +991,15 @@ fn analyze_pyramid_with_pool(
         }
 
         let current_energy = magnitude(&residual).powi(2);
+        let proj_mean = if level >= 1 { epa_mean.as_deref() } else { None };
         let (projection, next_residual, coefficients) =
-            orthogonal_projection(&residual, &tags, dimension);
+            orthogonal_projection_with_mean_and_history(
+                &residual,
+                &tags,
+                dimension,
+                proj_mean,
+                &mut cumulative_basis,
+            );
         for (tag, coefficient) in tags.iter_mut().zip(coefficients.iter()) {
             tag.contribution = *coefficient;
         }
@@ -2757,6 +2816,58 @@ mod audit_gate_tests {
         let lowdin_energy: f64 = coeff_ab.iter().map(|&c| c * c).sum();
         assert!((proj_energy - lowdin_energy).abs() < 1e-10);
 
+        // 1b. Audit Counterexample P2-5: Rank-deficient / identical duplicate tags must remain
+        // strictly permutation-invariant (each gets 1/sqrt(2), never [1.0, 0.0] order monopoly).
+        let dup_a = PyramidTagWork {
+            id: 10,
+            name: "dup_a".into(),
+            vector: Arc::from(vec![1.0_f32, 0.0, 0.0]),
+            similarity: 1.0,
+            contribution: 0.0,
+            handshake_magnitude: 0.0,
+        };
+        let dup_b = PyramidTagWork {
+            id: 11,
+            name: "dup_b".into(),
+            vector: Arc::from(vec![1.0_f32, 0.0, 0.0]),
+            similarity: 1.0,
+            contribution: 0.0,
+            handshake_magnitude: 0.0,
+        };
+        let (_, _, dup_ab) = orthogonal_projection(&[1.0_f32, 0.0, 0.0], &[dup_a.clone(), dup_b.clone()], 3);
+        let (_, _, dup_ba) = orthogonal_projection(&[1.0_f32, 0.0, 0.0], &[dup_b, dup_a], 3);
+        assert!((dup_ab[0] - dup_ab[1]).abs() < 1e-10, "Duplicate tags must share contribution equally: {:?}", dup_ab);
+        assert!((dup_ab[0] - dup_ba[1]).abs() < 1e-10);
+        assert!((dup_ab[0] * dup_ab[0] + dup_ab[1] * dup_ab[1] - 1.0).abs() < 1e-10);
+
+        // 1c. Audit Counterexample P1-2: Near-collinear tags v1=(1,0,0), v2=(1,1e-6,0), q=(0,1,0)
+        // must use unified spectral rank threshold so ||projection||^2 == ||c_sym||^2 (zero mismatch!).
+        let col_1 = PyramidTagWork {
+            id: 21,
+            name: "col_1".into(),
+            vector: Arc::from(vec![1.0_f32, 0.0, 0.0]),
+            similarity: 0.0,
+            contribution: 0.0,
+            handshake_magnitude: 0.0,
+        };
+        let col_2 = PyramidTagWork {
+            id: 22,
+            name: "col_2".into(),
+            vector: Arc::from(vec![1.0_f32, 1e-6, 0.0]),
+            similarity: 1e-6,
+            contribution: 0.0,
+            handshake_magnitude: 0.0,
+        };
+        let (col_proj, _, col_coeff) = orthogonal_projection(&[0.0_f32, 1.0, 0.0], &[col_1, col_2], 3);
+        let col_proj_energy: f64 = col_proj.iter().map(|&x| (x as f64) * (x as f64)).sum();
+        let col_coeff_energy: f64 = col_coeff.iter().map(|&c| c * c).sum();
+        assert!(
+            (col_proj_energy - col_coeff_energy).abs() < 1e-6,
+            "Near-collinear projection energy ({}) and Löwdin contribution energy ({}) must never diverge!",
+            col_proj_energy,
+            col_coeff_energy
+        );
+
         // 2. Rényi-2 L2 Wavepacket Firing Potential vs L1 Mass Conservation:
         // Hub node 1 has 16 neighbors with L1 weight 0.95 / 16 = 0.059375 each.
         // Under pure L1 energy, Hop 1 energy at neighbor 2 is 0.25 * 0.059375 * 0.25 = 0.0037 < 0.10 (extinguished!).
@@ -2809,6 +2920,47 @@ mod audit_gate_tests {
         let node20 = sense_out.nodes.iter().find(|n| n.id == 20);
         assert!(node20.is_some(), "Rényi-2 L2 wavepacket potential must enable Hop-2 propagation from high-degree hub");
         assert_eq!(node20.unwrap().hop, 2);
+
+        // 2b. Audit Counterexample P1-3: 1 -> 2 -> 3 -> 4 chain with weak single outbound edges w=0.001.
+        // At Hop 2 (node 3), L1 energy is 0.000729 <= minimum_injected_current (0.01),
+        // while L2 wavepacket potential is 0.81 >= firing_threshold (0.10).
+        // The per-hop termination check must NOT break early at Hop 2; node 4 at Hop 3 must be reached!
+        let chain_artifact = NativeArtifact {
+            node_ids: vec![1, 2, 3, 4],
+            node_index: HashMap::from([(1, 0), (2, 1), (3, 2), (4, 3)]),
+            row_offsets: vec![0, 1, 2, 3, 3],
+            targets: vec![1, 2, 3],
+            weights: vec![0.001, 0.001, 0.001],
+            ..NativeArtifact::default()
+        }
+        .prepared();
+        let chain_out = sense_typed(
+            &chain_artifact,
+            "audit-p1-3-chain",
+            SenseInput {
+                query_id: None,
+                seeds: vec![SenseSeed {
+                    id: 1,
+                    energy: 900.0,
+                    source_type: "seed".into(),
+                }],
+                config: SenseConfig {
+                    max_safe_hops: 3,
+                    base_momentum: 4.0,
+                    firing_threshold: 0.10,
+                    base_decay: 0.90,
+                    minimum_injected_current: 0.01,
+                    ..SenseConfig::default()
+                },
+            },
+        )
+        .unwrap();
+        let node4 = chain_out.nodes.iter().find(|n| n.id == 4);
+        assert!(
+            node4.is_some(),
+            "Wavepacket frontier with potential 0.81 >= 0.10 must not be terminated early at Hop 2!"
+        );
+        assert_eq!(node4.unwrap().hop, 3);
     }
 
     #[test]
